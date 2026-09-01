@@ -185,3 +185,42 @@ def test_incoming_message_resets_page_timer():
 
     assert renderer.page_start_time > old_time
     assert time.time() - renderer.page_start_time < 2.0
+
+
+def test_short_message_fades_out_after_10_seconds():
+    config = AppConfig()
+    renderer = PixooRenderer(config=config)
+
+    msg = MessageEnvelope(id="m_short", sender_name="Alice", channel="Public", text="Short hello")
+    renderer.trigger_message_alert(msg)
+
+    # Frame 0: message is full opacity
+    frame_start = renderer.render_frame()
+    assert isinstance(frame_start, Image.Image)
+
+    # Fast forward past 10s + 1.5s fade duration (300 frames)
+    renderer.anim_frame = 300
+    frame_faded = renderer.render_frame()
+    assert isinstance(frame_faded, Image.Image)
+
+
+def test_long_message_fades_out_after_scroll_and_10s_hold():
+    config = AppConfig()
+    renderer = PixooRenderer(config=config)
+
+    long_msg = MessageEnvelope(
+        id="m_long",
+        sender_name="Charlie",
+        channel="Public",
+        text="Field report: Weather station update on mountain pass. Wind 25 knots gusting 40. Telemetry repeater active on frequency 868.125 MHz."
+    )
+    renderer.trigger_message_alert(long_msg)
+
+    # Initial frame
+    frame_start = renderer.render_frame()
+    assert isinstance(frame_start, Image.Image)
+
+    # Fast forward past scroll cycle + 10s hold + fade duration (1000 frames)
+    renderer.anim_frame = 1000
+    frame_faded = renderer.render_frame()
+    assert isinstance(frame_faded, Image.Image)

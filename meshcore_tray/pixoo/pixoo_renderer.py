@@ -1,4 +1,4 @@
-"""Pixoo 64 Matrix Renderer displaying the Single Latest Post per Channel with Top-First Bounce."""
+"""Pixoo 64 Matrix Renderer displaying the Single Latest Post per Channel with 10s Fade-Out."""
 
 from collections import defaultdict
 from dataclasses import dataclass
@@ -49,7 +49,7 @@ class ChannelMessage:
 
 
 class PixooRenderer:
-    """Renders tabbed channel pages displaying the single latest post per channel."""
+    """Renders tabbed channel pages displaying the single latest post with 10s fade-out."""
 
     def __init__(self, config=None):
         self.config = config
@@ -90,7 +90,7 @@ class PixooRenderer:
         self.neighbours_start_time: float = 0.0
         self.neighbours_duration: float = 8.0
 
-        # Animation ticker
+        # Animation ticker (resets on new message arrival)
         self.anim_frame: int = 0
 
     def set_config(self, config):
@@ -166,7 +166,7 @@ class PixooRenderer:
             else:
                 self._switch_to_channel_page(clean_chan, now)
 
-        # Reset animation ticks so reading starts at the top of the new message
+        # Reset animation ticks so message visibility is 100% full opacity immediately
         self.anim_frame = 0
 
         # Return from Telemetry or Neighbours mode if active
@@ -327,7 +327,7 @@ class PixooRenderer:
             page_img = self._render_channel_page(page_name, is_header_inverted)
             img.paste(page_img, (0, 0))
 
-    # --- Render Single Latest Message on Channel Page ---
+    # --- Render Single Latest Message on Channel Page with 10s Fade-Out ---
 
     def _render_channel_page(self, channel_name: str, is_header_inverted: bool = False) -> Image.Image:
         page = Image.new("RGB", (64, 64), (0, 0, 0))
@@ -383,9 +383,7 @@ class PixooRenderer:
         x_pos += (len(user_tag) + 1) * 5
 
         self._draw_text(header_band, msg.time_str, x_pos, 0, time_col)
-
         cropped_header = header_band.crop((0, 0, 64, 7))
-        page.paste(cropped_header, (0, 11), cropped_header)
 
         # 4. Tokenize and Wrap Single Latest Message Body in Pure White with Blue Tag Highlighting
         line_tokens = self._wrap_and_tokenize(msg.text, base_color=COLOR_BODY_WHITE, max_chars_per_line=12)
@@ -395,34 +393,77 @@ class PixooRenderer:
         available_h = 44
         content_buffer = Image.new("RGBA", (64, max(total_msg_height, available_h)), (0, 0, 0, 0))
 
-        # 5. Top-First Vertical Bounce: ONLY if total message height > 44px
+        # 5. Timing, Bounce & 10-Second Fade-Out Logic
+        # Rules:
+        # - Short Message (<= 44px): display for 10 seconds (250 frames), then fade out over 1.5s (38 frames).
+        # - Long Message (> 44px): executes top hold (5s) -> scroll down -> bottom hold (4s) -> scroll up.
+        #   Once back at top, hold for 10 seconds (250 frames), then fade out over 1.5s (38 frames).
         bounce_y = 0.0
-        if total_msg_height > available_h:
+        opacity = 1.0
+
+        FADE_DURATION_FRAMES = 38  # ~1.5 seconds smooth fade
+
+        if total_msg_height <= available_h:
+            # Short Message
+            HOLD_SHORT_FRAMES = 250  # 10 seconds at 25fps
+            bounce_y = 0.0
+
+            if self.anim_frame < HOLD_SHORT_FRAMES:
+                opacity = 1.0
+            elif self.anim_frame < HOLD_SHORT_FRAMES + FADE_DURATION_FRAMES:
+                fade_progress = (self.anim_frame - HOLD_SHORT_FRAMES) / float(FADE_DURATION_FRAMES)
+                opacity = max(0.0, 1.0 - fade_progress)
+            else:
+                opacity = 0.0
+        else:
+            # Long Message
             overflow_y = float(total_msg_height - available_h)
             pause_top_frames = 125     # ~5.0s hold on start of message
             scroll_down_frames = max(40, int(overflow_y * 2.5))
             pause_bottom_frames = 100  # ~4.0s hold at end of message
             scroll_up_frames = max(40, int(overflow_y * 2.5))
 
-            total_cycle = pause_top_frames + scroll_down_frames + pause_bottom_frames + scroll_up_frames
-            phase = self.anim_frame % total_cycle
+            cycle_duration = pause_top_frames + scroll_down_frames + pause_bottom_frames + scroll_up_frames
+            HOLD_AFTER_SCROLL_FRAMES = 250  # 10 seconds hold after scroll completes
 
-            if phase < pause_top_frames:
+            fade_start_frame = cycle_duration + HOLD_AFTER_SCROLL_FRAMES
+
+            if self.anim_frame < pause_top_frames:
                 # 1. HOLD on start of message at TOP for ~5 seconds
                 bounce_y = 0.0
-            elif phase < pause_top_frames + scroll_down_frames:
+                opacity = 1.0
+            elif self.anim_frame < pause_top_frames + scroll_down_frames:
                 # 2. Smoothly scroll DOWN to bottom of message
-                t = (phase - pause_top_frames) / float(scroll_down_frames)
+                t = (self.anim_frame - pause_top_frames) / float(scroll_down_frames)
                 bounce_y = overflow_y * (0.5 - 0.5 * math.cos(t * math.pi))
-            elif phase < pause_top_frames + scroll_down_frames + pause_bottom_frames:
+                opacity = 1.0
+            elif self.anim_frame < pause_top_frames + scroll_down_frames + pause_bottom_frames:
                 # 3. HOLD at bottom for ~4 seconds
                 bounce_y = overflow_y
-            else:
+                opacity = 1.0
+            elif self.anim_frame < cycle_duration:
                 # 4. Smoothly scroll UP back to start of message at top
-                t = (phase - (pause_top_frames + scroll_down_frames + pause_bottom_frames)) / float(scroll_up_frames)
+                t = (self.anim_frame - (pause_top_frames + scroll_down_frames + pause_bottom_frames)) / float(scroll_up_frames)
                 bounce_y = overflow_y * (0.5 + 0.5 * math.cos(t * math.pi))
-        else:
-            bounce_y = 0.0
+                opacity = 1.0
+            elif self.anim_frame < fade_start_frame:
+                # 5. HOLD at top for 10 seconds after scroll completes
+                bounce_y = 0.0
+                opacity = 1.0
+            elif self.anim_frame < fade_start_frame + FADE_DURATION_FRAMES:
+                # 6. Fade out over 1.5s
+                bounce_y = 0.0
+                fade_progress = (self.anim_frame - fade_start_frame) / float(FADE_DURATION_FRAMES)
+                opacity = max(0.0, 1.0 - fade_progress)
+            else:
+                # 7. Fully faded out
+                bounce_y = 0.0
+                opacity = 0.0
+
+        # If fully faded out, render a clean standby prompt below top heading
+        if opacity <= 0.0:
+            self._draw_text(page, "Standby...", 10, 32, (60, 75, 95))
+            return page
 
         # Draw lines onto content buffer
         y_cursor = 0
@@ -433,13 +474,29 @@ class PixooRenderer:
                 x_cursor += (len(word_text) + 1) * 5
             y_cursor += 7
 
-        # Crop visible message window and paste at y=19
         crop_top = int(bounce_y)
         crop_bottom = crop_top + available_h
         cropped_content = content_buffer.crop((0, crop_top, 64, crop_bottom))
+
+        # Apply visibility opacity
+        if opacity < 1.0:
+            cropped_header = self._apply_opacity_rgba(cropped_header, opacity)
+            cropped_content = self._apply_opacity_rgba(cropped_content, opacity)
+
+        page.paste(cropped_header, (0, 11), cropped_header)
         page.paste(cropped_content, (0, 19), cropped_content)
 
         return page
+
+    def _apply_opacity_rgba(self, img_rgba: Image.Image, opacity: float) -> Image.Image:
+        """Scales RGBA channels by opacity."""
+        r, g, b, a = img_rgba.split()
+        op = max(0.0, min(1.0, opacity))
+        r = r.point(lambda p: int(p * op))
+        g = g.point(lambda p: int(p * op))
+        b = b.point(lambda p: int(p * op))
+        a = a.point(lambda p: int(p * op))
+        return Image.merge("RGBA", (r, g, b, a))
 
     def _wrap_and_tokenize(self, text: str, base_color: Tuple[int, int, int], max_chars_per_line: int = 12) -> List[List[Tuple[str, Tuple[int, int, int]]]]:
         """Wraps text into lines, highlighting words starting with '#' or '@' in Blue."""
