@@ -41,10 +41,10 @@ def test_full_packet_flow(tmp_path):
     assert stored_msgs[0].sender_name == "Alice"
     assert stored_msgs[0].is_favorite is True
 
-    # Verify Pixoo renderer triggered inverted header alert and recorded channel message
+    # Verify Pixoo renderer triggered inverted header alert and recorded latest channel message
     assert pixoo.renderer.is_flashing is True
-    assert len(pixoo.renderer.channel_messages["Public"]) == 1
-    assert pixoo.renderer.channel_messages["Public"][0].sender_name == "Alice"
+    assert pixoo.renderer.latest_messages["Public"] is not None
+    assert pixoo.renderer.latest_messages["Public"].sender_name == "Alice"
 
     # 2. Test Gateway execution to send message
     res = gateway.execute_command(

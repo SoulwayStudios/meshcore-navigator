@@ -1,4 +1,4 @@
-"""Unit tests for Pixoo 64 3-Message Rolling Stack, Sender Grouping, Dimming & Queued Channel Switching."""
+"""Unit tests for Pixoo 64 Single Latest Post per Channel, Tag Highlighting & Top-First Bounce."""
 
 import time
 import pytest
@@ -6,7 +6,7 @@ from PIL import Image
 from meshcore_tray.config import AppConfig
 from meshcore_tray.core.models import MessageEnvelope, TelemetryEnvelope, NeighbourInfo
 from meshcore_tray.pixoo.pixoo_renderer import (
-    PixooRenderer, DisplayMode, COLOR_TAG_BLUE, COLOR_WHITE, COLOR_GREY_25, COLOR_GREY_50
+    PixooRenderer, DisplayMode, COLOR_TAG_BLUE, COLOR_BODY_WHITE
 )
 
 
@@ -18,43 +18,25 @@ def test_renderer_initialization():
     assert frame.size == (64, 64)
 
 
-def test_three_message_rolling_fifo_stack_progression():
-    """Verify exact FIFO rolling stack progression as specified by user:
-    Alice, Alice, Alice -> Bob posts -> Alice, Alice, Bob -> Bob posts again -> Alice, Bob, Bob -> Charlie posts -> Bob, Bob, Charlie.
-    """
+def test_single_latest_message_per_channel():
+    """Verify each channel holds and displays its single latest post."""
     config = AppConfig()
     renderer = PixooRenderer(config=config)
 
-    # 1. Alice posts 3 messages
-    renderer.trigger_message_alert(MessageEnvelope(id="a1", sender_name="Alice", channel="Public", text="Alice msg 1"))
-    renderer.trigger_message_alert(MessageEnvelope(id="a2", sender_name="Alice", channel="Public", text="Alice msg 2"))
-    renderer.trigger_message_alert(MessageEnvelope(id="a3", sender_name="Alice", channel="Public", text="Alice msg 3"))
+    # 1. Alice posts on Public
+    renderer.trigger_message_alert(MessageEnvelope(id="a1", sender_name="Alice", channel="Public", text="Alice first message"))
+    assert renderer.latest_messages["Public"].sender_name == "Alice"
+    assert renderer.latest_messages["Public"].text == "Alice first message"
 
-    stack = renderer.channel_messages["Public"]
-    assert len(stack) == 3
-    assert [m.sender_name for m in stack] == ["Alice", "Alice", "Alice"]
-    assert [m.text for m in stack] == ["Alice msg 1", "Alice msg 2", "Alice msg 3"]
+    # 2. Bob posts on Public -> replaces Alice's message as the latest post
+    renderer.trigger_message_alert(MessageEnvelope(id="b1", sender_name="Bob", channel="Public", text="Bob new update"))
+    assert renderer.latest_messages["Public"].sender_name == "Bob"
+    assert renderer.latest_messages["Public"].text == "Bob new update"
 
-    # 2. Bob posts -> removes Alice's oldest message (a1)
-    renderer.trigger_message_alert(MessageEnvelope(id="b1", sender_name="Bob", channel="Public", text="Bob msg 1"))
-    stack = renderer.channel_messages["Public"]
-    assert len(stack) == 3
-    assert [m.sender_name for m in stack] == ["Alice", "Alice", "Bob"]
-    assert [m.text for m in stack] == ["Alice msg 2", "Alice msg 3", "Bob msg 1"]
-
-    # 3. Bob posts again -> removes Alice's next oldest message (a2)
-    renderer.trigger_message_alert(MessageEnvelope(id="b2", sender_name="Bob", channel="Public", text="Bob msg 2"))
-    stack = renderer.channel_messages["Public"]
-    assert len(stack) == 3
-    assert [m.sender_name for m in stack] == ["Alice", "Bob", "Bob"]
-    assert [m.text for m in stack] == ["Alice msg 3", "Bob msg 1", "Bob msg 2"]
-
-    # 4. Charlie posts -> removes Alice's last message (a3)
-    renderer.trigger_message_alert(MessageEnvelope(id="c1", sender_name="Charlie", channel="Public", text="Charlie msg 1"))
-    stack = renderer.channel_messages["Public"]
-    assert len(stack) == 3
-    assert [m.sender_name for m in stack] == ["Bob", "Bob", "Charlie"]
-    assert [m.text for m in stack] == ["Bob msg 1", "Bob msg 2", "Charlie msg 1"]
+    # 3. Charlie posts on ops -> separate channel
+    renderer.trigger_message_alert(MessageEnvelope(id="c1", sender_name="Charlie", channel="ops", text="Ops coordination"))
+    assert renderer.latest_messages["ops"].sender_name == "Charlie"
+    assert renderer.latest_messages["Public"].sender_name == "Bob"
 
 
 def test_queued_channel_switch_fifteen_seconds():
@@ -76,20 +58,6 @@ def test_queued_channel_switch_fifteen_seconds():
     assert renderer.get_active_channel_pages()[renderer.current_page_idx].lower() == "public"
     assert renderer.pending_channel_switch == "ops"
     assert renderer.pending_switch_time == time_pub + 15.0
-
-
-def test_consecutive_user_grouping_and_dimming():
-    config = AppConfig()
-    renderer = PixooRenderer(config=config)
-
-    # Add 3 run-on messages from Alice
-    renderer.trigger_message_alert(MessageEnvelope(id="a1", sender_name="Alice", channel="Public", text="1st thought"))
-    renderer.trigger_message_alert(MessageEnvelope(id="a2", sender_name="Alice", channel="Public", text="2nd thought"))
-    renderer.trigger_message_alert(MessageEnvelope(id="a3", sender_name="Alice", channel="Public", text="3rd thought"))
-
-    page_img = renderer._render_channel_page("Public", is_header_inverted=False)
-    assert isinstance(page_img, Image.Image)
-    assert page_img.size == (64, 64)
 
 
 def test_tag_highlighting_in_message_body():
@@ -161,12 +129,12 @@ def test_channel_filtering_silences_pixoo():
 
     msg_test = MessageEnvelope(id="m_test", sender_name="Tester", channel="#test", text="Test message")
     renderer.trigger_message_alert(msg_test)
-    assert len(renderer.channel_messages["test"]) == 0
+    assert renderer.latest_messages["test"] is None
     assert renderer.is_flashing is False
 
     msg_pub = MessageEnvelope(id="m_pub", sender_name="Alice", channel="Public", text="Public message")
     renderer.trigger_message_alert(msg_pub)
-    assert len(renderer.channel_messages["Public"]) == 1
+    assert renderer.latest_messages["Public"] is not None
     assert renderer.is_flashing is True
 
 
@@ -209,14 +177,11 @@ def test_incoming_message_resets_page_timer():
     config = AppConfig()
     renderer = PixooRenderer(config=config)
 
-    # Set page timer to 25s ago (almost expired)
     old_time = time.time() - 25.0
     renderer.page_start_time = old_time
 
-    # Incoming message arrives on Public
     msg = MessageEnvelope(id="m_new", sender_name="Alice", channel="Public", text="Fresh transmission")
     renderer.trigger_message_alert(msg)
 
-    # Verify page timer was reset to current timestamp (> old_time)
     assert renderer.page_start_time > old_time
     assert time.time() - renderer.page_start_time < 2.0

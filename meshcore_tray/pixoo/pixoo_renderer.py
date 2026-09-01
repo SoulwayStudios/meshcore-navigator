@@ -1,7 +1,7 @@
-"""Pixoo 64 Matrix Renderer with Bottom-First Scrolling, 6s New Message Hold, and Reset Page Timers."""
+"""Pixoo 64 Matrix Renderer displaying the Single Latest Post per Channel with Top-First Bounce."""
 
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 import logging
 import math
@@ -36,41 +36,28 @@ CHANNEL_PALETTE = {
 
 # Blue highlighting for #channels and @users in message bodies
 COLOR_TAG_BLUE = (56, 189, 248)  # Sky Blue #38BDF8
-
-# Color shades for stacked run-on messages from the same user
-COLOR_WHITE = (255, 255, 255)
-COLOR_GREY_25 = (190, 195, 205)  # 25% Grey
-COLOR_GREY_50 = (128, 135, 145)  # 50% Grey
+COLOR_BODY_WHITE = (255, 255, 255)  # Pure White
 
 
 @dataclass
 class ChannelMessage:
-    """Message entry stored in the 3-message rolling stack on a channel page."""
+    """Latest message entry stored on a channel page."""
     sender_name: str
     is_favorite: bool
     time_str: str
     text: str
 
 
-@dataclass
-class MessageGroup:
-    """Group of consecutive messages from the same user on screen."""
-    sender_name: str
-    is_favorite: bool
-    time_str: str
-    messages: List[str] = field(default_factory=list)
-
-
 class PixooRenderer:
-    """Renders tabbed channel pages with bottom-first reading priority and 6s hold on new messages."""
+    """Renders tabbed channel pages displaying the single latest post per channel."""
 
     def __init__(self, config=None):
         self.config = config
         self.mode = DisplayMode.CAROUSEL
         self.current_channel = "Public"
 
-        # Channel Pages: maps clean channel_name -> list of up to 3 ChannelMessages (FIFO)
-        self.channel_messages: Dict[str, List[ChannelMessage]] = defaultdict(list)
+        # Channel Pages: maps clean channel_name -> latest ChannelMessage
+        self.latest_messages: Dict[str, Optional[ChannelMessage]] = defaultdict(lambda: None)
 
         self.latest_telemetry: Optional[TelemetryEnvelope] = None
         self.latest_neighbours: List[NeighbourInfo] = []
@@ -133,7 +120,7 @@ class PixooRenderer:
         return enabled
 
     def trigger_message_alert(self, message: MessageEnvelope):
-        """Processes an incoming message, resets page timer, and prioritizes reading the new message."""
+        """Processes an incoming message, stores it as the latest message for that channel, and resets page timer."""
         chan = message.channel if not message.is_direct_message else "DM"
         clean_chan = chan.lstrip("#")
 
@@ -148,17 +135,14 @@ class PixooRenderer:
         is_fav = message.is_favorite or bool(self.config and sender in self.config.favorites)
         t_str = message.timestamp[11:16] if len(message.timestamp) >= 16 else datetime.now().strftime("%H:%M")
 
-        # 2. 3-Message FIFO Rolling Stack for this Channel
+        # 2. Store Single Latest Message for this Channel
         msg_entry = ChannelMessage(
             sender_name=sender,
             is_favorite=is_fav,
             time_str=t_str,
             text=message.text
         )
-        chan_stack = self.channel_messages[clean_chan]
-        if len(chan_stack) >= 3:
-            chan_stack.pop(0)  # Remove oldest message
-        chan_stack.append(msg_entry)
+        self.latest_messages[clean_chan] = msg_entry
 
         # 3. Reset page timer and handle channel switching
         now = time.time()
@@ -166,7 +150,7 @@ class PixooRenderer:
         current_active_page = active_pages[self.current_page_idx % len(active_pages)].lower()
 
         if current_active_page == clean_chan.lower():
-            # Already viewing this channel: RESET page timer so the page doesn't shift away
+            # Already viewing this channel: reset 30s timer and flash inverted header
             self.page_start_time = now
             self.last_switch_time = now
             if not self.is_in_quiet_hours():
@@ -182,7 +166,7 @@ class PixooRenderer:
             else:
                 self._switch_to_channel_page(clean_chan, now)
 
-        # Reset animation ticks so reading begins immediately on the newest message at bottom
+        # Reset animation ticks so reading starts at the top of the new message
         self.anim_frame = 0
 
         # Return from Telemetry or Neighbours mode if active
@@ -275,7 +259,7 @@ class PixooRenderer:
         if self.is_in_quiet_hours() and self.config and self.config.quiet_hours.action == "blackout":
             return img
 
-        # Determine if header should be color-inverted (flashing)
+        # Inverted header flash state
         is_header_inverted = False
         if self.is_flashing:
             elapsed_flash = now - self.flash_start_time
@@ -343,7 +327,7 @@ class PixooRenderer:
             page_img = self._render_channel_page(page_name, is_header_inverted)
             img.paste(page_img, (0, 0))
 
-    # --- Render Channel Page with Bottom-First Reading & 6s Hold ---
+    # --- Render Single Latest Message on Channel Page ---
 
     def _render_channel_page(self, channel_name: str, is_header_inverted: bool = False) -> Image.Image:
         page = Image.new("RGB", (64, 64), (0, 0, 0))
@@ -355,7 +339,7 @@ class PixooRenderer:
         time_col = (139, 148, 158)
         divider_col = (33, 38, 45)
 
-        # 1. Top Channel Heading (y=0..8)
+        # 1. Top Channel Heading (y=0..8) with Inverted Color Flash Support
         header_title = f"#{channel_name.upper()}"
         if is_header_inverted:
             p_draw.rectangle([0, 0, 63, 8], fill=chan_col)
@@ -365,69 +349,59 @@ class PixooRenderer:
 
         p_draw.line([0, 9, 63, 9], fill=divider_col)
 
-        # 2. Get Messages for this Channel
+        # 2. Get Single Latest Message for this Channel
         clean_name = channel_name.lstrip("#")
-        msgs = self.channel_messages.get(clean_name, [])
+        msg = self.latest_messages.get(clean_name)
 
-        if not msgs:
+        if not msg:
             self._draw_text(page, "No messages", 6, 26, (100, 120, 140))
             self._draw_text(page, "Standby...", 10, 38, (70, 90, 110))
             return page
 
-        # 3. Group consecutive messages by sender_name
-        groups: List[MessageGroup] = []
-        for m in msgs:
-            if groups and groups[-1].sender_name == m.sender_name:
-                groups[-1].messages.append(m.text)
-                groups[-1].time_str = m.time_str
-                groups[-1].is_favorite = m.is_favorite or groups[-1].is_favorite
-            else:
-                groups.append(MessageGroup(
-                    sender_name=m.sender_name,
-                    is_favorite=m.is_favorite,
-                    time_str=m.time_str,
-                    messages=[m.text]
-                ))
+        # 3. User Header Line (y=11..17): [★] @username time
+        star_str = "★" if msg.is_favorite else ""
+        header_text = f"{star_str}@{msg.sender_name} {msg.time_str}"
+        header_width = len(header_text) * 5
 
-        # 4. Lay out groups with darkening run-ons and blue tag highlights
-        group_layouts = []
-        total_content_height = 0
+        header_band = Image.new("RGBA", (max(header_width + 40, 64), 7), (0, 0, 0, 0))
 
-        for grp in groups:
-            k = len(grp.messages)
-            msg_line_tokens = []
-            for idx, msg_text in enumerate(grp.messages):
-                if k == 1:
-                    shade = COLOR_WHITE
-                elif k == 2:
-                    shade = COLOR_GREY_25 if idx == 0 else COLOR_WHITE
-                else:  # k == 3
-                    if idx == 0:
-                        shade = COLOR_GREY_50
-                    elif idx == 1:
-                        shade = COLOR_GREY_25
-                    else:
-                        shade = COLOR_WHITE
+        # Horizontal pan if user header overflows 60px
+        x_shift = 0
+        if header_width > 60:
+            overflow_x = header_width - 56
+            x_shift = int((self.anim_frame * 0.4) % (overflow_x + 20))
+            if x_shift > overflow_x:
+                x_shift = overflow_x
 
-                lines = self._wrap_and_tokenize(msg_text, base_color=shade, max_chars_per_line=12)
-                msg_line_tokens.append(lines)
+        x_pos = 1 - x_shift
+        if msg.is_favorite:
+            self._draw_glyph(header_band, GLYPH_STAR, x_pos, 0, star_col)
+            x_pos += 6
 
-            total_lines_count = sum(len(lines) for lines in msg_line_tokens)
-            grp_h = 8 + (total_lines_count * 7) + (max(0, k - 1) * 2)
-            group_layouts.append((grp, msg_line_tokens, grp_h))
-            total_content_height += grp_h + 3
+        user_tag = f"@{msg.sender_name}"
+        self._draw_text(header_band, user_tag, x_pos, 0, sender_col)
+        x_pos += (len(user_tag) + 1) * 5
 
-        # Available display height for message area (y=11..63 -> 52 pixels)
-        available_h = 52
-        content_buffer = Image.new("RGBA", (64, max(total_content_height, available_h)), (0, 0, 0, 0))
+        self._draw_text(header_band, msg.time_str, x_pos, 0, time_col)
 
-        # 5. Natural Reading Order: Start at Top -> Hold -> Scroll Down -> Hold at Bottom -> Scroll Up
+        cropped_header = header_band.crop((0, 0, 64, 7))
+        page.paste(cropped_header, (0, 11), cropped_header)
+
+        # 4. Tokenize and Wrap Single Latest Message Body in Pure White with Blue Tag Highlighting
+        line_tokens = self._wrap_and_tokenize(msg.text, base_color=COLOR_BODY_WHITE, max_chars_per_line=12)
+        total_msg_height = len(line_tokens) * 7
+
+        # Available display height below user header (y=19..63 -> 44 pixels)
+        available_h = 44
+        content_buffer = Image.new("RGBA", (64, max(total_msg_height, available_h)), (0, 0, 0, 0))
+
+        # 5. Top-First Vertical Bounce: ONLY if total message height > 44px
         bounce_y = 0.0
-        if total_content_height > available_h:
-            overflow_y = float(total_content_height - available_h)
-            pause_top_frames = 125     # ~5.0s hold at start of message
+        if total_msg_height > available_h:
+            overflow_y = float(total_msg_height - available_h)
+            pause_top_frames = 125     # ~5.0s hold on start of message
             scroll_down_frames = max(40, int(overflow_y * 2.5))
-            pause_bottom_frames = 100  # ~4.0s hold at bottom of message
+            pause_bottom_frames = 100  # ~4.0s hold at end of message
             scroll_up_frames = max(40, int(overflow_y * 2.5))
 
             total_cycle = pause_top_frames + scroll_down_frames + pause_bottom_frames + scroll_up_frames
@@ -450,55 +424,20 @@ class PixooRenderer:
         else:
             bounce_y = 0.0
 
-        # Draw all groups onto content buffer
+        # Draw lines onto content buffer
         y_cursor = 0
-        for grp, msg_line_tokens, grp_h in group_layouts:
-            # --- Draw User Header: [★] @username time ---
-            star_str = "★" if grp.is_favorite else ""
-            header_text = f"{star_str}@{grp.sender_name} {grp.time_str}"
-            header_width = len(header_text) * 5
+        for words_on_line in line_tokens:
+            x_cursor = 2
+            for word_text, word_color in words_on_line:
+                self._draw_text(content_buffer, word_text, x_cursor, y_cursor, word_color)
+                x_cursor += (len(word_text) + 1) * 5
+            y_cursor += 7
 
-            header_band = Image.new("RGBA", (max(header_width + 40, 64), 7), (0, 0, 0, 0))
-
-            x_shift = 0
-            if header_width > 60:
-                overflow_x = header_width - 56
-                x_shift = int((self.anim_frame * 0.4) % (overflow_x + 20))
-                if x_shift > overflow_x:
-                    x_shift = overflow_x
-
-            x_pos = 1 - x_shift
-            if grp.is_favorite:
-                self._draw_glyph(header_band, GLYPH_STAR, x_pos, 0, star_col)
-                x_pos += 6
-
-            user_tag = f"@{grp.sender_name}"
-            self._draw_text(header_band, user_tag, x_pos, 0, sender_col)
-            x_pos += (len(user_tag) + 1) * 5
-
-            self._draw_text(header_band, grp.time_str, x_pos, 0, time_col)
-
-            cropped_header = header_band.crop((0, 0, 64, 7))
-            content_buffer.paste(cropped_header, (0, y_cursor), cropped_header)
-            y_cursor += 8
-
-            # --- Draw Group Messages ---
-            for lines in msg_line_tokens:
-                for words_on_line in lines:
-                    x_cursor = 2
-                    for word_text, word_color in words_on_line:
-                        self._draw_text(content_buffer, word_text, x_cursor, y_cursor, word_color)
-                        x_cursor += (len(word_text) + 1) * 5
-                    y_cursor += 7
-                y_cursor += 2
-
-            y_cursor += 3
-
-        # Crop visible message window and paste at y=11
+        # Crop visible message window and paste at y=19
         crop_top = int(bounce_y)
         crop_bottom = crop_top + available_h
         cropped_content = content_buffer.crop((0, crop_top, 64, crop_bottom))
-        page.paste(cropped_content, (0, 11), cropped_content)
+        page.paste(cropped_content, (0, 19), cropped_content)
 
         return page
 
