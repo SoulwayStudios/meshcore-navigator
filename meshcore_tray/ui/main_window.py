@@ -127,8 +127,7 @@ class MainWindow(QMainWindow):
         self.current_dm = None
         self.chat_widget.set_target(channel_name, None)
         self.composer.set_active_target(channel_name, None)
-        if self.pixoo_service:
-            self.pixoo_service.renderer.set_current_channel(channel_name)
+        # Note: Desktop channel selection is independent of Pixoo channel carousel
 
     def _on_contact_selected(self, contact_id: str):
         self.current_dm = contact_id

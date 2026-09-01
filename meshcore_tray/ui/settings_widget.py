@@ -207,17 +207,23 @@ class SettingsDialog(QDialog):
         dev_layout.addLayout(bright_row)
 
         dur_row = QHBoxLayout()
-        dur_row.addWidget(QLabel("Alert Duration (Seconds):"))
+        dur_row.addWidget(QLabel("Alert Flash Duration (s):"))
         self.alert_dur_spin = QSpinBox()
         self.alert_dur_spin.setRange(3, 60)
         self.alert_dur_spin.setValue(self.config.pixoo.alert_duration_secs)
         dur_row.addWidget(self.alert_dur_spin)
 
-        dur_row.addWidget(QLabel("Green Flash Cycles:"))
+        dur_row.addWidget(QLabel("Flash Cycles:"))
         self.flash_count_spin = QSpinBox()
         self.flash_count_spin.setRange(1, 15)
         self.flash_count_spin.setValue(self.config.pixoo.flash_count)
         dur_row.addWidget(self.flash_count_spin)
+
+        dur_row.addWidget(QLabel("Channel Page Duration (s):"))
+        self.page_dur_spin = QSpinBox()
+        self.page_dur_spin.setRange(5, 300)
+        self.page_dur_spin.setValue(getattr(self.config.pixoo, "page_duration_secs", 30))
+        dur_row.addWidget(self.page_dur_spin)
         dev_layout.addLayout(dur_row)
 
         layout.addWidget(grp_dev)
@@ -488,6 +494,7 @@ class SettingsDialog(QDialog):
         self.config.pixoo.brightness = self.bright_slider.value()
         self.config.pixoo.alert_duration_secs = self.alert_dur_spin.value()
         self.config.pixoo.flash_count = self.flash_count_spin.value()
+        self.config.pixoo.page_duration_secs = self.page_dur_spin.value()
 
         # Quiet hours
         self.config.quiet_hours.enabled = self.chk_quiet.isChecked()

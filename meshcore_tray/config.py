@@ -65,6 +65,7 @@ class PixooDeviceConfig:
     brightness: int = 80
     alert_duration_secs: int = 10
     flash_count: int = 5
+    page_duration_secs: int = 30
     vertical_scroll_speed: int = 3
     horizontal_marquee_speed: int = 4
     channel_filters: Dict[str, bool] = field(default_factory=lambda: {
@@ -72,7 +73,7 @@ class PixooDeviceConfig:
         "#general": True,
         "#ops": True,
         "#test": False,  # Filtered out from Pixoo by default
-        "#telemetry": False
+        "#telemetry": True
     })
 
 

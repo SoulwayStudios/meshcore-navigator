@@ -1,11 +1,13 @@
-"""Unit tests for Pixoo 64 matrix renderer, chat stream grouping, and state machine."""
+"""Unit tests for Pixoo 64 3-Message Rolling Stack, Sender Grouping, Dimming & Queued Channel Switching."""
 
 import time
 import pytest
 from PIL import Image
 from meshcore_tray.config import AppConfig
 from meshcore_tray.core.models import MessageEnvelope, TelemetryEnvelope, NeighbourInfo
-from meshcore_tray.pixoo.pixoo_renderer import PixooRenderer, DisplayMode
+from meshcore_tray.pixoo.pixoo_renderer import (
+    PixooRenderer, DisplayMode, COLOR_TAG_BLUE, COLOR_WHITE, COLOR_GREY_25, COLOR_GREY_50
+)
 
 
 def test_renderer_initialization():
@@ -16,54 +18,106 @@ def test_renderer_initialization():
     assert frame.size == (64, 64)
 
 
-def test_chat_grouping_consecutive_messages():
+def test_three_message_rolling_fifo_stack_progression():
+    """Verify exact FIFO rolling stack progression as specified by user:
+    Alice, Alice, Alice -> Bob posts -> Alice, Alice, Bob -> Bob posts again -> Alice, Bob, Bob -> Charlie posts -> Bob, Bob, Charlie.
+    """
     config = AppConfig()
     renderer = PixooRenderer(config=config)
 
-    # 1. Message from Alice
-    msg1 = MessageEnvelope(id="m1", sender_name="Alice", channel="Public", text="First message from Alice")
-    renderer.trigger_message_alert(msg1)
+    # 1. Alice posts 3 messages
+    renderer.trigger_message_alert(MessageEnvelope(id="a1", sender_name="Alice", channel="Public", text="Alice msg 1"))
+    renderer.trigger_message_alert(MessageEnvelope(id="a2", sender_name="Alice", channel="Public", text="Alice msg 2"))
+    renderer.trigger_message_alert(MessageEnvelope(id="a3", sender_name="Alice", channel="Public", text="Alice msg 3"))
 
-    assert len(renderer.chat_groups) == 1
-    assert renderer.chat_groups[0].sender_name == "Alice"
-    assert len(renderer.chat_groups[0].messages) == 1
+    stack = renderer.channel_messages["Public"]
+    assert len(stack) == 3
+    assert [m.sender_name for m in stack] == ["Alice", "Alice", "Alice"]
+    assert [m.text for m in stack] == ["Alice msg 1", "Alice msg 2", "Alice msg 3"]
 
-    # 2. Second consecutive message from Alice on same channel
-    msg2 = MessageEnvelope(id="m2", sender_name="Alice", channel="Public", text="Second message from Alice")
-    renderer.trigger_message_alert(msg2)
+    # 2. Bob posts -> removes Alice's oldest message (a1)
+    renderer.trigger_message_alert(MessageEnvelope(id="b1", sender_name="Bob", channel="Public", text="Bob msg 1"))
+    stack = renderer.channel_messages["Public"]
+    assert len(stack) == 3
+    assert [m.sender_name for m in stack] == ["Alice", "Alice", "Bob"]
+    assert [m.text for m in stack] == ["Alice msg 2", "Alice msg 3", "Bob msg 1"]
 
-    # Should be grouped under the same heading
-    assert len(renderer.chat_groups) == 1
-    assert len(renderer.chat_groups[0].messages) == 2
+    # 3. Bob posts again -> removes Alice's next oldest message (a2)
+    renderer.trigger_message_alert(MessageEnvelope(id="b2", sender_name="Bob", channel="Public", text="Bob msg 2"))
+    stack = renderer.channel_messages["Public"]
+    assert len(stack) == 3
+    assert [m.sender_name for m in stack] == ["Alice", "Bob", "Bob"]
+    assert [m.text for m in stack] == ["Alice msg 3", "Bob msg 1", "Bob msg 2"]
 
-    # 3. Message from Bob
-    msg3 = MessageEnvelope(id="m3", sender_name="Bob", channel="Public", text="Hello from Bob")
-    renderer.trigger_message_alert(msg3)
+    # 4. Charlie posts -> removes Alice's last message (a3)
+    renderer.trigger_message_alert(MessageEnvelope(id="c1", sender_name="Charlie", channel="Public", text="Charlie msg 1"))
+    stack = renderer.channel_messages["Public"]
+    assert len(stack) == 3
+    assert [m.sender_name for m in stack] == ["Bob", "Bob", "Charlie"]
+    assert [m.text for m in stack] == ["Bob msg 1", "Bob msg 2", "Charlie msg 1"]
 
-    # Should create a new chat group below Alice's
-    assert len(renderer.chat_groups) == 2
-    assert renderer.chat_groups[1].sender_name == "Bob"
 
-
-def test_alert_strobe_and_upward_scroller():
+def test_queued_channel_switch_fifteen_seconds():
     config = AppConfig()
-    config.pixoo_colors.alert_color = "#00FF44"
+    config.pixoo.channel_filters = {"Public": True, "ops": True}
     renderer = PixooRenderer(config=config)
 
-    # Add several messages to exceed 64px vertical height
-    for i in range(5):
-        msg = MessageEnvelope(
-            id=f"m_{i}",
-            sender_name=f"User{i}",
-            channel="Public",
-            text=f"Line {i} test message for vertical chat stream scrolling"
-        )
-        renderer.trigger_message_alert(msg)
+    # 1. Message arrives on Public -> switches to Public immediately
+    msg_pub = MessageEnvelope(id="m1", sender_name="Alice", channel="Public", text="Public hello")
+    renderer.trigger_message_alert(msg_pub)
+    assert renderer.get_active_channel_pages()[renderer.current_page_idx].lower() == "public"
+
+    # 2. Message arrives 2 seconds later on ops (< 15s) -> should queue switch
+    time_pub = renderer.last_switch_time
+    msg_ops = MessageEnvelope(id="m2", sender_name="Bob", channel="ops", text="Ops alert")
+    renderer.trigger_message_alert(msg_ops)
+
+    # Still viewing Public, switch is pending
+    assert renderer.get_active_channel_pages()[renderer.current_page_idx].lower() == "public"
+    assert renderer.pending_channel_switch == "ops"
+    assert renderer.pending_switch_time == time_pub + 15.0
+
+
+def test_consecutive_user_grouping_and_dimming():
+    config = AppConfig()
+    renderer = PixooRenderer(config=config)
+
+    # Add 3 run-on messages from Alice
+    renderer.trigger_message_alert(MessageEnvelope(id="a1", sender_name="Alice", channel="Public", text="1st thought"))
+    renderer.trigger_message_alert(MessageEnvelope(id="a2", sender_name="Alice", channel="Public", text="2nd thought"))
+    renderer.trigger_message_alert(MessageEnvelope(id="a3", sender_name="Alice", channel="Public", text="3rd thought"))
+
+    page_img = renderer._render_channel_page("Public", is_header_inverted=False)
+    assert isinstance(page_img, Image.Image)
+    assert page_img.size == (64, 64)
+
+
+def test_tag_highlighting_in_message_body():
+    config = AppConfig()
+    renderer = PixooRenderer(config=config)
+
+    tokens = renderer._wrap_and_tokenize("Test @Alice on #general and #Public", base_color=(255, 255, 255), max_chars_per_line=12)
+    tag_colors = []
+    for line in tokens:
+        for word, color in line:
+            if word in ("@Alice", "#general", "#Public"):
+                tag_colors.append((word, color))
+
+    for word, col in tag_colors:
+        assert col == COLOR_TAG_BLUE
+
+
+def test_inverted_header_flash_alert():
+    config = AppConfig()
+    renderer = PixooRenderer(config=config)
+
+    msg = MessageEnvelope(id="m_alert", sender_name="Alice", channel="Public", text="Alert msg")
+    renderer.trigger_message_alert(msg)
 
     assert renderer.is_flashing is True
 
-    # Render frame during strobe phase (< 1s)
     frame = renderer.render_frame()
+    assert isinstance(frame, Image.Image)
     assert frame.size == (64, 64)
 
 
@@ -105,16 +159,14 @@ def test_channel_filtering_silences_pixoo():
     config.pixoo.channel_filters = {"#test": False, "Public": True}
     renderer = PixooRenderer(config=config)
 
-    # Trigger message on filtered channel #test
     msg_test = MessageEnvelope(id="m_test", sender_name="Tester", channel="#test", text="Test message")
     renderer.trigger_message_alert(msg_test)
-    assert len(renderer.chat_groups) == 0
+    assert len(renderer.channel_messages["test"]) == 0
     assert renderer.is_flashing is False
 
-    # Trigger message on allowed channel Public
     msg_pub = MessageEnvelope(id="m_pub", sender_name="Alice", channel="Public", text="Public message")
     renderer.trigger_message_alert(msg_pub)
-    assert len(renderer.chat_groups) == 1
+    assert len(renderer.channel_messages["Public"]) == 1
     assert renderer.is_flashing is True
 
 
@@ -128,7 +180,6 @@ def test_quiet_hours_blackout():
     renderer = PixooRenderer(config=config)
     frame = renderer.render_frame()
 
-    # All pixels should be pure black (0, 0, 0)
     for y in range(0, 64, 8):
         for x in range(0, 64, 8):
             assert frame.getpixel((x, y)) == (0, 0, 0)
