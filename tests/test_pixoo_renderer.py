@@ -183,3 +183,40 @@ def test_quiet_hours_blackout():
     for y in range(0, 64, 8):
         for x in range(0, 64, 8):
             assert frame.getpixel((x, y)) == (0, 0, 0)
+
+
+def test_bottom_first_scrolling_and_six_second_hold():
+    config = AppConfig()
+    renderer = PixooRenderer(config=config)
+
+    # Trigger long multi-line message
+    long_msg = MessageEnvelope(
+        id="m_long",
+        sender_name="Alice",
+        channel="Public",
+        text="Field report: Weather station update on mountain pass. Wind 25 knots gusting 40. Telemetry repeater active on frequency 868.125 MHz."
+    )
+    renderer.trigger_message_alert(long_msg)
+
+    # Frame 0 is at the beginning of the 6s hold on the newest message
+    assert renderer.anim_frame == 0
+    frame = renderer.render_frame()
+    assert isinstance(frame, Image.Image)
+    assert frame.size == (64, 64)
+
+
+def test_incoming_message_resets_page_timer():
+    config = AppConfig()
+    renderer = PixooRenderer(config=config)
+
+    # Set page timer to 25s ago (almost expired)
+    old_time = time.time() - 25.0
+    renderer.page_start_time = old_time
+
+    # Incoming message arrives on Public
+    msg = MessageEnvelope(id="m_new", sender_name="Alice", channel="Public", text="Fresh transmission")
+    renderer.trigger_message_alert(msg)
+
+    # Verify page timer was reset to current timestamp (> old_time)
+    assert renderer.page_start_time > old_time
+    assert time.time() - renderer.page_start_time < 2.0

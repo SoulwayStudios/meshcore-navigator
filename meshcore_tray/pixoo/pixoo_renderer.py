@@ -1,4 +1,4 @@
-"""Pixoo 64 Matrix Renderer with 3-Message FIFO Rolling Stack, Run-on Grouping & Queued Channel Switching."""
+"""Pixoo 64 Matrix Renderer with Bottom-First Scrolling, 6s New Message Hold, and Reset Page Timers."""
 
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -62,7 +62,7 @@ class MessageGroup:
 
 
 class PixooRenderer:
-    """Renders tabbed channel pages with 3-message rolling FIFO stack and 15s queued switching."""
+    """Renders tabbed channel pages with bottom-first reading priority and 6s hold on new messages."""
 
     def __init__(self, config=None):
         self.config = config
@@ -133,7 +133,7 @@ class PixooRenderer:
         return enabled
 
     def trigger_message_alert(self, message: MessageEnvelope):
-        """Processes an incoming message with 3-message rolling FIFO stack and queued switching."""
+        """Processes an incoming message, resets page timer, and prioritizes reading the new message."""
         chan = message.channel if not message.is_direct_message else "DM"
         clean_chan = chan.lstrip("#")
 
@@ -160,13 +160,15 @@ class PixooRenderer:
             chan_stack.pop(0)  # Remove oldest message
         chan_stack.append(msg_entry)
 
-        # 3. Queued Channel Switching Logic
+        # 3. Reset page timer and handle channel switching
         now = time.time()
         active_pages = self.get_active_channel_pages()
         current_active_page = active_pages[self.current_page_idx % len(active_pages)].lower()
 
         if current_active_page == clean_chan.lower():
-            # Already viewing this channel: trigger inverted header alert immediately
+            # Already viewing this channel: RESET page timer so the page doesn't shift away
+            self.page_start_time = now
+            self.last_switch_time = now
             if not self.is_in_quiet_hours():
                 self.is_flashing = True
                 self.flash_start_time = now
@@ -175,14 +177,12 @@ class PixooRenderer:
             # Different channel: check if we need to queue (if current page was shown for < 15s)
             time_on_current_page = now - self.last_switch_time
             if time_on_current_page < 15.0:
-                # Queue switch to wait for remaining seconds
                 self.pending_channel_switch = clean_chan
                 self.pending_switch_time = self.last_switch_time + 15.0
             else:
-                # Switch immediately
                 self._switch_to_channel_page(clean_chan, now)
 
-        # Reset animation ticks
+        # Reset animation ticks so reading begins immediately on the newest message at bottom
         self.anim_frame = 0
 
         # Return from Telemetry or Neighbours mode if active
@@ -190,7 +190,7 @@ class PixooRenderer:
             self.mode = DisplayMode.CAROUSEL
 
     def _switch_to_channel_page(self, channel_name: str, now: float):
-        """Switches carousel to target channel page and triggers header alert."""
+        """Switches carousel to target channel page and resets 30s timer."""
         active_pages = self.get_active_channel_pages()
         for idx, p in enumerate(active_pages):
             if p.lower() == channel_name.lower():
@@ -310,7 +310,7 @@ class PixooRenderer:
         elapsed_page = now - self.page_start_time
         page_dur = self.page_duration_secs if self.page_duration_secs > 0 else 30.0
 
-        # Timed carousel rotation (unless a channel switch is pending)
+        # Timed carousel rotation
         if not self.pending_channel_switch and not self.is_transitioning and len(active_pages) > 1 and elapsed_page >= page_dur:
             self.is_transitioning = True
             self.transition_start_time = now
@@ -343,7 +343,7 @@ class PixooRenderer:
             page_img = self._render_channel_page(page_name, is_header_inverted)
             img.paste(page_img, (0, 0))
 
-    # --- Render Channel Page (Header + Grouped 3-Message Stack + Dimming) ---
+    # --- Render Channel Page with Bottom-First Reading & 6s Hold ---
 
     def _render_channel_page(self, channel_name: str, is_header_inverted: bool = False) -> Image.Image:
         page = Image.new("RGB", (64, 64), (0, 0, 0))
@@ -355,7 +355,7 @@ class PixooRenderer:
         time_col = (139, 148, 158)
         divider_col = (33, 38, 45)
 
-        # 1. Top Channel Heading (y=0..8) with Inverted Color Flash Support
+        # 1. Top Channel Heading (y=0..8)
         header_title = f"#{channel_name.upper()}"
         if is_header_inverted:
             p_draw.rectangle([0, 0, 63, 8], fill=chan_col)
@@ -365,7 +365,7 @@ class PixooRenderer:
 
         p_draw.line([0, 9, 63, 9], fill=divider_col)
 
-        # 2. Get Messages for this Channel (Max 3 in rolling stack)
+        # 2. Get Messages for this Channel
         clean_name = channel_name.lstrip("#")
         msgs = self.channel_messages.get(clean_name, [])
 
@@ -375,7 +375,6 @@ class PixooRenderer:
             return page
 
         # 3. Group consecutive messages by sender_name
-        # E.g. [Alice1, Alice2, Bob1] -> Group(Alice, [Alice1, Alice2]), Group(Bob, [Bob1])
         groups: List[MessageGroup] = []
         for m in msgs:
             if groups and groups[-1].sender_name == m.sender_name:
@@ -390,11 +389,7 @@ class PixooRenderer:
                     messages=[m.text]
                 ))
 
-        # 4. Pre-render groups with headers, run-on darkening, and blue tag highlighting
-        # Dimming logic:
-        # If group has 1 message: Pure White (all first/single posts are full white)
-        # If group has 2 messages: 1st = 25% Grey, 2nd = Pure White
-        # If group has 3 messages: 1st = 50% Grey, 2nd = 25% Grey, 3rd = Pure White
+        # 4. Lay out groups with darkening run-ons and blue tag highlights
         group_layouts = []
         total_content_height = 0
 
@@ -402,7 +397,6 @@ class PixooRenderer:
             k = len(grp.messages)
             msg_line_tokens = []
             for idx, msg_text in enumerate(grp.messages):
-                # Calculate shade based on position in group
                 if k == 1:
                     shade = COLOR_WHITE
                 elif k == 2:
@@ -418,35 +412,42 @@ class PixooRenderer:
                 lines = self._wrap_and_tokenize(msg_text, base_color=shade, max_chars_per_line=12)
                 msg_line_tokens.append(lines)
 
-            # Header height (8px) + lines height (7px each) + 2px between messages
             total_lines_count = sum(len(lines) for lines in msg_line_tokens)
             grp_h = 8 + (total_lines_count * 7) + (max(0, k - 1) * 2)
             group_layouts.append((grp, msg_line_tokens, grp_h))
-            total_content_height += grp_h + 3  # 3px gap between different user groups
+            total_content_height += grp_h + 3
 
         # Available display height for message area (y=11..63 -> 52 pixels)
         available_h = 52
         content_buffer = Image.new("RGBA", (64, max(total_content_height, available_h)), (0, 0, 0, 0))
 
-        # 5. Conditional Vertical Bounce: ONLY if total content height > available_h
+        # 5. Bottom-First Reading Priority with 6s Initial Hold
         bounce_y = 0.0
         if total_content_height > available_h:
             overflow_y = float(total_content_height - available_h)
-            pause_frames = 55  # ~2.2 seconds pause
-            scroll_duration = max(35, int(overflow_y * 2.5))
-            total_cycle = (pause_frames * 2) + (scroll_duration * 2)
+            # Hold at bottom (on newest message) for 6.0 seconds (~150 frames at 25fps)
+            pause_bottom_frames = 150
+            scroll_up_frames = max(35, int(overflow_y * 2.5))
+            pause_top_frames = 75  # ~3.0 seconds pause at top
+            scroll_down_frames = max(35, int(overflow_y * 2.5))
 
+            total_cycle = pause_bottom_frames + scroll_up_frames + pause_top_frames + scroll_down_frames
             phase = self.anim_frame % total_cycle
-            if phase < pause_frames:
-                bounce_y = 0.0
-            elif phase < pause_frames + scroll_duration:
-                t = (phase - pause_frames) / float(scroll_duration)
-                bounce_y = overflow_y * (0.5 - 0.5 * math.cos(t * math.pi))
-            elif phase < (pause_frames * 2) + scroll_duration:
+
+            if phase < pause_bottom_frames:
+                # 1. HOLD on newest message at bottom for 6 seconds
                 bounce_y = overflow_y
-            else:
-                t = (phase - (pause_frames * 2 + scroll_duration)) / float(scroll_duration)
+            elif phase < pause_bottom_frames + scroll_up_frames:
+                # 2. Smoothly scroll UP to older messages at the top
+                t = (phase - pause_bottom_frames) / float(scroll_up_frames)
                 bounce_y = overflow_y * (0.5 + 0.5 * math.cos(t * math.pi))
+            elif phase < pause_bottom_frames + scroll_up_frames + pause_top_frames:
+                # 3. HOLD at top for 3 seconds
+                bounce_y = 0.0
+            else:
+                # 4. Smoothly scroll DOWN back to newest message at bottom
+                t = (phase - (pause_bottom_frames + scroll_up_frames + pause_top_frames)) / float(scroll_down_frames)
+                bounce_y = overflow_y * (0.5 - 0.5 * math.cos(t * math.pi))
         else:
             bounce_y = 0.0
 
@@ -460,7 +461,6 @@ class PixooRenderer:
 
             header_band = Image.new("RGBA", (max(header_width + 40, 64), 7), (0, 0, 0, 0))
 
-            # Horizontal pan if user header overflows 60px
             x_shift = 0
             if header_width > 60:
                 overflow_x = header_width - 56
@@ -491,9 +491,9 @@ class PixooRenderer:
                         self._draw_text(content_buffer, word_text, x_cursor, y_cursor, word_color)
                         x_cursor += (len(word_text) + 1) * 5
                     y_cursor += 7
-                y_cursor += 2  # 2px spacing between consecutive messages of same user
+                y_cursor += 2
 
-            y_cursor += 3  # Gap between different user groups
+            y_cursor += 3
 
         # Crop visible message window and paste at y=11
         crop_top = int(bounce_y)
