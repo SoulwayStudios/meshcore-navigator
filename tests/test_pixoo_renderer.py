@@ -185,20 +185,20 @@ def test_quiet_hours_blackout():
             assert frame.getpixel((x, y)) == (0, 0, 0)
 
 
-def test_bottom_first_scrolling_and_six_second_hold():
+def test_top_first_scrolling_and_bounce():
     config = AppConfig()
     renderer = PixooRenderer(config=config)
 
     # Trigger long multi-line message
     long_msg = MessageEnvelope(
         id="m_long",
-        sender_name="Alice",
+        sender_name="Charlie",
         channel="Public",
         text="Field report: Weather station update on mountain pass. Wind 25 knots gusting 40. Telemetry repeater active on frequency 868.125 MHz."
     )
     renderer.trigger_message_alert(long_msg)
 
-    # Frame 0 is at the beginning of the 6s hold on the newest message
+    # Frame 0 is at the beginning of the hold at the top on the start of the message
     assert renderer.anim_frame == 0
     frame = renderer.render_frame()
     assert isinstance(frame, Image.Image)

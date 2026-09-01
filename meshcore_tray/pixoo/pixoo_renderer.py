@@ -421,33 +421,32 @@ class PixooRenderer:
         available_h = 52
         content_buffer = Image.new("RGBA", (64, max(total_content_height, available_h)), (0, 0, 0, 0))
 
-        # 5. Bottom-First Reading Priority with 6s Initial Hold
+        # 5. Natural Reading Order: Start at Top -> Hold -> Scroll Down -> Hold at Bottom -> Scroll Up
         bounce_y = 0.0
         if total_content_height > available_h:
             overflow_y = float(total_content_height - available_h)
-            # Hold at bottom (on newest message) for 6.0 seconds (~150 frames at 25fps)
-            pause_bottom_frames = 150
-            scroll_up_frames = max(35, int(overflow_y * 2.5))
-            pause_top_frames = 75  # ~3.0 seconds pause at top
-            scroll_down_frames = max(35, int(overflow_y * 2.5))
+            pause_top_frames = 125     # ~5.0s hold at start of message
+            scroll_down_frames = max(40, int(overflow_y * 2.5))
+            pause_bottom_frames = 100  # ~4.0s hold at bottom of message
+            scroll_up_frames = max(40, int(overflow_y * 2.5))
 
-            total_cycle = pause_bottom_frames + scroll_up_frames + pause_top_frames + scroll_down_frames
+            total_cycle = pause_top_frames + scroll_down_frames + pause_bottom_frames + scroll_up_frames
             phase = self.anim_frame % total_cycle
 
-            if phase < pause_bottom_frames:
-                # 1. HOLD on newest message at bottom for 6 seconds
-                bounce_y = overflow_y
-            elif phase < pause_bottom_frames + scroll_up_frames:
-                # 2. Smoothly scroll UP to older messages at the top
-                t = (phase - pause_bottom_frames) / float(scroll_up_frames)
-                bounce_y = overflow_y * (0.5 + 0.5 * math.cos(t * math.pi))
-            elif phase < pause_bottom_frames + scroll_up_frames + pause_top_frames:
-                # 3. HOLD at top for 3 seconds
+            if phase < pause_top_frames:
+                # 1. HOLD on start of message at TOP for ~5 seconds
                 bounce_y = 0.0
-            else:
-                # 4. Smoothly scroll DOWN back to newest message at bottom
-                t = (phase - (pause_bottom_frames + scroll_up_frames + pause_top_frames)) / float(scroll_down_frames)
+            elif phase < pause_top_frames + scroll_down_frames:
+                # 2. Smoothly scroll DOWN to bottom of message
+                t = (phase - pause_top_frames) / float(scroll_down_frames)
                 bounce_y = overflow_y * (0.5 - 0.5 * math.cos(t * math.pi))
+            elif phase < pause_top_frames + scroll_down_frames + pause_bottom_frames:
+                # 3. HOLD at bottom for ~4 seconds
+                bounce_y = overflow_y
+            else:
+                # 4. Smoothly scroll UP back to start of message at top
+                t = (phase - (pause_top_frames + scroll_down_frames + pause_bottom_frames)) / float(scroll_up_frames)
+                bounce_y = overflow_y * (0.5 + 0.5 * math.cos(t * math.pi))
         else:
             bounce_y = 0.0
 

@@ -1,6 +1,7 @@
 """Live 64x64 Virtual Pixoo Matrix Preview Widget."""
 
 import logging
+import time
 from typing import Optional
 from PIL import Image
 from PyQt6.QtCore import Qt, QRectF
