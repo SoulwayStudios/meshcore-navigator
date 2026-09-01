@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "meshcore-pixoo-tray"
+version = "0.1.0"
+description = "Heltec V3 MeshCore System Tray Application & Divoom Pixoo 64 Integration"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "MeshCore Pixoo Team" }
+]
+dependencies = [
+    "PyQt6>=6.5.0",
+    "qasync>=0.27.0",
+    "pyserial>=3.5",
+    "pillow>=10.0.0",
+    "requests>=2.31.0",
+    "meshcore>=2.3.0",
+    "pixoo>=0.9.0",
+]
+
+[project.scripts]
+meshcore-tray = "meshcore_tray.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["meshcore_tray*"]

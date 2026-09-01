@@ -1,0 +1,7 @@
+PyQt6>=6.5.0
+qasync>=0.27.0
+pyserial>=3.5
+pillow>=10.0.0
+requests>=2.31.0
+meshcore>=2.3.0
+pixoo>=0.9.0
