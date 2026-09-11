@@ -64,7 +64,7 @@ class SystemTray(QSystemTrayIcon):
     def _init_menu(self):
         menu = QMenu()
 
-        action_show = QAction("Open MeshCore & Pixoo...", self)
+        action_show = QAction("Open MeshCore Map Mixer...", self)
         action_show.triggered.connect(self._toggle_window)
         menu.addAction(action_show)
 
@@ -78,7 +78,7 @@ class SystemTray(QSystemTrayIcon):
 
         menu.addSeparator()
 
-        action_quit = QAction("Quit MeshCore Tray", self)
+        action_quit = QAction("Quit MeshCore Map Mixer", self)
         action_quit.triggered.connect(QApplication.instance().quit)
         menu.addAction(action_quit)
 

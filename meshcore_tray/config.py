@@ -5,11 +5,20 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 logger = logging.getLogger("meshcore_tray.config")
 
-CONFIG_DIR = Path.home() / ".config" / "meshcore-tray"
+def get_app_dir() -> Path:
+    """Returns platform-appropriate config and data directory."""
+    if os.name == "nt":
+        app_data = os.environ.get("APPDATA")
+        if app_data:
+            return Path(app_data) / "meshcore-navigator"
+    return Path.home() / ".config" / "meshcore-tray"
+
+
+CONFIG_DIR = get_app_dir()
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
 
@@ -23,6 +32,59 @@ class MeshcoreConfig:
     node_alias: str = "Heltec-V3"
     auto_reconnect: bool = True
     simulation_mode: bool = False
+    radio_preset: str = "UK Narrow (869.618 MHz, 62.5 kHz, SF8, CR 4/5)"
+    frequency_mhz: float = 869.618
+    bandwidth_khz: float = 62.5
+    spreading_factor: int = 8
+    coding_rate: str = "4/5"
+    tx_power_dbm: int = 22
+    latitude: Optional[float] = 54.65897
+    longitude: Optional[float] = -3.4346
+    map_center_lat: Optional[float] = None
+    map_center_lon: Optional[float] = None
+    map_zoom: Optional[int] = None
+    node_freshness_fading: bool = True
+    map_show_path_modes: bool = False
+    map_show_companion_orbitals: bool = False
+    map_show_scopes: bool = False
+    map_show_adsb: bool = False
+    adsb_radius_nm: int = 50
+    adsb_target_node_id: str = ""
+    adsb_target_alias: str = ""
+    path_hash_mode: int = 1  # 0 = 1-Byte Path, 1 = 2-Byte Multibyte Path, 2 = 3-Byte Multibyte Path
+    autoadd_contacts: bool = True
+    advert_loc_policy: int = 0  # 0 = Precise GPS, 1 = Approximate, 2 = Private / None
+    multi_acks: bool = False
+    rx_delay_ms: int = 0
+
+
+@dataclass
+class AppColors:
+    favorite_channel_color: str = "#AA55FF"
+    favorite_user_color: str = "#AA55FF"
+    send_button_color: str = "#00FF7F"
+    send_button_text_color: str = "#000000"
+    new_messages_bar_color: str = "#00FF7F"
+    map_repeater_color: str = "#AA55FF"
+    map_repeater_hover_color: str = "#FF55FF"
+    map_companion_color: str = "#00FF7F"
+    map_companion_hover_color: str = "#00FFFF"
+    map_watcher_line_start: str = "#AA55FF"
+    map_watcher_line_end: str = "#67397A"
+    map_message_line_start: str = "#00FFFF"
+    map_message_line_end: str = "#00FF7F"
+    map_dot_size: float = 6.4
+    radio_connected_color: str = "#00FF7F"
+    sync_status_color: str = "#00FF7F"
+    map_watcher_status_color: str = "#AA55FF"
+    message_snr_color: str = "#AA55FF"
+    # Route Visualisation Colors
+    map_visualised_path_color: str = "#FF00FF"
+    map_visualised_heading_color: str = "#FF00FF"
+    map_phantom_path_color: str = "#FFFF00"
+    map_unknown_path_color: str = "#EF4444"
+    map_no_gps_path_color: str = "#000000"
+    map_orbital_repeater_color: str = "#FFD335"
 
 
 @dataclass
@@ -70,11 +132,8 @@ class PixooDeviceConfig:
     horizontal_marquee_speed: int = 4
     channel_filters: Dict[str, bool] = field(default_factory=lambda: {
         "Public": True,
-        "#general": True,
-        "#ops": True,
-        "#test": False,  # Filtered out from Pixoo by default
-        "#telemetry": True
     })
+    show_live_mirror: bool = False
 
 
 @dataclass
@@ -103,7 +162,108 @@ class AppConfig:
     pixoo: PixooDeviceConfig = field(default_factory=PixooDeviceConfig)
     notifications: NotificationConfig = field(default_factory=NotificationConfig)
     gateway: GatewayConfig = field(default_factory=GatewayConfig)
-    favorites: List[str] = field(default_factory=lambda: ["Public"])
+    app_colors: AppColors = field(default_factory=AppColors)
+    default_app_colors: Dict[str, Any] = field(default_factory=dict)
+    favorite_channels: List[str] = field(default_factory=list)
+    favorite_users: List[str] = field(default_factory=list)
+    favorites: List[str] = field(default_factory=list)
+    blocked_users: List[str] = field(default_factory=list)
+    phantom_nodes: List[str] = field(default_factory=list)
+    channel_groups: Dict[str, str] = field(default_factory=dict)
+    collapsed_channel_groups: List[str] = field(default_factory=list)
+    last_active_channel: str = "Public"
+    first_run_completed: bool = False
+
+    def is_channel_favorite(self, channel_name: str) -> bool:
+        if not channel_name:
+            return False
+        clean = channel_name.lstrip("#").lower()
+        return any(clean == c.lstrip("#").lower() for c in self.favorite_channels) or any(clean == c.lstrip("#").lower() for c in self.favorites)
+
+    def set_channel_favorite(self, channel_name: str, is_fav: bool):
+        if not channel_name:
+            return
+        clean = channel_name.lstrip("#")
+        clean_lower = clean.lower()
+        if is_fav:
+            if not any(c.lstrip("#").lower() == clean_lower for c in self.favorite_channels):
+                self.favorite_channels.append(clean)
+            if not any(c.lstrip("#").lower() == clean_lower for c in self.favorites):
+                self.favorites.append(clean)
+        else:
+            self.favorite_channels = [c for c in self.favorite_channels if c.lstrip("#").lower() != clean_lower]
+            self.favorites = [c for c in self.favorites if c.lstrip("#").lower() != clean_lower]
+        self.save()
+
+    def is_user_favorite(self, user_id: str, alias: str = "") -> bool:
+        uid = (user_id or "").lower()
+        al = (alias or "").lower()
+        for fav in self.favorite_users:
+            f_clean = fav.lower().lstrip("!@")
+            if uid and (uid == f_clean or uid == f"!{f_clean}"):
+                return True
+            if al and al == f_clean:
+                return True
+        return False
+
+    def is_phantom_node(self, identifier_or_alias: str) -> bool:
+        if not identifier_or_alias:
+            return False
+        clean = identifier_or_alias.strip().lstrip("!@").lower()
+        for p in self.phantom_nodes:
+            p_clean = p.strip().lstrip("!@").lower()
+            if clean == p_clean or (len(clean) >= 2 and p_clean.startswith(clean)) or (len(p_clean) >= 2 and clean.startswith(p_clean)):
+                return True
+        return False
+
+    def mark_phantom_node(self, identifier_or_alias: str):
+        if not identifier_or_alias:
+            return
+        clean = identifier_or_alias.strip()
+        if not self.is_phantom_node(clean):
+            self.phantom_nodes.append(clean)
+            self.save()
+
+    def unmark_phantom_node(self, identifier_or_alias: str):
+        if not identifier_or_alias:
+            return
+        clean = identifier_or_alias.strip().lstrip("!@").lower()
+        self.phantom_nodes = [
+            p for p in self.phantom_nodes
+            if p.strip().lstrip("!@").lower() != clean
+        ]
+        self.save()
+
+    def get_channel_group(self, channel_name: str) -> str:
+        clean = channel_name.strip().lstrip("#").lower()
+        for k, v in self.channel_groups.items():
+            if k.strip().lstrip("#").lower() == clean:
+                return v.strip()
+        return "Channels"
+
+    def set_channel_group(self, channel_name: str, group_name: str):
+        clean = channel_name.strip().lstrip("#")
+        if not group_name or group_name.strip().upper() in ("CHANNELS", "DEFAULT"):
+            self.channel_groups = {k: v for k, v in self.channel_groups.items() if k.strip().lstrip("#").lower() != clean.lower()}
+        else:
+            self.channel_groups[clean] = group_name.strip()
+        self.save()
+
+    def is_group_collapsed(self, group_name: str) -> bool:
+        gn = group_name.strip().upper()
+        return gn in [g.strip().upper() for g in self.collapsed_channel_groups]
+
+    def toggle_group_collapsed(self, group_name: str) -> bool:
+        gn = group_name.strip().upper()
+        current = [g.strip().upper() for g in self.collapsed_channel_groups]
+        if gn in current:
+            self.collapsed_channel_groups = [g for g in self.collapsed_channel_groups if g.strip().upper() != gn]
+            collapsed = False
+        else:
+            self.collapsed_channel_groups.append(group_name.strip())
+            collapsed = True
+        self.save()
+        return collapsed
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -113,6 +273,12 @@ class AppConfig:
         config = cls()
         if "meshcore" in data:
             config.meshcore = MeshcoreConfig(**{k: v for k, v in data["meshcore"].items() if k in MeshcoreConfig.__dataclass_fields__})
+        if "app_colors" in data:
+            config.app_colors = AppColors(**{k: v for k, v in data["app_colors"].items() if k in AppColors.__dataclass_fields__})
+            if getattr(config.app_colors, "map_orbital_repeater_color", None) == "#FFD700":
+                config.app_colors.map_orbital_repeater_color = "#FFD335"
+        if "default_app_colors" in data and isinstance(data["default_app_colors"], dict):
+            config.default_app_colors = dict(data["default_app_colors"])
         if "pixoo_colors" in data:
             config.pixoo_colors = PixooColors(**{k: v for k, v in data["pixoo_colors"].items() if k in PixooColors.__dataclass_fields__})
         if "quiet_hours" in data:
@@ -127,29 +293,45 @@ class AppConfig:
             config.notifications = NotificationConfig(**{k: v for k, v in data["notifications"].items() if k in NotificationConfig.__dataclass_fields__})
         if "gateway" in data:
             config.gateway = GatewayConfig(**{k: v for k, v in data["gateway"].items() if k in GatewayConfig.__dataclass_fields__})
+        if "favorite_channels" in data:
+            config.favorite_channels = list(data["favorite_channels"])
+        if "favorite_users" in data:
+            config.favorite_users = list(data["favorite_users"])
         if "favorites" in data:
             config.favorites = list(data["favorites"])
+        if "blocked_users" in data:
+            config.blocked_users = list(data["blocked_users"])
+        if "phantom_nodes" in data:
+            config.phantom_nodes = list(data["phantom_nodes"])
+        if "channel_groups" in data:
+            config.channel_groups = dict(data["channel_groups"])
+        if "collapsed_channel_groups" in data:
+            config.collapsed_channel_groups = list(data["collapsed_channel_groups"])
+        if "first_run_completed" in data:
+            config.first_run_completed = bool(data["first_run_completed"])
         return config
 
-    def save(self, filepath: Path = CONFIG_FILE):
+    def save(self, filepath: Optional[Path] = None):
+        target_path = filepath if filepath is not None else CONFIG_FILE
         try:
-            filepath.parent.mkdir(parents=True, exist_ok=True)
-            with open(filepath, "w", encoding="utf-8") as f:
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(target_path, "w", encoding="utf-8") as f:
                 json.dump(self.to_dict(), f, indent=2)
-            logger.info(f"Saved configuration to {filepath}")
+            logger.info(f"Saved configuration to {target_path}")
         except Exception as e:
-            logger.error(f"Failed to save configuration to {filepath}: {e}")
+            logger.error(f"Failed to save configuration to {target_path}: {e}")
 
     @classmethod
-    def load(cls, filepath: Path = CONFIG_FILE) -> "AppConfig":
-        if not filepath.exists():
+    def load(cls, filepath: Optional[Path] = None) -> "AppConfig":
+        target_path = filepath if filepath is not None else CONFIG_FILE
+        if not target_path.exists():
             config = cls()
-            config.save(filepath)
+            config.save(target_path)
             return config
         try:
-            with open(filepath, "r", encoding="utf-8") as f:
+            with open(target_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             return cls.from_dict(data)
         except Exception as e:
-            logger.warning(f"Failed to load config from {filepath}, using defaults: {e}")
+            logger.warning(f"Failed to load config from {target_path}, using defaults: {e}")
             return cls()

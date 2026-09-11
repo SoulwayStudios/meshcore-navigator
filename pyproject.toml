@@ -3,13 +3,13 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "meshcore-pixoo-tray"
-version = "0.1.0"
-description = "Heltec V3 MeshCore System Tray Application & Divoom Pixoo 64 Integration"
+name = "meshcore-navigator"
+version = "1.0.0"
+description = "MESHCORE NAVIGATOR - MeshCore Desktop Station, Live Map & Matrix Integration"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [
-    { name = "MeshCore Pixoo Team" }
+    { name = "Nicky Proniewicz - M7NCY" }
 ]
 dependencies = [
     "PyQt6>=6.5.0",
@@ -27,3 +27,7 @@ meshcore-tray = "meshcore_tray.main:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["meshcore_tray*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+

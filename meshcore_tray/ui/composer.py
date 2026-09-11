@@ -3,9 +3,10 @@
 import logging
 from typing import List, Optional
 from PyQt6.QtCore import Qt, pyqtSignal, QPoint
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLineEdit, QPushButton,
-    QListWidget, QListWidgetItem
+    QListWidget, QListWidgetItem, QMenu
 )
 
 logger = logging.getLogger("meshcore_tray.composer")
@@ -37,6 +38,7 @@ class PowerComposer(QWidget):
     # Signals
     send_message = pyqtSignal(str, object, str)  # (channel, recipient_id, text)
     switch_channel = pyqtSignal(str)             # (channel_name)
+    join_channel = pyqtSignal(str)               # (channel_name)
     search_query = pyqtSignal(str)               # (search_text)
     search_cleared = pyqtSignal()
 
@@ -46,26 +48,50 @@ class PowerComposer(QWidget):
         self.config = config
         self.active_channel = "Public"
         self.active_dm: Optional[str] = None
+        self._is_searching = False
         self._init_ui()
 
     def _init_ui(self):
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 4, 0, 4)
+        layout.setContentsMargins(12, 8, 12, 12)
         layout.setSpacing(8)
 
         self.input_field = QLineEdit()
         self.input_field.setObjectName("composerInput")
+        self.input_field.setMinimumHeight(38)
         self.input_field.setPlaceholderText(
-            "Type message... (#channel, @user, /switch, ? search)"
+            "Type message... (#channel, @user, /join #channel, /switch, ? search)"
         )
         self.input_field.textChanged.connect(self._on_text_changed)
+
+        self.emoji_btn = QPushButton("😀")
+        self.emoji_btn.setFixedSize(38, 38)
+        self.emoji_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.emoji_btn.setToolTip("Add Emoji")
+        self.emoji_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2B2D31;
+                border: 1px solid #383A40;
+                border-radius: 6px;
+                padding: 0px;
+                font-size: 18px;
+                text-align: center;
+            }
+            QPushButton:hover {
+                background-color: #35373C;
+                border-color: #5865F2;
+            }
+        """)
+        self.emoji_btn.clicked.connect(self._show_emoji_menu)
 
         self.send_button = QPushButton("Send")
         self.send_button.setObjectName("primaryButton")
         self.send_button.setFixedWidth(80)
+        self.send_button.setMinimumHeight(38)
         self.send_button.clicked.connect(self._handle_submit)
 
         layout.addWidget(self.input_field)
+        layout.addWidget(self.emoji_btn)
         layout.addWidget(self.send_button)
 
         # Autocomplete popup
@@ -74,14 +100,47 @@ class PowerComposer(QWidget):
 
         # Install event filter on input field for keyboard navigation
         self.input_field.installEventFilter(self)
+        self.apply_theme()
+
+    def apply_theme(self, color_hex: Optional[str] = None, text_color_hex: Optional[str] = None):
+        """Applies configured send button color and legible text color."""
+        c = color_hex
+        if not c and self.config and hasattr(self.config, "app_colors"):
+            c = getattr(self.config.app_colors, "send_button_color", "#00FF7F")
+        if not c:
+            c = "#00FF7F"
+
+        txt_col = text_color_hex
+        if not txt_col and self.config and hasattr(self.config, "app_colors"):
+            txt_col = getattr(self.config.app_colors, "send_button_text_color", None)
+        if not txt_col:
+            # Auto-calculate luminance contrast for maximum legibility on light/dark backgrounds
+            col = QColor(c)
+            lum = (0.299 * col.red() + 0.587 * col.green() + 0.114 * col.blue()) / 255.0
+            txt_col = "#000000" if lum > 0.45 else "#FFFFFF"
+
+        c_hover = QColor(c).lighter(115).name()
+        self.send_button.setStyleSheet(f"""
+            QPushButton#primaryButton {{
+                background-color: {c};
+                color: {txt_col};
+                border: 1px solid {c};
+                border-radius: 6px;
+                font-weight: bold;
+            }}
+            QPushButton#primaryButton:hover {{
+                background-color: {c_hover};
+                border-color: {c_hover};
+            }}
+        """)
 
     def set_active_target(self, channel: str, dm_recipient: Optional[str] = None):
         self.active_channel = channel
         self.active_dm = dm_recipient
         if dm_recipient:
-            self.input_field.setPlaceholderText(f"Message @{dm_recipient}... (#channel, @user, /switch, ? search)")
+            self.input_field.setPlaceholderText(f"Message @{dm_recipient}... (#channel, @user, /join, /switch, ? search)")
         else:
-            self.input_field.setPlaceholderText(f"Message #{channel}... (#channel, @user, /switch, ? search)")
+            self.input_field.setPlaceholderText(f"Message #{channel}... (#channel, @user, /join, /switch, ? search)")
 
     def focus(self):
         self.input_field.setFocus()
@@ -89,17 +148,18 @@ class PowerComposer(QWidget):
     def _on_text_changed(self, text: str):
         # 1. Search Mode: Prefix '?'
         if text.startswith("?"):
+            self._is_searching = True
             query = text[1:].strip()
             self.popup.hide()
             self.search_query.emit(query)
             return
-        else:
+        elif self._is_searching:
+            self._is_searching = False
             self.search_cleared.emit()
 
-        # 2. Slash Command / Channel Switcher: Prefix '/'
+        # 2. Slash Command / Channel Switcher & Joiner: Prefix '/'
         if text.startswith("/"):
-            prefix = text[1:].strip().lower()
-            self._show_channel_switch_suggestions(prefix)
+            self._show_slash_suggestions(text[1:])
             return
 
         cursor_pos = self.input_field.cursorPosition()
@@ -125,26 +185,48 @@ class PowerComposer(QWidget):
 
         self.popup.hide()
 
-    def _show_channel_switch_suggestions(self, prefix: str):
+    def _show_slash_suggestions(self, command_text: str):
+        cmd = command_text.strip().lower()
+        self.popup.clear()
+
+        # If user typed /join <channel> or /j <channel>
+        if cmd.startswith("join") or cmd.startswith("j "):
+            parts = command_text.strip().split(maxsplit=1)
+            target = parts[1].strip() if len(parts) > 1 else ""
+            target_display = target if target else "<channel_name>"
+            item = QListWidgetItem(f"➕ Join MeshCore Channel #{target_display.lstrip('#')}")
+            item.setData(Qt.ItemDataRole.UserRole, "join")
+            item.setData(Qt.ItemDataRole.UserRole + 1, target if target else "")
+            self.popup.addItem(item)
+            self.popup.setCurrentRow(0)
+            self._position_popup()
+            return
+
+        # Regular channel switch suggestions
         channels = []
         if self.storage:
-            channels = self.storage.get_channels_by_recent_activity(prefix)
+            channels = self.storage.get_channels_by_recent_activity(cmd)
         else:
             channels = [type("C", (), {"name": "Public", "is_favorite": True})]
 
-        self.popup.clear()
-        if not channels:
-            self.popup.hide()
-            return
-
         for ch in channels:
-            item = QListWidgetItem(f"🔀 Switch to #{ch.name}")
+            item = QListWidgetItem(f"🔀 Switch to #{ch.name.lstrip('#')}")
             item.setData(Qt.ItemDataRole.UserRole, "switch")
             item.setData(Qt.ItemDataRole.UserRole + 1, ch.name)
             self.popup.addItem(item)
 
-        self.popup.setCurrentRow(0)
-        self._position_popup()
+        # Also offer /join suggestion
+        if cmd:
+            item = QListWidgetItem(f"➕ Join new channel #{cmd.lstrip('#')}")
+            item.setData(Qt.ItemDataRole.UserRole, "join")
+            item.setData(Qt.ItemDataRole.UserRole + 1, f"#{cmd.lstrip('#')}")
+            self.popup.addItem(item)
+
+        if self.popup.count() > 0:
+            self.popup.setCurrentRow(0)
+            self._position_popup()
+        else:
+            self.popup.hide()
 
     def _show_channel_autocomplete_suggestions(self, prefix: str):
         channels = []
@@ -206,6 +288,11 @@ class PowerComposer(QWidget):
             self.switch_channel.emit(val)
             return
 
+        if kind == "join":
+            self.input_field.clear()
+            self.join_channel.emit(val)
+            return
+
         if kind == "channel":
             last_hash = text.rfind("#")
             if last_hash != -1:
@@ -229,11 +316,37 @@ class PowerComposer(QWidget):
         if text.startswith("?"):
             return
 
+        # Handle /join channel command
+        cmd_lower = text.lower()
+        if cmd_lower.startswith("/join") or cmd_lower.startswith("/j "):
+            parts = text.split(maxsplit=1)
+            if len(parts) > 1 and parts[1].strip():
+                chan_target = parts[1].strip()
+                self.join_channel.emit(chan_target)
+            self.input_field.clear()
+            self.popup.hide()
+            return
+
+        # Handle explicit /dm or /msg command (/dm @user message or /msg @user message)
+        if cmd_lower.startswith("/dm ") or cmd_lower.startswith("/msg "):
+            parts = text.split(maxsplit=2)
+            if len(parts) >= 3:
+                target_user = parts[1].lstrip("@")
+                dm_body = parts[2]
+                self.send_message.emit("DM", target_user, dm_body)
+                self.input_field.clear()
+                self.popup.hide()
+                return
+
         # Handle Slash channel switch
         if text.startswith("/"):
             if self.popup.isVisible() and self.popup.currentItem():
+                kind = self.popup.currentItem().data(Qt.ItemDataRole.UserRole)
                 val = self.popup.currentItem().data(Qt.ItemDataRole.UserRole + 1)
-                self.switch_channel.emit(val)
+                if kind == "join":
+                    self.join_channel.emit(val)
+                else:
+                    self.switch_channel.emit(val)
             else:
                 chan = text[1:].strip()
                 if chan:
@@ -253,18 +366,8 @@ class PowerComposer(QWidget):
                 self.popup.hide()
                 return
 
-        # Handle Quick DM Routing (@user message)
-        if text.startswith("@"):
-            parts = text.split(" ", 1)
-            target_user = parts[0][1:]
-            msg_body = parts[1] if len(parts) > 1 else ""
-            if msg_body:
-                self.send_message.emit("DM", target_user, msg_body)
-                self.input_field.clear()
-                self.popup.hide()
-                return
-
         # Standard send to currently active conversation
+        # Note: In-channel replies and mentions (@user ...) remain public in active_channel!
         if self.active_dm:
             self.send_message.emit("DM", self.active_dm, text)
         else:
@@ -309,3 +412,31 @@ class PowerComposer(QWidget):
                         return True
 
         return super().eventFilter(obj, event)
+
+    def _show_emoji_menu(self):
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #222327;
+                color: #FFFFFF;
+                border: 1px solid #414143;
+                border-radius: 6px;
+                padding: 4px;
+            }
+            QMenu::item {
+                padding: 6px 12px;
+                font-size: 14px;
+            }
+            QMenu::item:selected {
+                background-color: #2B303C;
+            }
+        """)
+        emojis = ["👍", "⚡", "📡", "👋", "✅", "🔥", "🚨", "📻", "😊", "🎉", "🛰️", "⚠️"]
+        for em in emojis:
+            act = menu.addAction(em)
+            act.triggered.connect(lambda _, e=em: self._insert_emoji(e))
+        menu.exec(self.emoji_btn.mapToGlobal(QPoint(0, -menu.sizeHint().height() - 4)))
+
+    def _insert_emoji(self, emoji_char: str):
+        self.input_field.insert(emoji_char)
+        self.input_field.setFocus()

@@ -30,6 +30,7 @@ class MessageEnvelope:
     is_outgoing: bool = False
     is_mention: bool = False
     matched_keywords: List[str] = field(default_factory=list)
+    repeats_heard: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -75,6 +76,8 @@ class NeighbourInfo:
     is_repeater: bool = False
     is_favorite: bool = False
     via_node_id: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -82,6 +85,64 @@ class NeighbourInfo:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "NeighbourInfo":
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+
+
+def is_valid_alias(alias: Optional[str]) -> bool:
+    """Validates that a node alias contains human-readable characters and no corrupt binary control chars."""
+    if not alias or not isinstance(alias, str):
+        return False
+    alias_str = alias.strip()
+    if not alias_str:
+        return False
+    # Reject non-printable ASCII/Latin control characters (0x00-0x1F, 0x7F-0x9F)
+    for ch in alias_str:
+        o = ord(ch)
+        if o < 32 or (127 <= o <= 159):
+            return False
+    # Reject strings that are merely mangled packet path fragments (e.g., '> > > >' or '>/4%,')
+    stripped = alias_str.replace(">", "").replace(" ", "").replace("/", "").replace("%", "").replace(",", "").strip()
+    if len(stripped) == 0:
+        return False
+    # Maximum reasonable alias length in MeshCore is 40 characters
+    if len(alias_str) > 64:
+        return False
+    return True
+
+
+def is_valid_node_id(node_id: Optional[str]) -> bool:
+    """Validates that a node ID is not empty or all zeroes/corrupt."""
+    if not node_id or not isinstance(node_id, str):
+        return False
+    clean = node_id.strip().lstrip("!@")
+    if not clean or clean.replace("0", "") == "":
+        return False
+    # Node ID in MeshCore is hex (or callsign-like), usually 8-16 chars; reject control chars
+    for ch in clean:
+        o = ord(ch)
+        if o < 32 or (127 <= o <= 159):
+            return False
+    return True
+
+
+def is_valid_coordinate(lat: Optional[Union[float, int, str]], lon: Optional[Union[float, int, str]]) -> bool:
+    """Validates that coordinates are legitimate numbers and not Null Island / equatorial ocean / 0,0 corrupted values."""
+    if lat is None or lon is None:
+        return False
+    try:
+        flat = float(lat)
+        flon = float(lon)
+    except (ValueError, TypeError):
+        return False
+    # Check standard range
+    if not (-85.0 <= flat <= 85.0 and -180.0 <= flon <= 180.0):
+        return False
+    # Reject Null Island / equator ocean coordinates (within 1.0 degree of equator, or 5 degrees of 0,0)
+    if abs(flat) < 1.0:
+        return False
+    if abs(flat) < 5.0 and abs(flon) < 5.0:
+        return False
+    return True
+
 
 
 @dataclass
@@ -95,12 +156,61 @@ class NodeContact:
     is_repeater: bool = False
     snr_db: float = 0.0
     rssi_dbm: float = -100.0
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    out_path_len: int = -1
+    out_path_hash_mode: int = -1
+    out_path: str = ""
+    scope_name: Optional[str] = None
+    allowed_regions: Optional[List[str]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "NodeContact":
+        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+
+
+@dataclass
+class DockedCompanionInfo:
+    """Represents a companion node without GPS docked to its relay repeater."""
+    node_id: str
+    alias: str = ""
+    repeater_id: str = ""
+    repeater_alias: str = ""
+    channel: str = ""
+    snr: float = 0.0
+    last_heard: str = field(default_factory=current_iso_time)
+    is_unknown_first_hop: bool = False
+    first_hop_alias: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "DockedCompanionInfo":
+        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+
+
+@dataclass
+class PacketPathInfo:
+    """Multi-hop trace route path for watcher maps."""
+    packet_id: str
+    sender_id: str
+    sender_name: str
+    recipient_id: str = ""
+    timestamp: str = field(default_factory=current_iso_time)
+    hop_nodes: List[str] = field(default_factory=list)           # List of node IDs / aliases in hop sequence
+    hop_snrs: List[float] = field(default_factory=list)          # SNR at each hop
+    route_type: str = "FLOOD"                                    # "DIRECT", "FLOOD", "ROUTED"
+    coordinates: List[List[float]] = field(default_factory=list) # [[lat, lon], ...] along the path
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "PacketPathInfo":
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
 
 

@@ -80,7 +80,7 @@ class PixooPreviewWidget(QWidget):
         # Title
         title = QLabel("<b>PIXOO 64 LIVE MIRROR</b>")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet("color: #00E5FF; font-size: 11px; letter-spacing: 1px;")
+        title.setStyleSheet("color: #9CA3AF; font-size: 11px; letter-spacing: 1px;")
         layout.addWidget(title)
 
         # Canvas

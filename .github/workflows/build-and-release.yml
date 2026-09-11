@@ -1,0 +1,126 @@
+name: Build & Release MESHCORE NAVIGATOR
+
+on:
+  push:
+    branches: [ master, main ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ master, main ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Run Automated Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install PyQt6 PyQt6-WebEngine qasync pyserial pillow requests meshcore pytest pytest-asyncio
+
+      - name: Run Pytest Test Suite
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          export PYTHONPATH=".:./vendor/pixoo/src:./vendor/meshcore_py/src:$PYTHONPATH"
+          pytest tests/
+
+      - name: Headless Init Verification
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          export PYTHONPATH=".:./vendor/pixoo/src:./vendor/meshcore_py/src:$PYTHONPATH"
+          python -m meshcore_tray.main --test-init
+
+  build-linux:
+    name: Package Linux Distribution
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build Portable Linux Package
+        run: |
+          chmod +x build_portable.sh
+          ./build_portable.sh
+
+      - name: Upload Linux Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: meshcore-navigator-linux
+          path: dist/*.tar.gz
+
+  build-windows:
+    name: Package Windows Standalone (.exe)
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Dependencies & PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          pip install PyQt6 PyQt6-WebEngine qasync pyserial pillow requests meshcore pyinstaller
+          pip install -e ./vendor/pixoo
+          pip install -e ./vendor/meshcore_py
+
+      - name: Build Windows Binary with PyInstaller
+        run: |
+          pyinstaller --noconfirm --onedir --windowed `
+            --name "MESHCORE-NAVIGATOR" `
+            --icon "meshcore_tray/ui/static/icon.png" `
+            --add-data "meshcore_tray/ui/static;meshcore_tray/ui/static" `
+            --hidden-import "PyQt6.QtWebEngineWidgets" `
+            --hidden-import "PyQt6.QtWebChannel" `
+            --hidden-import "qasync" `
+            --hidden-import "serial" `
+            meshcore_tray/main.py
+
+      - name: Compress Windows Package
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/MESHCORE-NAVIGATOR -DestinationPath dist/meshcore-navigator-windows-x64.zip
+
+      - name: Upload Windows Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: meshcore-navigator-windows-x64
+          path: dist/meshcore-navigator-windows-x64.zip
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-artifacts/meshcore-navigator-linux/*.tar.gz
+            release-artifacts/meshcore-navigator-windows-x64/*.zip
+          generate_release_notes: true

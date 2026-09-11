@@ -106,6 +106,18 @@ class GatewayManager:
                 elif self.path == "/api/neighbours":
                     res = gateway.execute_command(CommandPacket("GET_NEIGHBOURS"))
                     self._send_json(200, res)
+                elif self.path == "/api/sync_channels":
+                    if gateway.radio_driver and hasattr(gateway.radio_driver, "sync_channels"):
+                        res = gateway.radio_driver.sync_channels()
+                        self._send_json(200, res)
+                    else:
+                        self._send_json(400, {"status": "error", "message": "Radio driver not available"})
+                elif self.path == "/api/radio/channels":
+                    if gateway.storage:
+                        app_channels = [{"slot": ch.channel_id, "name": ch.name, "favorite": ch.is_favorite} for ch in gateway.storage.get_channels()]
+                        self._send_json(200, {"channels": app_channels})
+                    else:
+                        self._send_json(400, {"status": "error", "message": "Storage not available"})
                 else:
                     self._send_json(404, {"error": "Not Found"})
 

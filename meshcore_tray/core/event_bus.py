@@ -4,6 +4,7 @@ import asyncio
 from collections import defaultdict
 import inspect
 import logging
+import threading
 from typing import Any, Callable, Dict, List, Set
 
 logger = logging.getLogger("meshcore_tray.event_bus")
@@ -23,6 +24,13 @@ class EventType:
     SEARCH_REQUEST = "search_request"
     PIXOO_FRAME_READY = "pixoo_frame_ready"
     NOTIFY_USER = "notify_user"
+    SYNC_STATUS = "sync_status"
+    PACKET_PATH_TRACED = "packet_path_traced"
+    MAP_NODES_UPDATED = "map_nodes_updated"
+    MESSAGE_UPDATED = "message_updated"
+    READ_STATE_UPDATED = "read_state_updated"
+    VISUALISE_MESSAGE_PATH = "visualise_message_path"
+    CLEAR_VISUALISED_PATHS = "clear_visualised_paths"
 
 
 class EventBus:
@@ -47,6 +55,7 @@ class EventBus:
     def emit(self, event_type: str, data: Any = None):
         """Publish an event synchronously or schedule async callbacks onto the event loop."""
         callbacks = list(self._subscribers.get(event_type, []))
+        is_bg_thread = threading.current_thread() is not threading.main_thread()
         for cb in callbacks:
             try:
                 if inspect.iscoroutinefunction(cb):
@@ -55,7 +64,10 @@ class EventBus:
                     else:
                         asyncio.create_task(cb(data))
                 else:
-                    cb(data)
+                    if is_bg_thread and self._loop and self._loop.is_running():
+                        self._loop.call_soon_threadsafe(cb, data)
+                    else:
+                        cb(data)
             except Exception as e:
                 logger.error(f"Error executing callback {cb} for event {event_type}: {e}", exc_info=True)
 

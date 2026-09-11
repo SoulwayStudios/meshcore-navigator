@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=MESHCORE NAVIGATOR
+GenericName=MeshCore LoRa Station & Live Map
+Comment=MeshCore LoRa Station, Real-Time Interactive Mesh Map & Divoom Pixoo Matrix Integration
+Icon=meshcore-navigator
+Exec=meshcore-navigator %u
+Terminal=false
+Categories=Network;HamRadio;Utility;
+Keywords=meshcore;lora;heltec;radio;map;pixoo;m7ncy;
+StartupNotify=true
+StartupWMClass=MESHCORE NAVIGATOR

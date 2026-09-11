@@ -26,28 +26,44 @@ logging.basicConfig(
 logger = logging.getLogger("meshcore_tray.main")
 
 
-async def async_main(args):
+async def async_main(args, storage_holder: dict):
     # 1. Load Configuration & Storage
     config = AppConfig.load()
     storage = Storage()
+    storage_holder["storage"] = storage
+
+    # Run startup verification & auto-sanitization
+    sanitize_report = storage.verify_and_sanitize_database()
+    if (
+        sanitize_report.get("corrupt_coords_cleared", 0) > 0
+        or sanitize_report.get("phantom_nodes_removed", 0) > 0
+        or sanitize_report.get("future_timestamps_fixed", 0) > 0
+    ):
+        logger.info(f"Startup database verification & sanitization report: {sanitize_report}")
+
 
     if args.mock:
         config.meshcore.simulation_mode = True
+        config.meshcore.connection_type = "mock"
+    else:
+        ports = MeshCoreDriver.scan_serial_ports()
+        if ports:
+            config.meshcore.simulation_mode = False
+            if config.meshcore.connection_type == "mock":
+                config.meshcore.connection_type = "serial"
+        else:
+            logger.info("No physical serial radio detected; running simulator.")
+            config.meshcore.simulation_mode = True
 
     # 2. Mention & Keyword Detector
     detector = MentionDetector(config=config)
     bus.subscribe(EventType.MESSAGE_RECEIVED, detector.evaluate_message)
 
     # 3. Radio Driver Selection
-    if config.meshcore.simulation_mode:
+    if config.meshcore.simulation_mode or config.meshcore.connection_type == "mock":
         radio_driver = MockRadioDriver(config=config, storage=storage)
     else:
-        ports = MeshCoreDriver.scan_serial_ports()
-        if not ports:
-            logger.info("No physical serial radio found, initializing in simulation mode.")
-            radio_driver = MockRadioDriver(config=config, storage=storage)
-        else:
-            radio_driver = MeshCoreDriver(config=config, storage=storage)
+        radio_driver = MeshCoreDriver(config=config, storage=storage)
 
     # 4. Pixoo Display & Animation Service
     pixoo_service = PixooService(config=config)
@@ -64,6 +80,7 @@ async def async_main(args):
         radio_driver=radio_driver,
         pixoo_service=pixoo_service
     )
+    storage_holder["main_window"] = main_window
     tray = SystemTray(main_window=main_window, config=config)
     tray.show()
 
@@ -83,7 +100,7 @@ async def async_main(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="MeshCore & Pixoo 64 System Tray Application")
+    parser = argparse.ArgumentParser(description="MeshCore Map Mixer")
     parser.add_argument("--test-init", action="store_true", help="Run initialization test and exit")
     parser.add_argument("--mock", action="store_true", help="Force Mock Radio Driver simulation mode")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
@@ -93,7 +110,7 @@ def main():
         logging.getLogger().setLevel(logging.DEBUG)
 
     app = QApplication(sys.argv)
-    app.setApplicationName("MeshCore Pixoo Tray")
+    app.setApplicationName("MeshCore Map Mixer")
     app.setQuitOnLastWindowClosed(False)
     app.setStyleSheet(DARK_THEME_QSS)
 
@@ -101,21 +118,48 @@ def main():
     asyncio.set_event_loop(loop)
     bus.set_loop(loop)
 
-    app.aboutToQuit.connect(loop.stop)
+    storage_holder = {}
+
+    def _safe_quit():
+        st = storage_holder.get("storage")
+        if st:
+            try:
+                st.backup_database(reason="app_quit")
+            except Exception as e:
+                logger.warning(f"Error creating database backup on quit: {e}")
+        mw = storage_holder.get("main_window")
+        if mw and hasattr(mw, "cleanup"):
+            try:
+                mw.cleanup()
+            except Exception as e:
+                logger.debug(f"Cleanup note: {e}")
+        try:
+            if loop.is_running():
+                loop.stop()
+        except Exception:
+            pass
+
+    app.aboutToQuit.connect(_safe_quit)
 
     with loop:
         try:
             if args.test_init:
-                sys.exit(loop.run_until_complete(async_main(args)))
+                ret = loop.run_until_complete(async_main(args, storage_holder))
+                sys.exit(ret)
             else:
-                loop.create_task(async_main(args))
+                loop.create_task(async_main(args, storage_holder))
                 loop.run_forever()
+
         except (KeyboardInterrupt, SystemExit):
-            sys.exit(0)
+            pass
         except RuntimeError as e:
             if "Event loop stopped" not in str(e):
                 raise
-            sys.exit(0)
+        finally:
+            try:
+                app.processEvents()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

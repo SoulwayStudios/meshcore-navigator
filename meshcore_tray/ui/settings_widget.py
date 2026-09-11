@@ -2,13 +2,13 @@
 
 import logging
 from typing import Dict
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QColor
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QUrl
+from PyQt6.QtGui import QColor, QDesktopServices
 from PyQt6.QtWidgets import (
-    QWidget, QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
-    QLabel, QLineEdit, QComboBox, QSpinBox, QSlider, QCheckBox,
-    QPushButton, QGroupBox, QListWidget, QListWidgetItem, QColorDialog,
-    QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox
+    QWidget, QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QStackedWidget,
+    QScrollArea, QFrame, QLabel, QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox,
+    QSlider, QCheckBox, QPushButton, QListWidget, QListWidgetItem,
+    QColorDialog, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox
 )
 from meshcore_tray.config import AppConfig
 from meshcore_tray.core.event_bus import bus, EventType
@@ -29,10 +29,19 @@ class ColorPickerButton(QPushButton):
 
     def _update_swatch(self):
         self.setText(self.current_hex.upper())
+        col = QColor(self.current_hex)
+        lum = (0.299 * col.red() + 0.587 * col.green() + 0.114 * col.blue()) / 255.0
+        txt_col = "#000000" if lum > 0.55 else "#FFFFFF"
         self.setStyleSheet(
-            f"background-color: {self.current_hex}; color: #000000; "
-            f"font-weight: bold; border: 1px solid #FFFFFF; border-radius: 6px; padding: 6px 12px;"
+            f"background-color: {self.current_hex}; color: {txt_col}; "
+            f"font-weight: bold; border: 1px solid rgba(255, 255, 255, 0.35); "
+            f"border-radius: 6px; padding: 6px 14px; min-width: 85px;"
         )
+
+    def set_color(self, hex_code: str):
+        if hex_code:
+            self.current_hex = hex_code
+            self._update_swatch()
 
     def _open_picker(self):
         col = QColorDialog.getColor(QColor(self.current_hex), self, "Select Color")
@@ -42,136 +51,670 @@ class ColorPickerButton(QPushButton):
             self.color_changed.emit(self.current_hex)
 
 
-class SettingsDialog(QDialog):
-    """Complete Settings window for MeshCore, Pixoo 64, Colors, and Filters."""
 
-    def __init__(self, config: AppConfig, storage=None, parent=None):
+class SettingsCard(QFrame):
+    """High-contrast outlined card container for settings sections."""
+
+    def __init__(self, title: str, parent=None):
+        super().__init__(parent)
+        self.setObjectName("settingsCard")
+        self.card_layout = QVBoxLayout(self)
+        self.card_layout.setContentsMargins(16, 14, 16, 16)
+        self.card_layout.setSpacing(10)
+
+        title_lbl = QLabel(title.upper())
+        title_lbl.setObjectName("cardTitle")
+        self.card_layout.addWidget(title_lbl)
+
+    def add_row(self, label_text: str, widget: QWidget, label_width: int = 150) -> QHBoxLayout:
+        row = QHBoxLayout()
+        lbl = QLabel(label_text)
+        lbl.setFixedWidth(label_width)
+        row.addWidget(lbl)
+        row.addWidget(widget, 1)
+        self.card_layout.addLayout(row)
+        return row
+
+    def add_widget(self, widget: QWidget):
+        self.card_layout.addWidget(widget)
+
+    def add_layout(self, layout):
+        self.card_layout.addLayout(layout)
+
+
+class SettingsWidget(QWidget):
+    """Complete Settings view for MeshCore, Pixoo 64, Colors, and Filters."""
+    close_requested = pyqtSignal()
+
+    def __init__(self, config: AppConfig, storage=None, radio_driver=None, parent=None):
         super().__init__(parent)
         self.config = config
         self.storage = storage
+        self.radio_driver = radio_driver
+        self.setObjectName("settingsView")
         self.setWindowTitle("MeshCore Pixoo Tray - Settings")
-        self.resize(650, 520)
+        self.resize(880, 760)
+        self.setStyleSheet("""
+            SettingsWidget, SettingsDialog, QDialog, QWidget#settingsView {
+                background-color: #1C1C1C;
+                color: #E5E7EB;
+            }
+            QStackedWidget { background-color: #1C1C1C; border: none; }
+            QStackedWidget > QWidget { background-color: #1C1C1C; }
+            QScrollArea { background-color: #1C1C1C; border: none; }
+            QScrollArea > QWidget > QWidget { background-color: #1C1C1C; }
+            QWidget#settingsScrollViewport { background-color: #1C1C1C; }
+
+            /* Scroll areas: transparent viewport so card backgrounds show */
+            QScrollArea#settingsScroll {
+                background-color: #1C1C1C;
+                border: none;
+            }
+
+            /* Section cards: prominent, high-contrast containers */
+            QFrame#settingsCard {
+                background-color: #222327;
+                border: 1.5px solid #414143;
+                border-radius: 8px;
+                margin-bottom: 8px;
+            }
+            QLabel#cardTitle {
+                color: #60A5FA;
+                font-size: 11px;
+                font-weight: bold;
+                letter-spacing: 0.6px;
+                padding-bottom: 6px;
+                border-bottom: 1px solid #414143;
+                margin-bottom: 4px;
+                background: transparent;
+                background-color: transparent;
+            }
+
+            /* Labels: Soft muted gray for instant readability */
+            QLabel {
+                color: #9CA3AF;
+                font-size: 12px;
+                font-weight: 500;
+                background: transparent;
+                background-color: transparent;
+            }
+
+            /* Checkboxes and Radio buttons: transparent background */
+            QCheckBox, QRadioButton {
+                background: transparent;
+                background-color: transparent;
+                color: #E5E7EB;
+            }
+
+            QFrame#settingsCard QLabel,
+            QFrame#settingsCard QCheckBox,
+            QFrame#settingsCard QRadioButton {
+                background: transparent;
+                background-color: transparent;
+            }
+
+            /* Inputs: Dark recessed background with crisp outline borders */
+            QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
+                background-color: #1C1C1C;
+                color: #FFFFFF;
+                border: 1.5px solid #414143;
+                border-radius: 6px;
+                padding: 5px 10px;
+                min-height: 28px;
+                font-size: 13px;
+            }
+            QLineEdit:hover, QComboBox:hover, QSpinBox:hover, QDoubleSpinBox:hover {
+                border: 1.5px solid #60A5FA;
+                background-color: #13161C;
+            }
+            QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {
+                border: 1.5px solid #34D399;
+                background-color: #0B0D10;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #222327;
+                color: #FFFFFF;
+                border: 1px solid #414143;
+                border-radius: 6px;
+                selection-background-color: #3B82F6;
+                selection-color: #FFFFFF;
+                padding: 4px;
+                outline: none;
+            }
+
+            /* Horizontal Sliders */
+            QSlider::groove:horizontal {
+                height: 6px;
+                background: #2D313A;
+                border-radius: 3px;
+            }
+            QSlider::sub-page:horizontal {
+                background: #34D399;
+                border-radius: 3px;
+            }
+            QSlider::handle:horizontal {
+                background: #FFFFFF;
+                border: 1px solid #34D399;
+                width: 16px;
+                margin-top: -5px;
+                margin-bottom: -5px;
+                border-radius: 8px;
+            }
+
+            /* Table Widget */
+            QTableWidget {
+                background-color: #1C1C1C;
+                border: 1px solid #414143;
+                border-radius: 6px;
+                gridline-color: #2D313A;
+            }
+            QHeaderView::section {
+                background-color: #222327;
+                color: #E5E7EB;
+                padding: 6px;
+                border: none;
+                border-bottom: 1px solid #414143;
+                font-weight: bold;
+            }
+
+            /* Sleek Modern Scrollbar */
+            QScrollBar:vertical {
+                background-color: #1C1C1C;
+                width: 8px;
+                margin: 0px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:vertical {
+                background-color: #414143;
+                min-height: 24px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background-color: #4B5565;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+
+            /* Buttons */
+            QPushButton {
+                background-color: #262B36;
+                color: #E5E7EB;
+                border: 1px solid #4B5565;
+                border-radius: 6px;
+                padding: 6px 14px;
+                font-weight: 500;
+            }
+            QPushButton:hover {
+                background-color: #353D4B;
+                color: #FFFFFF;
+            }
+            QPushButton#secondaryButton {
+                background-color: #262B36;
+                color: #E5E7EB;
+                border: 1px solid #4B5565;
+                border-radius: 6px;
+                padding: 6px 14px;
+                font-weight: 500;
+            }
+            QPushButton#secondaryButton:hover {
+                background-color: #353D4B;
+                color: #FFFFFF;
+            }
+            QPushButton#applyButton {
+                background-color: #1F3A5C;
+                color: #58A6FF;
+                border: 1px solid #388BFD;
+                border-radius: 6px;
+                padding: 7px 18px;
+                font-weight: bold;
+            }
+            QPushButton#applyButton:hover {
+                background-color: #264B78;
+                color: #FFFFFF;
+            }
+            QPushButton#actionButton {
+                background-color: #1E3A5F;
+                color: #60A5FA;
+                border: 1px solid #2563EB;
+                border-radius: 6px;
+                padding: 7px 16px;
+                font-weight: bold;
+            }
+            QPushButton#actionButton:hover {
+                background-color: #2563EB;
+                color: #FFFFFF;
+            }
+            QPushButton#primaryButton {
+                background-color: #238636;
+                color: #FFFFFF;
+                border: 1px solid #2EA043;
+                border-radius: 6px;
+                padding: 7px 18px;
+                font-weight: bold;
+            }
+            QPushButton#primaryButton:hover {
+                background-color: #2EA043;
+            }
+        """)
         self._init_ui()
+
+    def _wrap_scroll(self, widget: QWidget) -> QScrollArea:
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setObjectName("settingsScroll")
+        scroll.viewport().setObjectName("settingsScrollViewport")
+        scroll.setWidget(widget)
+        return scroll
 
     def _init_ui(self):
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(16, 16, 16, 16)
-        main_layout.setSpacing(16)
+        main_layout.setContentsMargins(14, 14, 14, 14)
+        main_layout.setSpacing(12)
 
-        self.tabs = QTabWidget()
+        # Main horizontal split: Nav pane on left, stacked views on right
+        body_layout = QHBoxLayout()
+        body_layout.setSpacing(14)
 
-        # Tab 1: Node & Radio
-        self.tab_node = QWidget()
-        self._build_node_tab()
-        self.tabs.addTab(self.tab_node, "📡 Node & Radio")
+        # Left Navigation List
+        self.nav_list = QListWidget()
+        self.nav_list.setFixedWidth(210)
+        self.nav_list.setObjectName("settingsNavList")
+        self.nav_list.setStyleSheet("""
+            #settingsNavList {
+                background-color: #222327;
+                border: 1px solid #414143;
+                border-radius: 8px;
+                padding: 6px;
+                outline: none;
+            }
+            #settingsNavList::item {
+                color: #9CA3AF;
+                padding: 10px 14px;
+                border-radius: 6px;
+                font-weight: 500;
+                font-size: 13px;
+                margin-bottom: 4px;
+            }
+            #settingsNavList::item:hover {
+                background-color: #2B303C;
+                color: #E5E7EB;
+            }
+            #settingsNavList::item:selected {
+                background-color: #414143;
+                color: #FFFFFF;
+                font-weight: bold;
+                border-left: 3px solid #34D399;
+            }
+        """)
 
-        # Tab 2: Pixoo & Quiet Hours
-        self.tab_pixoo = QWidget()
-        self._build_pixoo_tab()
-        self.tabs.addTab(self.tab_pixoo, "📺 Pixoo & Quiet Hours")
+        categories = [
+            ("📡 Radio & Node", 0),
+            ("🖼️ Pixoo Integration", 1),
+            ("🔀 Channels & Filters", 2),
+            ("🎨 App UI Colors", 3),
+            ("🌈 Pixoo Matrix Colors", 4),
+            ("🔔 Watched Words & Alerts", 5),
+            ("🌐 Gateway & Telemetry", 6),
+            ("ℹ️ About & Support", 7),
+        ]
+        for name, idx in categories:
+            item = QListWidgetItem(name)
+            item.setData(Qt.ItemDataRole.UserRole, idx)
+            self.nav_list.addItem(item)
 
-        # Tab 3: Channels & Filters
-        self.tab_channels = QWidget()
-        self._build_channels_tab()
-        self.tabs.addTab(self.tab_channels, "🔀 Channels & Filters")
+        # Right Stacked Content Pages
+        self.stack = QStackedWidget()
+        self.stack.addWidget(self._wrap_scroll(self._build_node_tab()))
+        self.stack.addWidget(self._wrap_scroll(self._build_pixoo_tab()))
+        self.stack.addWidget(self._wrap_scroll(self._build_channels_tab()))
+        self.stack.addWidget(self._wrap_scroll(self._build_app_colors_tab()))
+        self.stack.addWidget(self._wrap_scroll(self._build_colors_tab()))
+        self.stack.addWidget(self._wrap_scroll(self._build_notifications_tab()))
+        self.stack.addWidget(self._wrap_scroll(self._build_gateway_tab()))
+        self.stack.addWidget(self._wrap_scroll(self._build_about_tab()))
 
-        # Tab 4: Color Themes
-        self.tab_colors = QWidget()
-        self._build_colors_tab()
-        self.tabs.addTab(self.tab_colors, "🎨 Color Theme")
+        self.nav_list.currentRowChanged.connect(self.stack.setCurrentIndex)
+        self.nav_list.setCurrentRow(0)
 
-        # Tab 5: Notifications & Watched Words
-        self.tab_notifications = QWidget()
-        self._build_notifications_tab()
-        self.tabs.addTab(self.tab_notifications, "🔔 Watched Words")
+        body_layout.addWidget(self.nav_list)
+        body_layout.addWidget(self.stack, 1)
+        main_layout.addLayout(body_layout, 1)
 
-        # Tab 6: Rotations & Gateway
-        self.tab_gateway = QWidget()
-        self._build_gateway_tab()
-        self.tabs.addTab(self.tab_gateway, "🌐 Rotations & Gateway")
+        # Bottom Action Bar with Cancel, Apply, and Save Changes
+        bottom_bar = QFrame()
+        bottom_bar.setStyleSheet("border-top: 1px solid #414143; padding-top: 8px;")
+        btn_bar = QHBoxLayout(bottom_bar)
+        btn_bar.setContentsMargins(0, 4, 0, 0)
 
-        main_layout.addWidget(self.tabs)
+        self.btn_coffee = QPushButton("☕ Buy Me a Coffee")
+        self.btn_coffee.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_coffee.setToolTip("Support development of MESHCORE NAVIGATOR (by Nicky Proniewicz - M7NCY)")
+        self.btn_coffee.setStyleSheet("""
+            QPushButton {
+                background-color: #FFDD00;
+                color: #000000;
+                border: 1px solid #E6C600;
+                border-radius: 6px;
+                padding: 6px 14px;
+                font-size: 12px;
+                font-weight: 700;
+            }
+            QPushButton:hover {
+                background-color: #FFE633;
+                border-color: #FFDD00;
+            }
+            QPushButton:pressed {
+                background-color: #E6C600;
+            }
+        """)
+        self.btn_coffee.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://buymeacoffee.com/m7ncy")))
+        btn_bar.addWidget(self.btn_coffee)
 
-        # Bottom Buttons
-        btn_bar = QHBoxLayout()
+        self.apply_status_lbl = QLabel("")
+        self.apply_status_lbl.setStyleSheet("color: #34D399; font-size: 12px; font-weight: bold;")
+        btn_bar.addWidget(self.apply_status_lbl)
         btn_bar.addStretch()
 
-        self.btn_save = QPushButton("Save & Apply")
-        self.btn_save.setObjectName("primaryButton")
-        self.btn_save.clicked.connect(self._save_and_close)
-
-        self.btn_cancel = QPushButton("Cancel")
+        self.btn_cancel = QPushButton("← Back to Chat && Map")
+        self.btn_cancel.setObjectName("secondaryButton")
+        self.btn_cancel.setToolTip("Return to Chat and Mesh Map views")
         self.btn_cancel.clicked.connect(self.reject)
 
+        self.btn_apply = QPushButton("Apply")
+        self.btn_apply.setObjectName("applyButton")
+        self.btn_apply.clicked.connect(lambda: self._apply_settings(close_on_finish=False))
+
+        self.btn_save = QPushButton("Save Changes")
+        self.btn_save.setObjectName("primaryButton")
+        self.btn_save.clicked.connect(lambda: self._apply_settings(close_on_finish=True))
+
         btn_bar.addWidget(self.btn_cancel)
+        btn_bar.addWidget(self.btn_apply)
         btn_bar.addWidget(self.btn_save)
-        main_layout.addLayout(btn_bar)
+        main_layout.addWidget(bottom_bar)
 
     # --- Tab 1: Node & Radio ---
     def _build_node_tab(self):
+        self.tab_node = QWidget()
         layout = QVBoxLayout(self.tab_node)
+        layout.setSpacing(12)
 
-        grp_conn = QGroupBox("Heltec V3 Hardware Connection")
-        conn_layout = QVBoxLayout(grp_conn)
-
-        # Serial Port
+        # 1. Connection Card
+        card_conn = SettingsCard("📡 Heltec V3 Hardware Connection")
         port_row = QHBoxLayout()
-        port_row.addWidget(QLabel("Serial Port:"))
+        lbl_port = QLabel("Serial Port:")
+        lbl_port.setFixedWidth(130)
+        port_row.addWidget(lbl_port)
         self.port_combo = QComboBox()
-        self.port_combo.addItem("auto (Auto-detect /dev/ttyUSB*)", "auto")
+        self.port_combo.addItem("auto (Auto-detect)", "auto")
         self._refresh_serial_ports()
         port_row.addWidget(self.port_combo, 1)
 
         btn_refresh_ports = QPushButton("🔄 Scan")
+        btn_refresh_ports.setObjectName("secondaryButton")
         btn_refresh_ports.clicked.connect(self._refresh_serial_ports)
         port_row.addWidget(btn_refresh_ports)
-        conn_layout.addLayout(port_row)
+        card_conn.add_layout(port_row)
 
-        # Baud Rate
-        baud_row = QHBoxLayout()
-        baud_row.addWidget(QLabel("Baud Rate:"))
+        bm_row = QHBoxLayout()
+        lbl_baud = QLabel("Baud Rate:")
+        lbl_baud.setFixedWidth(130)
+        bm_row.addWidget(lbl_baud)
         self.baud_combo = QComboBox()
         for b in [115200, 57600, 38400, 19200, 9600, 230400]:
             self.baud_combo.addItem(str(b), b)
         idx = self.baud_combo.findData(self.config.meshcore.baudrate)
         if idx >= 0:
             self.baud_combo.setCurrentIndex(idx)
-        baud_row.addWidget(self.baud_combo, 1)
-        conn_layout.addLayout(baud_row)
+        bm_row.addWidget(self.baud_combo, 1)
 
-        # Connection Mode
-        mode_row = QHBoxLayout()
-        mode_row.addWidget(QLabel("Connection Mode:"))
+        lbl_mode = QLabel("Mode:")
+        lbl_mode.setFixedWidth(50)
+        bm_row.addWidget(lbl_mode)
         self.mode_combo = QComboBox()
-        self.mode_combo.addItem("USB Serial (/dev/ttyUSB*)", "serial")
+        self.mode_combo.addItem("USB Serial (COM / tty)", "serial")
         self.mode_combo.addItem("Bluetooth Low Energy (BLE)", "ble")
         self.mode_combo.addItem("Mock / Simulator Engine", "mock")
         m_idx = self.mode_combo.findData(self.config.meshcore.connection_type)
         if m_idx >= 0:
             self.mode_combo.setCurrentIndex(m_idx)
-        mode_row.addWidget(self.mode_combo, 1)
-        conn_layout.addLayout(mode_row)
+        bm_row.addWidget(self.mode_combo, 1)
+        card_conn.add_layout(bm_row)
+        layout.addWidget(card_conn)
 
-        layout.addWidget(grp_conn)
+        # 2. LoRa Radio RF Parameters & Regional Presets
+        card_radio = SettingsCard("📻 LoRa Radio Frequency & Regional Presets")
+        preset_row = QHBoxLayout()
+        lbl_preset = QLabel("<b>Radio Preset:</b>")
+        lbl_preset.setFixedWidth(130)
+        preset_row.addWidget(lbl_preset)
+        self.preset_combo = QComboBox()
+        self.preset_combo.addItem("UK Narrow (869.618 MHz, 62.5 kHz, SF8, CR 4/5)", "uk_narrow")
+        self.preset_combo.addItem("UK / EU Medium (869.525 MHz, 125.0 kHz, SF8, CR 4/5)", "uk_medium")
+        self.preset_combo.addItem("EU 868 Standard (868.125 MHz, 250.0 kHz, SF7, CR 4/5)", "eu_868")
+        self.preset_combo.addItem("EU 868 Long Fast (868.125 MHz, 250.0 kHz, SF11, CR 4/5)", "eu_long_fast")
+        self.preset_combo.addItem("US 915 Standard (915.000 MHz, 250.0 kHz, SF7, CR 4/5)", "us_915")
+        self.preset_combo.addItem("EU 433 Standard (433.175 MHz, 125.0 kHz, SF7, CR 4/5)", "eu_433")
+        self.preset_combo.addItem("Custom / Manual Configuration", "custom")
+        self.preset_combo.currentIndexChanged.connect(self._on_preset_changed)
+        preset_row.addWidget(self.preset_combo, 1)
+        card_radio.add_layout(preset_row)
 
-        # Node Identifiers
-        grp_node = QGroupBox("Node Identity")
-        node_layout = QVBoxLayout(grp_node)
+        grid = QGridLayout()
+        grid.setSpacing(8)
 
-        id_row = QHBoxLayout()
-        id_row.addWidget(QLabel("Node Callsign / Alias:"))
+        grid.addWidget(QLabel("Frequency (MHz):"), 0, 0)
+        self.freq_spin = QDoubleSpinBox()
+        self.freq_spin.setRange(400.0, 1000.0)
+        self.freq_spin.setDecimals(3)
+        self.freq_spin.setSingleStep(0.025)
+        self.freq_spin.setValue(self.config.meshcore.frequency_mhz)
+        self.freq_spin.valueChanged.connect(self._on_custom_field_changed)
+        grid.addWidget(self.freq_spin, 0, 1)
+
+        grid.addWidget(QLabel("Bandwidth (kHz):"), 0, 2)
+        self.bw_combo = QComboBox()
+        for bw in [62.5, 125.0, 250.0, 500.0]:
+            self.bw_combo.addItem(f"{bw} kHz", bw)
+        b_idx = self.bw_combo.findData(self.config.meshcore.bandwidth_khz)
+        if b_idx >= 0:
+            self.bw_combo.setCurrentIndex(b_idx)
+        self.bw_combo.currentIndexChanged.connect(self._on_custom_field_changed)
+        grid.addWidget(self.bw_combo, 0, 3)
+
+        grid.addWidget(QLabel("Spreading Factor:"), 1, 0)
+        self.sf_combo = QComboBox()
+        for sf in [7, 8, 9, 10, 11, 12]:
+            self.sf_combo.addItem(f"SF{sf}", sf)
+        s_idx = self.sf_combo.findData(self.config.meshcore.spreading_factor)
+        if s_idx >= 0:
+            self.sf_combo.setCurrentIndex(s_idx)
+        self.sf_combo.currentIndexChanged.connect(self._on_custom_field_changed)
+        grid.addWidget(self.sf_combo, 1, 1)
+
+        grid.addWidget(QLabel("Coding Rate:"), 1, 2)
+        self.cr_combo = QComboBox()
+        for cr in ["4/5", "4/6", "4/7", "4/8"]:
+            self.cr_combo.addItem(f"{cr} (CR {cr[-1]})", cr)
+        c_idx = self.cr_combo.findData(self.config.meshcore.coding_rate)
+        if c_idx >= 0:
+            self.cr_combo.setCurrentIndex(c_idx)
+        self.cr_combo.currentIndexChanged.connect(self._on_custom_field_changed)
+        grid.addWidget(self.cr_combo, 1, 3)
+
+        grid.addWidget(QLabel("TX Power (dBm):"), 2, 0)
+        self.tx_spin = QSpinBox()
+        self.tx_spin.setRange(1, 30)
+        self.tx_spin.setValue(self.config.meshcore.tx_power_dbm)
+        self.tx_spin.valueChanged.connect(self._on_custom_field_changed)
+        grid.addWidget(self.tx_spin, 2, 1)
+
+        grid.addWidget(QLabel("Byte Path Mode:"), 2, 2)
+        self.path_mode_combo = QComboBox()
+        self.path_mode_combo.addItem("1-Byte Path (Mode 0 - Standard UK)", 0)
+        self.path_mode_combo.addItem("2-Byte Path (Mode 1 - Multibyte 2B)", 1)
+        self.path_mode_combo.addItem("3-Byte Path (Mode 2 - Multibyte 3B)", 2)
+        p_idx = self.path_mode_combo.findData(getattr(self.config.meshcore, "path_hash_mode", 0))
+        if p_idx >= 0:
+            self.path_mode_combo.setCurrentIndex(p_idx)
+        self.path_mode_combo.currentIndexChanged.connect(self._on_custom_field_changed)
+        grid.addWidget(self.path_mode_combo, 2, 3)
+
+        btn_prog = QPushButton("⚡ Program Radio Node Now")
+        btn_prog.setObjectName("actionButton")
+        btn_prog.clicked.connect(self._apply_radio_to_hardware)
+        grid.addWidget(btn_prog, 3, 0, 1, 4)
+
+        card_radio.add_layout(grid)
+
+        self.lbl_radio_status = QLabel("")
+        self.lbl_radio_status.setStyleSheet("color: #3FB950; font-size: 11px;")
+        card_radio.add_widget(self.lbl_radio_status)
+        layout.addWidget(card_radio)
+
+        # 3. MeshCore Protocol & Node Policies
+        card_proto = SettingsCard("⚙️ MeshCore Protocol & Radio Policies")
+        self.chk_autoadd = QCheckBox("Auto-add newly overheard node adverts to radio contact table")
+        self.chk_autoadd.setChecked(getattr(self.config.meshcore, "autoadd_contacts", True))
+        card_proto.add_row("Auto-Add Adverts:", self.chk_autoadd, 160)
+
+        self.loc_policy_combo = QComboBox()
+        self.loc_policy_combo.addItem("Precise Coordinates (Full GPS Broadcast)", 0)
+        self.loc_policy_combo.addItem("Approximate / Low Precision Location", 1)
+        self.loc_policy_combo.addItem("Private / Do Not Share Coordinates", 2)
+        lp_idx = self.loc_policy_combo.findData(getattr(self.config.meshcore, "advert_loc_policy", 0))
+        if lp_idx >= 0:
+            self.loc_policy_combo.setCurrentIndex(lp_idx)
+        card_proto.add_row("Advert Location Policy:", self.loc_policy_combo, 160)
+
+        self.chk_multi_acks = QCheckBox("Enable redundant multi-ACK packet retries")
+        self.chk_multi_acks.setChecked(getattr(self.config.meshcore, "multi_acks", False))
+        card_proto.add_row("Multi-ACK Retries:", self.chk_multi_acks, 160)
+
+        self.rx_delay_spin = QSpinBox()
+        self.rx_delay_spin.setRange(0, 1000)
+        self.rx_delay_spin.setSuffix(" ms")
+        self.rx_delay_spin.setValue(getattr(self.config.meshcore, "rx_delay_ms", 0))
+        card_proto.add_row("RX Tuning Delay:", self.rx_delay_spin, 160)
+
+        layout.addWidget(card_proto)
+
+        # 4. Node Identity & Home Station Coordinates
+        card_id = SettingsCard("🆔 Node Identity & Home Station Location")
         self.alias_input = QLineEdit(self.config.meshcore.node_alias)
-        id_row.addWidget(self.alias_input)
-        node_layout.addLayout(id_row)
+        card_id.add_row("Node Callsign / Alias:", self.alias_input, 140)
 
-        hex_row = QHBoxLayout()
-        hex_row.addWidget(QLabel("Hex Node ID:"))
         self.node_id_input = QLineEdit(self.config.meshcore.node_id)
-        hex_row.addWidget(self.node_id_input)
-        node_layout.addLayout(hex_row)
+        card_id.add_row("Hex Node ID:", self.node_id_input, 140)
 
-        layout.addWidget(grp_node)
+        coords_box = QHBoxLayout()
+        coords_lbl = QLabel("Home GPS (Lat, Lon):")
+        coords_lbl.setFixedWidth(140)
+        coords_box.addWidget(coords_lbl)
+
+        self.home_lat_input = QDoubleSpinBox()
+        self.home_lat_input.setRange(-90.0, 90.0)
+        self.home_lat_input.setDecimals(5)
+        self.home_lat_input.setSingleStep(0.001)
+        self.home_lat_input.setValue(self.config.meshcore.latitude if self.config.meshcore.latitude is not None else 54.65897)
+        coords_box.addWidget(self.home_lat_input, 1)
+
+        self.home_lon_input = QDoubleSpinBox()
+        self.home_lon_input.setRange(-180.0, 180.0)
+        self.home_lon_input.setDecimals(5)
+        self.home_lon_input.setSingleStep(0.001)
+        self.home_lon_input.setValue(self.config.meshcore.longitude if self.config.meshcore.longitude is not None else -3.4346)
+        coords_box.addWidget(self.home_lon_input, 1)
+
+        card_id.add_layout(coords_box)
+        layout.addWidget(card_id)
+
         layout.addStretch()
+        return self.tab_node
+
+    def _on_preset_changed(self):
+        preset_key = self.preset_combo.currentData()
+        presets = {
+            "uk_narrow": {"freq": 869.618, "bw": 62.5, "sf": 8, "cr": "4/5", "tx": 22},
+            "uk_medium": {"freq": 869.525, "bw": 125.0, "sf": 8, "cr": "4/5", "tx": 27},
+            "eu_868": {"freq": 868.125, "bw": 250.0, "sf": 7, "cr": "4/5", "tx": 14},
+            "eu_long_fast": {"freq": 868.125, "bw": 250.0, "sf": 11, "cr": "4/5", "tx": 14},
+            "us_915": {"freq": 915.000, "bw": 250.0, "sf": 7, "cr": "4/5", "tx": 20},
+            "eu_433": {"freq": 433.175, "bw": 125.0, "sf": 7, "cr": "4/5", "tx": 10},
+        }
+        if preset_key in presets:
+            p = presets[preset_key]
+            self.freq_spin.blockSignals(True)
+            self.bw_combo.blockSignals(True)
+            self.sf_combo.blockSignals(True)
+            self.cr_combo.blockSignals(True)
+            self.tx_spin.blockSignals(True)
+
+            self.freq_spin.setValue(p["freq"])
+            b_idx = self.bw_combo.findData(p["bw"])
+            if b_idx >= 0:
+                self.bw_combo.setCurrentIndex(b_idx)
+            s_idx = self.sf_combo.findData(p["sf"])
+            if s_idx >= 0:
+                self.sf_combo.setCurrentIndex(s_idx)
+            c_idx = self.cr_combo.findData(p["cr"])
+            if c_idx >= 0:
+                self.cr_combo.setCurrentIndex(c_idx)
+            self.tx_spin.setValue(p["tx"])
+
+            self.freq_spin.blockSignals(False)
+            self.bw_combo.blockSignals(False)
+            self.sf_combo.blockSignals(False)
+            self.cr_combo.blockSignals(False)
+            self.tx_spin.blockSignals(False)
+
+    def _on_custom_field_changed(self):
+        current_preset = self.preset_combo.currentData()
+        if current_preset != "custom":
+            pass
+
+    def _apply_radio_to_hardware(self):
+        freq = self.freq_spin.value()
+        bw = self.bw_combo.currentData() or 62.5
+        sf = self.sf_combo.currentData() or 8
+        cr = self.cr_combo.currentData() or "4/5"
+        tx = self.tx_spin.value()
+        preset = self.preset_combo.currentText()
+        path_mode = self.path_mode_combo.currentData()
+        if path_mode is None:
+            path_mode = 0
+
+        autoadd = self.chk_autoadd.isChecked()
+        loc_policy = self.loc_policy_combo.currentData() or 0
+        multi_acks = self.chk_multi_acks.isChecked()
+        rx_dly = self.rx_delay_spin.value()
+
+        self.config.meshcore.radio_preset = preset
+        self.config.meshcore.frequency_mhz = freq
+        self.config.meshcore.bandwidth_khz = bw
+        self.config.meshcore.spreading_factor = sf
+        self.config.meshcore.coding_rate = cr
+        self.config.meshcore.tx_power_dbm = tx
+        self.config.meshcore.path_hash_mode = path_mode
+        self.config.meshcore.autoadd_contacts = autoadd
+        self.config.meshcore.advert_loc_policy = loc_policy
+        self.config.meshcore.multi_acks = multi_acks
+        self.config.meshcore.rx_delay_ms = rx_dly
+
+        if self.radio_driver:
+            self.radio_driver.set_radio_params(freq, bw, sf, cr, tx, path_hash_mode=path_mode)
+            self.radio_driver.set_autoadd_contacts(autoadd)
+            self.radio_driver.set_advert_location_policy(loc_policy)
+            self.radio_driver.set_multi_acks(multi_acks)
+            self.radio_driver.set_tuning_params(rx_delay_ms=rx_dly)
+            p_desc = f"{path_mode+1}B Path"
+            self.lbl_radio_status.setText(f"✓ Transmitted ({freq} MHz, SF{sf}, {bw} kHz, {tx} dBm, {p_desc})")
+            self.lbl_radio_status.setStyleSheet("color: #3FB950; font-weight: bold;")
+        else:
+            self.lbl_radio_status.setText("✓ Saved (Offline)")
+            self.lbl_radio_status.setStyleSheet("color: #58A6FF; font-weight: bold;")
 
     def _refresh_serial_ports(self):
         current = self.config.meshcore.serial_port
@@ -186,68 +729,86 @@ class SettingsDialog(QDialog):
 
     # --- Tab 2: Pixoo & Quiet Hours ---
     def _build_pixoo_tab(self):
+        self.tab_pixoo = QWidget()
         layout = QVBoxLayout(self.tab_pixoo)
+        layout.setSpacing(12)
 
-        # Device config
-        grp_dev = QGroupBox("Divoom Pixoo 64 Hardware Setup")
-        dev_layout = QVBoxLayout(grp_dev)
+        # Main Window Live Mirror Display Card
+        card_display = SettingsCard("🖥️ Main Window Interface")
+        self.chk_show_live_mirror = QCheckBox("Show Pixoo 64 Live Mirror panel on Main Screen")
+        self.chk_show_live_mirror.setStyleSheet("font-size: 13px; font-weight: bold; color: #FFFFFF;")
+        self.chk_show_live_mirror.setChecked(getattr(self.config.pixoo, "show_live_mirror", False))
+        card_display.add_widget(self.chk_show_live_mirror)
 
-        ip_row = QHBoxLayout()
-        ip_row.addWidget(QLabel("Pixoo 64 IP Address:"))
+        desc_lbl = QLabel("When enabled, the 64x64 matrix live mirror preview panel appears on the right of the main window.")
+        desc_lbl.setWordWrap(True)
+        desc_lbl.setStyleSheet("color: #9CA3AF; font-size: 11px;")
+        card_display.add_widget(desc_lbl)
+        layout.addWidget(card_display)
+
+        # Hardware Card
+        card_hw = SettingsCard("📺 Pixoo 64 Hardware Setup & Brightness")
         self.ip_input = QLineEdit(self.config.pixoo.ip_address)
-        ip_row.addWidget(self.ip_input, 1)
-        dev_layout.addLayout(ip_row)
+        card_hw.add_row("Device IP Address:", self.ip_input, 160)
 
         bright_row = QHBoxLayout()
-        bright_row.addWidget(QLabel("Matrix Brightness:"))
+        lbl_br = QLabel("Matrix Brightness:")
+        lbl_br.setFixedWidth(160)
+        bright_row.addWidget(lbl_br)
         self.bright_slider = QSlider(Qt.Orientation.Horizontal)
         self.bright_slider.setRange(0, 100)
         self.bright_slider.setValue(self.config.pixoo.brightness)
+        self.lbl_bright = QLabel(f"{self.config.pixoo.brightness}%")
+        self.lbl_bright.setFixedWidth(45)
+        self.bright_slider.valueChanged.connect(lambda v: self.lbl_bright.setText(f"{v}%"))
         bright_row.addWidget(self.bright_slider, 1)
-        dev_layout.addLayout(bright_row)
+        bright_row.addWidget(self.lbl_bright)
+        card_hw.add_layout(bright_row)
+        layout.addWidget(card_hw)
 
+        # Message Pacing Card
+        card_pace = SettingsCard("⏱️ Message Timing & Pacing")
         dur_row = QHBoxLayout()
-        dur_row.addWidget(QLabel("Alert Flash Duration (s):"))
+        dur_row.addWidget(QLabel("Alert Flash (s):"))
         self.alert_dur_spin = QSpinBox()
         self.alert_dur_spin.setRange(3, 60)
         self.alert_dur_spin.setValue(self.config.pixoo.alert_duration_secs)
-        dur_row.addWidget(self.alert_dur_spin)
+        dur_row.addWidget(self.alert_dur_spin, 1)
 
-        dur_row.addWidget(QLabel("Flash Cycles:"))
+        dur_row.addWidget(QLabel("Flash Count:"))
         self.flash_count_spin = QSpinBox()
-        self.flash_count_spin.setRange(1, 15)
+        self.flash_count_spin.setRange(1, 10)
         self.flash_count_spin.setValue(self.config.pixoo.flash_count)
-        dur_row.addWidget(self.flash_count_spin)
+        dur_row.addWidget(self.flash_count_spin, 1)
 
-        dur_row.addWidget(QLabel("Channel Page Duration (s):"))
+        dur_row.addWidget(QLabel("Page Hold (s):"))
         self.page_dur_spin = QSpinBox()
-        self.page_dur_spin.setRange(5, 300)
-        self.page_dur_spin.setValue(getattr(self.config.pixoo, "page_duration_secs", 30))
-        dur_row.addWidget(self.page_dur_spin)
-        dev_layout.addLayout(dur_row)
+        self.page_dur_spin.setRange(5, 60)
+        self.page_dur_spin.setValue(self.config.pixoo.page_duration_secs)
+        dur_row.addWidget(self.page_dur_spin, 1)
+        card_pace.add_layout(dur_row)
+        layout.addWidget(card_pace)
 
-        layout.addWidget(grp_dev)
-
-        # Quiet Hours
-        grp_quiet = QGroupBox("Quiet Hours")
-        quiet_layout = QVBoxLayout(grp_quiet)
-
-        self.chk_quiet = QCheckBox("Enable Quiet Hours")
+        # Quiet Hours Card
+        card_quiet = SettingsCard("🌙 Quiet Hours (Night Mode)")
+        self.chk_quiet = QCheckBox("Enable Quiet Hours Schedule")
         self.chk_quiet.setChecked(self.config.quiet_hours.enabled)
-        quiet_layout.addWidget(self.chk_quiet)
+        card_quiet.add_widget(self.chk_quiet)
 
         time_row = QHBoxLayout()
         time_row.addWidget(QLabel("Start Time (HH:MM):"))
         self.quiet_start = QLineEdit(self.config.quiet_hours.start_time)
-        time_row.addWidget(self.quiet_start)
+        time_row.addWidget(self.quiet_start, 1)
 
         time_row.addWidget(QLabel("End Time (HH:MM):"))
         self.quiet_end = QLineEdit(self.config.quiet_hours.end_time)
-        time_row.addWidget(self.quiet_end)
-        quiet_layout.addLayout(time_row)
+        time_row.addWidget(self.quiet_end, 1)
+        card_quiet.add_layout(time_row)
 
         action_row = QHBoxLayout()
-        action_row.addWidget(QLabel("Quiet Hours Mode:"))
+        lbl_act = QLabel("Quiet Hours Mode:")
+        lbl_act.setFixedWidth(140)
+        action_row.addWidget(lbl_act)
         self.quiet_mode = QComboBox()
         self.quiet_mode.addItem("Mute Green Flash Strobe Only", "mute_flash")
         self.quiet_mode.addItem("Dim Screen Brightness (30%)", "dim")
@@ -256,147 +817,635 @@ class SettingsDialog(QDialog):
         if q_idx >= 0:
             self.quiet_mode.setCurrentIndex(q_idx)
         action_row.addWidget(self.quiet_mode, 1)
-        quiet_layout.addLayout(action_row)
+        card_quiet.add_layout(action_row)
+        layout.addWidget(card_quiet)
 
-        layout.addWidget(grp_quiet)
         layout.addStretch()
+        return self.tab_pixoo
 
     # --- Tab 3: Channels & Filters ---
     def _build_channels_tab(self):
+        self.tab_channels = QWidget()
         layout = QVBoxLayout(self.tab_channels)
+        layout.setSpacing(12)
 
         info_lbl = QLabel(
             "Customize which channels display on the Pixoo 64 screen. "
             "Unchecked channels (e.g. #test) will show in desktop chat but be silenced on the Pixoo."
         )
         info_lbl.setWordWrap(True)
-        info_lbl.setStyleSheet("color: #8B949E; margin-bottom: 8px;")
+        info_lbl.setStyleSheet("color: #9CA3AF; margin-bottom: 2px;")
         layout.addWidget(info_lbl)
 
+        card_chan = SettingsCard("🔀 Channel Matrix & Pixoo Display Filters")
         self.channel_table = QTableWidget()
         self.channel_table.setColumnCount(3)
         self.channel_table.setHorizontalHeaderLabels(["Channel Name", "📺 Show on Pixoo", "⭐ Favorite"])
         self.channel_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
 
-        # Load channels
         channels = self.storage.get_channels() if self.storage else []
         self.channel_table.setRowCount(len(channels))
 
         filter_map = self.config.pixoo.channel_filters
         for row, ch in enumerate(channels):
-            # Name
-            self.channel_table.setItem(row, 0, QTableWidgetItem(f"#{ch.name}"))
+            clean_name = ch.name.lstrip("#")
+            self.channel_table.setItem(row, 0, QTableWidgetItem(f"#{clean_name}"))
 
-            # Pixoo filter
             pixoo_chk = QCheckBox()
-            is_enabled = filter_map.get(ch.name, ch.is_pixoo_enabled)
+            if clean_name in filter_map:
+                is_enabled = bool(filter_map[clean_name])
+            elif f"#{clean_name}" in filter_map:
+                is_enabled = bool(filter_map[f"#{clean_name}"])
+            elif ch.name in filter_map:
+                is_enabled = bool(filter_map[ch.name])
+            else:
+                is_enabled = bool(ch.is_pixoo_enabled)
+
             pixoo_chk.setChecked(is_enabled)
             self.channel_table.setCellWidget(row, 1, pixoo_chk)
 
-            # Favorite
             fav_chk = QCheckBox()
-            fav_chk.setChecked(ch.is_favorite or ch.name in self.config.favorites)
+            is_fav = (
+                ch.is_favorite
+                or (self.config and self.config.is_channel_favorite(clean_name))
+            )
+            fav_chk.setChecked(is_fav)
             self.channel_table.setCellWidget(row, 2, fav_chk)
 
-        layout.addWidget(self.channel_table)
+        card_chan.add_widget(self.channel_table)
+        layout.addWidget(card_chan)
+        return self.tab_channels
 
-    # --- Tab 4: Color Themes ---
-    def _build_colors_tab(self):
-        layout = QVBoxLayout(self.tab_colors)
+    # --- Tab 4: App UI Colors ---
+    def _build_app_colors_tab(self):
+        self.tab_app_colors = QWidget()
+        layout = QVBoxLayout(self.tab_app_colors)
+        layout.setSpacing(12)
 
-        info_lbl = QLabel("Customize all 6 color tokens for the Pixoo 64 matrix display:")
-        info_lbl.setStyleSheet("color: #8B949E; margin-bottom: 8px;")
+        info_lbl = QLabel(
+            "Customize interface and map theme colors. Click any color swatch below to open the palette. "
+            "Colors are saved and applied live immediately as you pick them."
+        )
+        info_lbl.setWordWrap(True)
+        info_lbl.setStyleSheet("color: #9CA3AF; margin-bottom: 2px;")
         layout.addWidget(info_lbl)
 
-        grid = QVBoxLayout()
-        grid.setSpacing(10)
+        # Theme Management & Persistence Card
+        theme_card = SettingsCard("🎨 Theme Presets & Management")
+        theme_row = QHBoxLayout()
+        theme_row.setSpacing(10)
 
-        # Channel Name Color
-        row1 = QHBoxLayout()
-        row1.addWidget(QLabel("Channel Name Color (Top Header / Bottom Bar):"))
-        self.btn_col_channel = ColorPickerButton(self.config.pixoo_colors.channel_color)
-        row1.addWidget(self.btn_col_channel)
-        grid.addLayout(row1)
+        self.btn_save_theme = QPushButton("💾 Save Theme")
+        self.btn_save_theme.setObjectName("actionButton")
+        self.btn_save_theme.setToolTip("Save current custom theme colors to configuration")
+        self.btn_save_theme.clicked.connect(self._on_save_theme_clicked)
+        theme_row.addWidget(self.btn_save_theme)
 
-        # Alert Flash Color
-        row2 = QHBoxLayout()
-        row2.addWidget(QLabel("Alert Flash Color (3-Row Border Strobe):"))
-        self.btn_col_alert = ColorPickerButton(self.config.pixoo_colors.alert_color)
-        row2.addWidget(self.btn_col_alert)
-        grid.addLayout(row2)
+        self.btn_set_default_theme = QPushButton("⭐ Set Current Theme as Default")
+        self.btn_set_default_theme.setObjectName("actionButton")
+        self.btn_set_default_theme.setToolTip("Save current colors as your permanent default theme across app restarts")
+        self.btn_set_default_theme.clicked.connect(self._on_set_default_theme_clicked)
+        theme_row.addWidget(self.btn_set_default_theme)
 
-        # Message Text Color
-        row3 = QHBoxLayout()
-        row3.addWidget(QLabel("Message Text Color (Vertical / Horizontal):"))
-        self.btn_col_msg = ColorPickerButton(self.config.pixoo_colors.message_color)
-        row3.addWidget(self.btn_col_msg)
-        grid.addLayout(row3)
+        self.btn_reset_default_theme = QPushButton("↺ Reset to Default Theme")
+        self.btn_reset_default_theme.setObjectName("secondaryButton")
+        self.btn_reset_default_theme.setToolTip("Restore colors from your saved default theme (or factory defaults)")
+        self.btn_reset_default_theme.clicked.connect(self._on_reset_default_theme_clicked)
+        theme_row.addWidget(self.btn_reset_default_theme)
 
-        # Background Color
-        row4 = QHBoxLayout()
-        row4.addWidget(QLabel("Background Color:"))
-        self.btn_col_bg = ColorPickerButton(self.config.pixoo_colors.background_color)
-        row4.addWidget(self.btn_col_bg)
-        grid.addLayout(row4)
+        theme_card.add_layout(theme_row)
 
-        # Sender Name Color
-        row5 = QHBoxLayout()
-        row5.addWidget(QLabel("Sender Name Color:"))
-        self.btn_col_sender = ColorPickerButton(self.config.pixoo_colors.sender_color)
-        row5.addWidget(self.btn_col_sender)
-        grid.addLayout(row5)
+        self.theme_status_lbl = QLabel("")
+        self.theme_status_lbl.setStyleSheet("color: #34D399; font-weight: bold; font-size: 11px;")
+        theme_card.add_widget(self.theme_status_lbl)
+        layout.addWidget(theme_card)
 
-        # Favorite Star Color
-        row6 = QHBoxLayout()
-        row6.addWidget(QLabel("Favorite Star (★) Color:"))
-        self.btn_col_star = ColorPickerButton(self.config.pixoo_colors.favorite_star_color)
-        row6.addWidget(self.btn_col_star)
-        grid.addLayout(row6)
+        # Card 1: Chat & Sidebar Accents
+        c1 = SettingsCard("💬 Chat & Sidebar Accents")
+        self.btn_col_fav_chan = ColorPickerButton(self.config.app_colors.favorite_channel_color)
+        c1.add_row("⭐ Favorite Channel Color:", self.btn_col_fav_chan, 250)
+        self.btn_col_fav_user = ColorPickerButton(self.config.app_colors.favorite_user_color)
+        c1.add_row("⭐ Favorite User Color:", self.btn_col_fav_user, 250)
+        self.btn_col_send = ColorPickerButton(self.config.app_colors.send_button_color)
+        c1.add_row("✉️ Composer Send Button Color:", self.btn_col_send, 250)
+        self.btn_col_send_txt = ColorPickerButton(getattr(self.config.app_colors, "send_button_text_color", "#000000"))
+        c1.add_row("✉️ Send Button Text Color:", self.btn_col_send_txt, 250)
+        self.btn_col_radio_conn = ColorPickerButton(getattr(self.config.app_colors, "radio_connected_color", "#00FF7F"))
+        c1.add_row("🟢 Radio Connected Status Text Color:", self.btn_col_radio_conn, 250)
+        self.btn_col_sync_status = ColorPickerButton(getattr(self.config.app_colors, "sync_status_color", "#00FF7F"))
+        c1.add_row("✓ Sync Status ('Up to date') Color:", self.btn_col_sync_status, 250)
+        self.btn_col_snr = ColorPickerButton(getattr(self.config.app_colors, "message_snr_color", "#AA55FF"))
+        c1.add_row("📊 Message SNR Telemetry Text Color:", self.btn_col_snr, 250)
+        self.btn_col_new_msg_bar = ColorPickerButton(getattr(self.config.app_colors, "new_messages_bar_color", "#00FF7F"))
+        c1.add_row("🔴 'NEW MESSAGES' Bar Color:", self.btn_col_new_msg_bar, 250)
+        layout.addWidget(c1)
 
-        layout.addLayout(grid)
+        # Card 2: Mesh Map Node Markers & Size
+        c2 = SettingsCard("🗺️ Mesh Map Node Markers & Size")
+        row_dot = QHBoxLayout()
+        lbl_d = QLabel("📏 Map Node Dot Size:")
+        lbl_d.setFixedWidth(250)
+        row_dot.addWidget(lbl_d)
+        cur_dot_size = float(getattr(self.config.app_colors, "map_dot_size", 6.4))
+        self.slider_dot_size = QSlider(Qt.Orientation.Horizontal)
+        self.slider_dot_size.setRange(10, 80)
+        self.slider_dot_size.setValue(int(cur_dot_size * 10))
+        self.lbl_dot_size_val = QLabel(f"{cur_dot_size:.1f}px")
+        self.lbl_dot_size_val.setFixedWidth(45)
+        self.slider_dot_size.valueChanged.connect(lambda v: self.lbl_dot_size_val.setText(f"{v / 10.0:.1f}px"))
+        row_dot.addWidget(self.slider_dot_size, 1)
+        row_dot.addWidget(self.lbl_dot_size_val)
+        c2.add_layout(row_dot)
+
+        self.btn_col_map_rep = ColorPickerButton(self.config.app_colors.map_repeater_color)
+        c2.add_row("📡 Repeater Node Dot Color:", self.btn_col_map_rep, 250)
+        self.btn_col_map_rep_hover = ColorPickerButton(getattr(self.config.app_colors, "map_repeater_hover_color", "#FF55FF"))
+        c2.add_row("📡 Repeater Node Hover Color:", self.btn_col_map_rep_hover, 250)
+
+        self.btn_col_map_comp = ColorPickerButton(self.config.app_colors.map_companion_color)
+        c2.add_row("👤 Companion Node Dot Color:", self.btn_col_map_comp, 250)
+        self.btn_col_map_comp_hover = ColorPickerButton(getattr(self.config.app_colors, "map_companion_hover_color", "#00FFFF"))
+        c2.add_row("👤 Companion Node Hover Color:", self.btn_col_map_comp_hover, 250)
+
+        self.btn_col_map_orbital_rep = ColorPickerButton(getattr(self.config.app_colors, "map_orbital_repeater_color", "#FFD335"))
+        c2.add_row("🛰️ Orbital Repeater Ring Color:", self.btn_col_map_orbital_rep, 250)
+
+        self.chk_freshness = QCheckBox("Dim Older Nodes by Age (<24h full bright, -10%/day down to 30%)")
+        self.chk_freshness.setChecked(getattr(self.config.meshcore, "node_freshness_fading", True))
+        c2.add_widget(self.chk_freshness)
+        layout.addWidget(c2)
+
+        # Card 3: Trajectory & Status Gradients
+        c3 = SettingsCard("⚡ Map Trajectory & Status Gradients")
+        self.btn_col_watch_start = ColorPickerButton(self.config.app_colors.map_watcher_line_start)
+        c3.add_row("⚡ Watcher Packet Line (Origin Start):", self.btn_col_watch_start, 250)
+        self.btn_col_watch_end = ColorPickerButton(self.config.app_colors.map_watcher_line_end)
+        c3.add_row("⚡ Watcher Packet Line (Destination Fade):", self.btn_col_watch_end, 250)
+        self.btn_col_msg_start = ColorPickerButton(self.config.app_colors.map_message_line_start)
+        c3.add_row("📥 Received Message Route (Sender Start):", self.btn_col_msg_start, 250)
+        self.btn_col_msg_end = ColorPickerButton(self.config.app_colors.map_message_line_end)
+        c3.add_row("📥 Received Message Route (Receiver End):", self.btn_col_msg_end, 250)
+        self.btn_col_watcher_status = ColorPickerButton(getattr(self.config.app_colors, "map_watcher_status_color", "#7EE787"))
+        c3.add_row("⚡ Bottom Map Status ('FLOOD' text) Color:", self.btn_col_watcher_status, 250)
+        layout.addWidget(c3)
+
+        # Card 4: Route Visualisation Colors
+        c_vis = SettingsCard("📍 Route Visualisation Colors")
+        self.btn_col_visualised_path = ColorPickerButton(getattr(self.config.app_colors, "map_visualised_path_color", "#FF00FF"))
+        c_vis.add_row("📍 Known Repeaters Route Line Color:", self.btn_col_visualised_path, 300)
+        self.btn_col_visualised_heading = ColorPickerButton(getattr(self.config.app_colors, "map_visualised_heading_color", "#FF00FF"))
+        c_vis.add_row("🏷️ Route Popup Headings & Accent Color:", self.btn_col_visualised_heading, 300)
+        self.btn_col_phantom_path = ColorPickerButton(getattr(self.config.app_colors, "map_phantom_path_color", "#FFFF00"))
+        c_vis.add_row("👻 Phantom Node Route Color:", self.btn_col_phantom_path, 300)
+        self.btn_col_unknown_path = ColorPickerButton(getattr(self.config.app_colors, "map_unknown_path_color", "#EF4444"))
+        c_vis.add_row("❓ Unknown Repeater Route Color:", self.btn_col_unknown_path, 300)
+        self.btn_col_no_gps_path = ColorPickerButton(getattr(self.config.app_colors, "map_no_gps_path_color", "#000000"))
+        c_vis.add_row("📡 Repeater with No GPS Route Color:", self.btn_col_no_gps_path, 300)
+        layout.addWidget(c_vis)
+
+        # Connect all color pickers for automatic real-time save
+        self._connect_app_color_pickers()
+
+        # Card 5: Saved Hop Route Overrides
+        layout.addWidget(self._build_hop_preferences_card())
+
+        # Card 6: Marked Phantom Nodes
+        layout.addWidget(self._build_phantom_nodes_card())
+
         layout.addStretch()
+        return self.tab_app_colors
 
-    # --- Tab 5: Notifications & Watched Words ---
+    def _connect_app_color_pickers(self):
+        bindings = [
+            (self.btn_col_fav_chan, "favorite_channel_color"),
+            (self.btn_col_fav_user, "favorite_user_color"),
+            (self.btn_col_send, "send_button_color"),
+            (self.btn_col_send_txt, "send_button_text_color"),
+            (self.btn_col_radio_conn, "radio_connected_color"),
+            (self.btn_col_sync_status, "sync_status_color"),
+            (self.btn_col_snr, "message_snr_color"),
+            (self.btn_col_new_msg_bar, "new_messages_bar_color"),
+            (self.btn_col_map_rep, "map_repeater_color"),
+            (self.btn_col_map_rep_hover, "map_repeater_hover_color"),
+            (self.btn_col_map_comp, "map_companion_color"),
+            (self.btn_col_map_comp_hover, "map_companion_hover_color"),
+            (self.btn_col_map_orbital_rep, "map_orbital_repeater_color"),
+            (self.btn_col_watch_start, "map_watcher_line_start"),
+            (self.btn_col_watch_end, "map_watcher_line_end"),
+            (self.btn_col_msg_start, "map_message_line_start"),
+            (self.btn_col_msg_end, "map_message_line_end"),
+            (self.btn_col_watcher_status, "map_watcher_status_color"),
+            (self.btn_col_visualised_path, "map_visualised_path_color"),
+            (self.btn_col_visualised_heading, "map_visualised_heading_color"),
+            (self.btn_col_phantom_path, "map_phantom_path_color"),
+            (self.btn_col_unknown_path, "map_unknown_path_color"),
+            (self.btn_col_no_gps_path, "map_no_gps_path_color"),
+        ]
+        for btn, attr in bindings:
+            btn.color_changed.connect(lambda hex_val, b=btn, a=attr: self._on_app_color_changed(a, hex_val, b))
+
+        self.slider_dot_size.valueChanged.connect(self._on_dot_size_slider_changed)
+        self.chk_freshness.toggled.connect(self._on_freshness_chk_toggled)
+
+    def _on_app_color_changed(self, attr_name: str, hex_val: str, btn: Optional[ColorPickerButton] = None):
+        if btn and btn.current_hex != hex_val:
+            btn.current_hex = hex_val
+            btn._update_swatch()
+        if hasattr(self.config.app_colors, attr_name):
+            setattr(self.config.app_colors, attr_name, hex_val)
+            try:
+                self.config.save()
+            except Exception as e:
+                logger.error(f"Failed to auto-save theme color {attr_name}: {e}")
+            bus.emit(EventType.SETTINGS_UPDATED, self.config)
+            friendly = attr_name.replace("map_", "").replace("_", " ").title()
+            self.theme_status_lbl.setText(f"✓ Saved {friendly} ({hex_val.upper()}) & applied live!")
+            QTimer.singleShot(2500, lambda: self.theme_status_lbl.setText(""))
+
+    def _on_dot_size_slider_changed(self, val: int):
+        dot_size = val / 10.0
+        self.config.app_colors.map_dot_size = dot_size
+        try:
+            self.config.save()
+        except Exception:
+            pass
+        bus.emit(EventType.SETTINGS_UPDATED, self.config)
+
+    def _on_freshness_chk_toggled(self, checked: bool):
+        self.config.meshcore.node_freshness_fading = checked
+        try:
+            self.config.save()
+        except Exception:
+            pass
+        bus.emit(EventType.SETTINGS_UPDATED, self.config)
+
+    def _sync_color_pickers_to_config(self):
+        c = self.config.app_colors
+        c.favorite_channel_color = self.btn_col_fav_chan.current_hex
+        c.favorite_user_color = self.btn_col_fav_user.current_hex
+        c.send_button_color = self.btn_col_send.current_hex
+        c.send_button_text_color = self.btn_col_send_txt.current_hex
+        c.radio_connected_color = self.btn_col_radio_conn.current_hex
+        c.sync_status_color = self.btn_col_sync_status.current_hex
+        c.message_snr_color = self.btn_col_snr.current_hex
+        c.new_messages_bar_color = self.btn_col_new_msg_bar.current_hex
+        c.map_dot_size = self.slider_dot_size.value() / 10.0
+        c.map_repeater_color = self.btn_col_map_rep.current_hex
+        c.map_repeater_hover_color = self.btn_col_map_rep_hover.current_hex
+        c.map_companion_color = self.btn_col_map_comp.current_hex
+        c.map_companion_hover_color = self.btn_col_map_comp_hover.current_hex
+        c.map_orbital_repeater_color = self.btn_col_map_orbital_rep.current_hex
+        c.map_watcher_line_start = self.btn_col_watch_start.current_hex
+        c.map_watcher_line_end = self.btn_col_watch_end.current_hex
+        c.map_message_line_start = self.btn_col_msg_start.current_hex
+        c.map_message_line_end = self.btn_col_msg_end.current_hex
+        c.map_watcher_status_color = self.btn_col_watcher_status.current_hex
+        c.map_visualised_path_color = self.btn_col_visualised_path.current_hex
+        c.map_visualised_heading_color = self.btn_col_visualised_heading.current_hex
+        c.map_phantom_path_color = self.btn_col_phantom_path.current_hex
+        c.map_unknown_path_color = self.btn_col_unknown_path.current_hex
+        c.map_no_gps_path_color = self.btn_col_no_gps_path.current_hex
+
+    def _sync_config_to_color_pickers(self):
+        c = self.config.app_colors
+        self.btn_col_fav_chan.set_color(c.favorite_channel_color)
+        self.btn_col_fav_user.set_color(c.favorite_user_color)
+        self.btn_col_send.set_color(c.send_button_color)
+        self.btn_col_send_txt.set_color(getattr(c, "send_button_text_color", "#000000"))
+        self.btn_col_radio_conn.set_color(getattr(c, "radio_connected_color", "#00FF7F"))
+        self.btn_col_sync_status.set_color(getattr(c, "sync_status_color", "#00FF7F"))
+        self.btn_col_snr.set_color(getattr(c, "message_snr_color", "#AA55FF"))
+        self.btn_col_new_msg_bar.set_color(getattr(c, "new_messages_bar_color", "#00FF7F"))
+        cur_dot_size = float(getattr(c, "map_dot_size", 6.4))
+        self.slider_dot_size.setValue(int(cur_dot_size * 10))
+        self.lbl_dot_size_val.setText(f"{cur_dot_size:.1f}px")
+        self.btn_col_map_rep.set_color(c.map_repeater_color)
+        self.btn_col_map_rep_hover.set_color(getattr(c, "map_repeater_hover_color", "#FF55FF"))
+        self.btn_col_map_comp.set_color(c.map_companion_color)
+        self.btn_col_map_comp_hover.set_color(getattr(c, "map_companion_hover_color", "#00FFFF"))
+        self.btn_col_map_orbital_rep.set_color(getattr(c, "map_orbital_repeater_color", "#FFD335"))
+        self.btn_col_watch_start.set_color(c.map_watcher_line_start)
+        self.btn_col_watch_end.set_color(c.map_watcher_line_end)
+        self.btn_col_msg_start.set_color(c.map_message_line_start)
+        self.btn_col_msg_end.set_color(c.map_message_line_end)
+        self.btn_col_watcher_status.set_color(getattr(c, "map_watcher_status_color", "#7EE787"))
+        self.btn_col_visualised_path.set_color(getattr(c, "map_visualised_path_color", "#FF00FF"))
+        self.btn_col_visualised_heading.set_color(getattr(c, "map_visualised_heading_color", "#FF00FF"))
+        self.btn_col_phantom_path.set_color(getattr(c, "map_phantom_path_color", "#FFFF00"))
+        self.btn_col_unknown_path.set_color(getattr(c, "map_unknown_path_color", "#EF4444"))
+        self.btn_col_no_gps_path.set_color(getattr(c, "map_no_gps_path_color", "#000000"))
+
+    def _on_save_theme_clicked(self):
+        self._sync_color_pickers_to_config()
+        self.config.save()
+        bus.emit(EventType.SETTINGS_UPDATED, self.config)
+        self.theme_status_lbl.setText("💾 Theme successfully saved to config.json and active!")
+        QTimer.singleShot(3000, lambda: self.theme_status_lbl.setText(""))
+
+    def _on_set_default_theme_clicked(self):
+        from dataclasses import asdict
+        self._sync_color_pickers_to_config()
+        self.config.default_app_colors = asdict(self.config.app_colors)
+        self.config.save()
+        bus.emit(EventType.SETTINGS_UPDATED, self.config)
+        self.theme_status_lbl.setText("⭐ Current theme successfully saved as default!")
+        QTimer.singleShot(3000, lambda: self.theme_status_lbl.setText(""))
+
+    def _on_reset_default_theme_clicked(self):
+        from dataclasses import asdict
+        from meshcore_tray.config import AppColors
+        defaults = self.config.default_app_colors if self.config.default_app_colors else asdict(AppColors())
+        self.config.app_colors = AppColors(**{k: v for k, v in defaults.items() if k in AppColors.__dataclass_fields__})
+        self._sync_config_to_color_pickers()
+        self.config.save()
+        bus.emit(EventType.SETTINGS_UPDATED, self.config)
+        self.theme_status_lbl.setText("↺ Restored default theme colors!")
+        QTimer.singleShot(3000, lambda: self.theme_status_lbl.setText(""))
+
+
+    def _build_hop_preferences_card(self) -> SettingsCard:
+        self.card_hop_prefs = SettingsCard("💾 Saved Hop Route Overrides")
+        self.hop_prefs_container = QVBoxLayout()
+        self.card_hop_prefs.add_layout(self.hop_prefs_container)
+        self._refresh_hop_preferences_ui()
+        return self.card_hop_prefs
+
+    def _refresh_hop_preferences_ui(self):
+        while self.hop_prefs_container.count():
+            item = self.hop_prefs_container.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+            l = item.layout()
+            if l:
+                while l.count():
+                    sub = l.takeAt(0)
+                    if sub.widget():
+                        sub.widget().deleteLater()
+
+        desc = QLabel(
+            "Manual repeater adjustments selected in the route popup are saved here and "
+            "automatically applied to all future message and packet routing requests."
+        )
+        desc.setStyleSheet("color: #9CA3AF; font-size: 11px; margin-bottom: 4px;")
+        desc.setWordWrap(True)
+        self.hop_prefs_container.addWidget(desc)
+
+        prefs = self.storage.get_all_hop_preferences() if self.storage else []
+        if not prefs:
+            lbl_empty = QLabel("<i>No custom hop overrides saved. (Click '[Use this]' in the route popup to save one).</i>")
+            lbl_empty.setStyleSheet("color: #6B7280; font-size: 11px; margin: 4px 0;")
+            self.hop_prefs_container.addWidget(lbl_empty)
+            return
+
+        for p in prefs:
+            row = QHBoxLayout()
+            h_pref = p["hop_prefix"]
+            alias_display = p["alias"] or p["node_id"]
+            nid_display = p["node_id"]
+            lbl_item = QLabel(f"Prefix <code style='color: #60A5FA;'>{h_pref}</code> ➔ 📡 <b style='color: #34D399;'>{alias_display}</b> <span style='color: #9CA3AF; font-size: 10px;'>({nid_display})</span>")
+            row.addWidget(lbl_item, 1)
+
+            btn_rm = QPushButton("Remove")
+            btn_rm.setStyleSheet("""
+                QPushButton {
+                    background-color: #374151;
+                    color: #F87171;
+                    border: 1px solid #4B5563;
+                    border-radius: 4px;
+                    padding: 2px 8px;
+                    font-size: 10px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #DC2626;
+                    color: #FFFFFF;
+                }
+            """)
+            btn_rm.clicked.connect(lambda _, pref=h_pref: self._on_delete_hop_preference(pref))
+            row.addWidget(btn_rm)
+            self.hop_prefs_container.addLayout(row)
+
+        btn_clear_row = QHBoxLayout()
+        btn_clear_row.addStretch()
+        btn_clear_all = QPushButton("🧹 Clear All Saved Overrides")
+        btn_clear_all.setStyleSheet("""
+            QPushButton {
+                background-color: #262A33;
+                color: #D1D5DB;
+                border: 1px solid #3E4451;
+                border-radius: 4px;
+                padding: 4px 10px;
+                font-size: 10px;
+                margin-top: 6px;
+            }
+            QPushButton:hover {
+                background-color: #7F1D1D;
+                color: #FCA5A5;
+                border-color: #EF4444;
+            }
+        """)
+        btn_clear_all.clicked.connect(self._on_clear_all_hop_preferences)
+        btn_clear_row.addWidget(btn_clear_all)
+        self.hop_prefs_container.addLayout(btn_clear_row)
+
+    def _on_delete_hop_preference(self, hop_prefix: str):
+        if self.storage:
+            self.storage.delete_hop_preference(hop_prefix)
+            self._refresh_hop_preferences_ui()
+
+    def _on_clear_all_hop_preferences(self):
+        if self.storage:
+            self.storage.clear_all_hop_preferences()
+            self._refresh_hop_preferences_ui()
+
+    def _build_phantom_nodes_card(self) -> SettingsCard:
+        self.card_phantom_nodes = SettingsCard("👻 Marked Phantom Nodes (Collision Discards)")
+        self.phantom_nodes_container = QVBoxLayout()
+        self.card_phantom_nodes.add_layout(self.phantom_nodes_container)
+        self._refresh_phantom_nodes_ui()
+        return self.card_phantom_nodes
+
+    def _refresh_phantom_nodes_ui(self):
+        while self.phantom_nodes_container.count():
+            item = self.phantom_nodes_container.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+            l = item.layout()
+            if l:
+                while l.count():
+                    sub = l.takeAt(0)
+                    if sub.widget():
+                        sub.widget().deleteLater()
+
+        desc = QLabel(
+            "Nodes marked as 'phantom nodes' are excluded from map plotting. Any visualised route "
+            "passing through these hops is drawn in yellow to indicate a phantom/unresolved hop."
+        )
+        desc.setStyleSheet("color: #9CA3AF; font-size: 11px; margin-bottom: 4px;")
+        desc.setWordWrap(True)
+        self.phantom_nodes_container.addWidget(desc)
+
+        phantoms = self.storage.get_all_phantom_nodes() if self.storage else []
+        if not phantoms and self.config and self.config.phantom_nodes:
+            phantoms = [{"node_id": p, "alias": p, "created_at": ""} for p in self.config.phantom_nodes]
+
+        if not phantoms:
+            lbl_empty = QLabel("<i>No phantom nodes marked. (Click '👻 Mark as phantom node' in the route popup).</i>")
+            lbl_empty.setStyleSheet("color: #6B7280; font-size: 11px; margin: 4px 0;")
+            self.phantom_nodes_container.addWidget(lbl_empty)
+            return
+
+        for p in phantoms:
+            row = QHBoxLayout()
+            nid = p["node_id"]
+            alias = p.get("alias") or nid
+            lbl_item = QLabel(f"👻 <b style='color: #FACC15;'>{alias}</b> <span style='color: #9CA3AF; font-size: 10px;'>({nid})</span>")
+            row.addWidget(lbl_item, 1)
+
+            btn_rm = QPushButton("Unmark")
+            btn_rm.setStyleSheet("""
+                QPushButton {
+                    background-color: #374151;
+                    color: #FACC15;
+                    border: 1px solid #CA8A04;
+                    border-radius: 4px;
+                    padding: 2px 8px;
+                    font-size: 10px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #CA8A04;
+                    color: #000000;
+                }
+            """)
+            btn_rm.clicked.connect(lambda _, n=nid, a=alias: self._on_delete_phantom_node(n, a))
+            row.addWidget(btn_rm)
+            self.phantom_nodes_container.addLayout(row)
+
+        btn_clear_row = QHBoxLayout()
+        btn_clear_row.addStretch()
+        btn_clear_all = QPushButton("🧹 Clear All Phantom Nodes")
+        btn_clear_all.setStyleSheet("""
+            QPushButton {
+                background-color: #262A33;
+                color: #D1D5DB;
+                border: 1px solid #3E4451;
+                border-radius: 4px;
+                padding: 4px 10px;
+                font-size: 10px;
+                margin-top: 6px;
+            }
+            QPushButton:hover {
+                background-color: #7F1D1D;
+                color: #FCA5A5;
+                border-color: #EF4444;
+            }
+        """)
+        btn_clear_all.clicked.connect(self._on_clear_all_phantom_nodes)
+        btn_clear_row.addWidget(btn_clear_all)
+        self.phantom_nodes_container.addLayout(btn_clear_row)
+
+    def _on_delete_phantom_node(self, node_id: str, alias: str):
+        if self.storage:
+            self.storage.unmark_phantom_node(node_id)
+            if alias:
+                self.storage.unmark_phantom_node(alias)
+        if self.config:
+            self.config.unmark_phantom_node(node_id)
+            if alias:
+                self.config.unmark_phantom_node(alias)
+        self._refresh_phantom_nodes_ui()
+
+    def _on_clear_all_phantom_nodes(self):
+        if self.storage:
+            self.storage.clear_all_phantom_nodes()
+        if self.config:
+            self.config.phantom_nodes = []
+            self.config.save()
+        self._refresh_phantom_nodes_ui()
+
+    # --- Tab 5: Pixoo Matrix Colors ---
+    def _build_colors_tab(self):
+        self.tab_colors = QWidget()
+        layout = QVBoxLayout(self.tab_colors)
+        layout.setSpacing(12)
+
+        info_lbl = QLabel("Customize all 6 color tokens for the Pixoo 64 matrix display:")
+        info_lbl.setStyleSheet("color: #9CA3AF; margin-bottom: 2px;")
+        layout.addWidget(info_lbl)
+
+        card = SettingsCard("🌈 Pixoo 64 Color Tokens")
+        self.btn_col_channel = ColorPickerButton(self.config.pixoo_colors.channel_color)
+        card.add_row("Channel Header Color:", self.btn_col_channel, 200)
+
+        self.btn_col_alert = ColorPickerButton(self.config.pixoo_colors.alert_color)
+        card.add_row("Alert Strobe Color:", self.btn_col_alert, 200)
+
+        self.btn_col_msg = ColorPickerButton(self.config.pixoo_colors.message_color)
+        card.add_row("Message Body Text Color:", self.btn_col_msg, 200)
+
+        self.btn_col_bg = ColorPickerButton(self.config.pixoo_colors.background_color)
+        card.add_row("Screen Background Color:", self.btn_col_bg, 200)
+
+        self.btn_col_sender = ColorPickerButton(self.config.pixoo_colors.sender_color)
+        card.add_row("Sender Name Color:", self.btn_col_sender, 200)
+
+        self.btn_col_star = ColorPickerButton(self.config.pixoo_colors.favorite_star_color)
+        card.add_row("Favorite Star (★) Color:", self.btn_col_star, 200)
+
+        layout.addWidget(card)
+        layout.addStretch()
+        return self.tab_colors
+
+    # --- Tab 6: Notifications & Watched Words ---
     def _build_notifications_tab(self):
+        self.tab_notifications = QWidget()
         layout = QVBoxLayout(self.tab_notifications)
+        layout.setSpacing(12)
 
+        card_alerts = SettingsCard("🔔 Desktop & Mention Alerts")
         self.chk_desktop_notif = QCheckBox("Show Native Desktop Notifications")
         self.chk_desktop_notif.setChecked(self.config.notifications.desktop_notifications)
-        layout.addWidget(self.chk_desktop_notif)
+        card_alerts.add_widget(self.chk_desktop_notif)
 
         self.chk_mention_notif = QCheckBox("Alert when Node Callsign / Hex ID is mentioned")
         self.chk_mention_notif.setChecked(self.config.notifications.notify_on_node_mentions)
-        layout.addWidget(self.chk_mention_notif)
+        card_alerts.add_widget(self.chk_mention_notif)
+        layout.addWidget(card_alerts)
 
-        # Watched Keywords List
-        grp_kw = QGroupBox("Watched Keywords / Emergency Trigger Words")
-        kw_layout = QVBoxLayout(grp_kw)
-
+        card_kw = SettingsCard("🚨 Watched Keywords & Emergency Triggers")
         self.kw_list = QListWidget()
+        self.kw_list.setStyleSheet("background-color: #1C1C1C; border: 1.5px solid #414143; border-radius: 6px;")
         for kw in self.config.notifications.watched_keywords:
             self.kw_list.addItem(kw)
-        kw_layout.addWidget(self.kw_list)
+        card_kw.add_widget(self.kw_list)
 
         add_row = QHBoxLayout()
         self.kw_input = QLineEdit()
         self.kw_input.setPlaceholderText("Enter keyword (e.g. storm, repeater, CQ)...")
         self.btn_add_kw = QPushButton("Add Word")
+        self.btn_add_kw.setObjectName("secondaryButton")
         self.btn_add_kw.clicked.connect(self._add_keyword)
+
         self.btn_del_kw = QPushButton("Remove Selected")
+        self.btn_del_kw.setObjectName("secondaryButton")
         self.btn_del_kw.clicked.connect(self._del_keyword)
 
         add_row.addWidget(self.kw_input, 1)
         add_row.addWidget(self.btn_add_kw)
         add_row.addWidget(self.btn_del_kw)
-        kw_layout.addLayout(add_row)
+        card_kw.add_layout(add_row)
+        layout.addWidget(card_kw)
 
-        layout.addWidget(grp_kw)
         layout.addStretch()
+        return self.tab_notifications
 
     def _add_keyword(self):
-        word = self.kw_input.text().strip()
-        if word:
-            self.kw_list.addItem(word)
+        text = self.kw_input.text().strip()
+        if text:
+            self.kw_list.addItem(text)
             self.kw_input.clear()
 
     def _del_keyword(self):
@@ -404,90 +1453,190 @@ class SettingsDialog(QDialog):
         if item:
             self.kw_list.takeItem(self.kw_list.row(item))
 
-    # --- Tab 6: Rotations & Gateway ---
+    # --- Tab 7: Gateway & Telemetry ---
     def _build_gateway_tab(self):
+        self.tab_gateway = QWidget()
         layout = QVBoxLayout(self.tab_gateway)
+        layout.setSpacing(12)
 
-        # Radio Telemetry Rotation
-        grp_telem = QGroupBox("Periodic Radio Telemetry Dashboard")
-        t_layout = QVBoxLayout(grp_telem)
-
-        self.chk_telem_rot = QCheckBox("Enable Periodic Telemetry Rotation on Pixoo")
+        card_rot = SettingsCard("📊 Telemetry & Neighbour Rotations")
+        self.chk_telem_rot = QCheckBox("Rotate Node Battery & Telemetry onto Pixoo")
         self.chk_telem_rot.setChecked(self.config.telemetry.enabled)
-        t_layout.addWidget(self.chk_telem_rot)
+        card_rot.add_widget(self.chk_telem_rot)
 
         t_row = QHBoxLayout()
-        t_row.addWidget(QLabel("Rotate Every (Minutes):"))
+        lbl_ti = QLabel("Telemetry Interval (mins):")
+        lbl_ti.setFixedWidth(180)
+        t_row.addWidget(lbl_ti)
         self.telem_interval_spin = QSpinBox()
         self.telem_interval_spin.setRange(1, 120)
         self.telem_interval_spin.setValue(self.config.telemetry.interval_mins)
-        t_row.addWidget(self.telem_interval_spin)
-        t_layout.addLayout(t_row)
+        t_row.addWidget(self.telem_interval_spin, 1)
+        card_rot.add_layout(t_row)
 
-        layout.addWidget(grp_telem)
-
-        # Nearest Neighbours Rotation
-        grp_neigh = QGroupBox("Nearest Neighbours & SNR Screen")
-        n_layout = QVBoxLayout(grp_neigh)
-
-        self.chk_neigh_rot = QCheckBox("Enable Periodic Neighbours Rotation on Pixoo")
+        self.chk_neigh_rot = QCheckBox("Rotate Heard Mesh Neighbours onto Pixoo")
         self.chk_neigh_rot.setChecked(self.config.neighbours.enabled)
-        n_layout.addWidget(self.chk_neigh_rot)
+        card_rot.add_widget(self.chk_neigh_rot)
 
         n_row = QHBoxLayout()
-        n_row.addWidget(QLabel("Rotate Every (Minutes):"))
+        lbl_ni = QLabel("Neighbours Interval (mins):")
+        lbl_ni.setFixedWidth(180)
+        n_row.addWidget(lbl_ni)
         self.neigh_interval_spin = QSpinBox()
         self.neigh_interval_spin.setRange(1, 120)
         self.neigh_interval_spin.setValue(self.config.neighbours.interval_mins)
-        n_row.addWidget(self.neigh_interval_spin)
-        n_layout.addLayout(n_row)
+        n_row.addWidget(self.neigh_interval_spin, 1)
+        card_rot.add_layout(n_row)
 
-        rep_row = QHBoxLayout()
-        rep_row.addWidget(QLabel("Query Source:"))
+        src_row = QHBoxLayout()
+        lbl_src = QLabel("Neighbours Source:")
+        lbl_src.setFixedWidth(180)
+        src_row.addWidget(lbl_src)
         self.neigh_src_combo = QComboBox()
-        self.neigh_src_combo.addItem("Local Node (Direct Heard Neighbours)", "local")
-        self.neigh_src_combo.addItem("Owned / Trusted Repeater", "repeater")
-        s_idx = self.neigh_src_combo.findData(self.config.neighbours.source)
-        if s_idx >= 0:
-            self.neigh_src_combo.setCurrentIndex(s_idx)
-        rep_row.addWidget(self.neigh_src_combo, 1)
-        n_layout.addLayout(rep_row)
+        self.neigh_src_combo.addItem("Local Radio Direct Neighbours", "local")
+        self.neigh_src_combo.addItem("Query Target Repeater via LoRa", "repeater")
+        src_idx = self.neigh_src_combo.findData(self.config.neighbours.source)
+        if src_idx >= 0:
+            self.neigh_src_combo.setCurrentIndex(src_idx)
+        src_row.addWidget(self.neigh_src_combo, 1)
+        card_rot.add_layout(src_row)
 
         target_row = QHBoxLayout()
-        target_row.addWidget(QLabel("Repeater Node ID:"))
+        lbl_tr = QLabel("Target Repeater Node ID:")
+        lbl_tr.setFixedWidth(180)
+        target_row.addWidget(lbl_tr)
         self.target_rep_input = QLineEdit(self.config.neighbours.target_repeater_node_id)
-        target_row.addWidget(self.target_rep_input)
-        n_layout.addLayout(target_row)
+        target_row.addWidget(self.target_rep_input, 1)
+        card_rot.add_layout(target_row)
+        layout.addWidget(card_rot)
 
-        layout.addWidget(grp_neigh)
-
-        # Local Extensibility Gateway
-        grp_gate = QGroupBox("Extensibility & Local REST API Bridge")
-        g_layout = QVBoxLayout(grp_gate)
-
+        card_gate = SettingsCard("🌐 Local HTTP REST API Bridge")
         self.chk_gate = QCheckBox("Enable Local HTTP Bridge (for SDRs & External Scripts)")
         self.chk_gate.setChecked(self.config.gateway.http_bridge_enabled)
-        g_layout.addWidget(self.chk_gate)
+        card_gate.add_widget(self.chk_gate)
 
         port_row = QHBoxLayout()
-        port_row.addWidget(QLabel("HTTP Bridge Port:"))
+        lbl_gp = QLabel("HTTP Bridge Port:")
+        lbl_gp.setFixedWidth(180)
+        port_row.addWidget(lbl_gp)
         self.gate_port_spin = QSpinBox()
         self.gate_port_spin.setRange(1024, 65535)
         self.gate_port_spin.setValue(self.config.gateway.http_port)
-        port_row.addWidget(self.gate_port_spin)
-        g_layout.addLayout(port_row)
+        port_row.addWidget(self.gate_port_spin, 1)
+        card_gate.add_layout(port_row)
+        layout.addWidget(card_gate)
 
-        layout.addWidget(grp_gate)
         layout.addStretch()
+        return self.tab_gateway
+
+    # --- Tab 8: About & Support ---
+    def _build_about_tab(self):
+        self.tab_about = QWidget()
+        layout = QVBoxLayout(self.tab_about)
+        layout.setSpacing(14)
+
+        card_about = SettingsCard("ℹ️ About MESHCORE NAVIGATOR")
+
+        lbl_app = QLabel("⚡ MESHCORE NAVIGATOR")
+        lbl_app.setStyleSheet("font-size: 20px; font-weight: 800; color: #38BDF8; margin-top: 4px;")
+        card_about.add_widget(lbl_app)
+
+        lbl_ver = QLabel("Version 1.0.0 • Production Release")
+        lbl_ver.setStyleSheet("font-size: 13px; font-weight: 600; color: #94A3B8; margin-bottom: 6px;")
+        card_about.add_widget(lbl_ver)
+
+        lbl_desc = QLabel(
+            "Advanced desktop station, real-time RF mesh map, and LED matrix integration "
+            "engineered for MeshCore & Heltec V3 radios. Features multi-hop packet tracing, "
+            "ADS-B aircraft overlays, tropospheric ducting forecasts, and thunderstorm tracking."
+        )
+        lbl_desc.setWordWrap(True)
+        lbl_desc.setStyleSheet("color: #D1D5DB; font-size: 13px; line-height: 1.4; margin-bottom: 8px;")
+        card_about.add_widget(lbl_desc)
+
+        lbl_author = QLabel("App by Nicky Proniewicz - M7NCY")
+        lbl_author.setStyleSheet("font-size: 14px; font-weight: 700; color: #FBBF24; margin-bottom: 12px;")
+        card_about.add_widget(lbl_author)
+
+        coffee_row = QHBoxLayout()
+        btn_coffee_large = QPushButton("☕ Buy Me a Coffee")
+        btn_coffee_large.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_coffee_large.setFixedHeight(40)
+        btn_coffee_large.setStyleSheet("""
+            QPushButton {
+                background-color: #FFDD00;
+                color: #000000;
+                border: 1px solid #E6C600;
+                border-radius: 8px;
+                padding: 8px 24px;
+                font-size: 14px;
+                font-weight: 800;
+            }
+            QPushButton:hover {
+                background-color: #FFE633;
+                border-color: #FFDD00;
+            }
+            QPushButton:pressed {
+                background-color: #E6C600;
+            }
+        """)
+        btn_coffee_large.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://buymeacoffee.com/m7ncy")))
+        coffee_row.addWidget(btn_coffee_large)
+        coffee_row.addStretch()
+        card_about.add_layout(coffee_row)
+
+        layout.addWidget(card_about)
+        layout.addStretch()
+        return self.tab_about
 
     # --- Save & Apply Handler ---
-    def _save_and_close(self):
-        # 1. Update Node
+    def _apply_settings(self, close_on_finish: bool = True):
+        """Applies all form settings, writes config.json to disk, emits bus event, and updates hardware."""
+        # 1. Update Node & Radio
         self.config.meshcore.serial_port = self.port_combo.currentData() or "auto"
         self.config.meshcore.baudrate = self.baud_combo.currentData() or 115200
         self.config.meshcore.connection_type = self.mode_combo.currentData() or "serial"
-        self.config.meshcore.node_alias = self.alias_input.text().strip()
+        new_alias = self.alias_input.text().strip()
+        self.config.meshcore.node_alias = new_alias
         self.config.meshcore.node_id = self.node_id_input.text().strip()
+        if hasattr(self, "home_lat_input") and hasattr(self, "home_lon_input"):
+            self.config.meshcore.latitude = self.home_lat_input.value()
+            self.config.meshcore.longitude = self.home_lon_input.value()
+
+        freq = self.freq_spin.value()
+        bw = self.bw_combo.currentData() or 62.5
+        sf = self.sf_combo.currentData() or 8
+        cr = self.cr_combo.currentData() or "4/5"
+        tx = self.tx_spin.value()
+        path_mode = self.path_mode_combo.currentData()
+        if path_mode is None:
+            path_mode = 0
+
+        autoadd = self.chk_autoadd.isChecked()
+        loc_policy = self.loc_policy_combo.currentData() or 0
+        multi_acks = self.chk_multi_acks.isChecked()
+        rx_dly = self.rx_delay_spin.value()
+
+        self.config.meshcore.radio_preset = self.preset_combo.currentText()
+        self.config.meshcore.frequency_mhz = freq
+        self.config.meshcore.bandwidth_khz = bw
+        self.config.meshcore.spreading_factor = sf
+        self.config.meshcore.coding_rate = cr
+        self.config.meshcore.tx_power_dbm = tx
+        self.config.meshcore.path_hash_mode = path_mode
+        self.config.meshcore.autoadd_contacts = autoadd
+        self.config.meshcore.advert_loc_policy = loc_policy
+        self.config.meshcore.multi_acks = multi_acks
+        self.config.meshcore.rx_delay_ms = rx_dly
+
+        if self.radio_driver:
+            if new_alias:
+                self.radio_driver.set_node_name(new_alias)
+            self.radio_driver.set_radio_params(freq, bw, sf, cr, tx, path_hash_mode=path_mode)
+            self.radio_driver.set_autoadd_contacts(autoadd)
+            self.radio_driver.set_advert_location_policy(loc_policy)
+            self.radio_driver.set_multi_acks(multi_acks)
+            self.radio_driver.set_tuning_params(rx_delay_ms=rx_dly)
 
         # 2. Update Pixoo
         self.config.pixoo.ip_address = self.ip_input.text().strip()
@@ -495,6 +1644,8 @@ class SettingsDialog(QDialog):
         self.config.pixoo.alert_duration_secs = self.alert_dur_spin.value()
         self.config.pixoo.flash_count = self.flash_count_spin.value()
         self.config.pixoo.page_duration_secs = self.page_dur_spin.value()
+        if hasattr(self, "chk_show_live_mirror"):
+            self.config.pixoo.show_live_mirror = self.chk_show_live_mirror.isChecked()
 
         # Quiet hours
         self.config.quiet_hours.enabled = self.chk_quiet.isChecked()
@@ -506,20 +1657,39 @@ class SettingsDialog(QDialog):
         new_filters: Dict[str, bool] = {}
         new_favorites = []
         for row in range(self.channel_table.rowCount()):
-            chan_name = self.channel_table.item(row, 0).text().lstrip("#")
+            item = self.channel_table.item(row, 0)
+            if not item:
+                continue
+            chan_name = item.text().lstrip("#")
             pixoo_chk = self.channel_table.cellWidget(row, 1)
             fav_chk = self.channel_table.cellWidget(row, 2)
 
+            is_pix = True
             if pixoo_chk and isinstance(pixoo_chk, QCheckBox):
-                new_filters[chan_name] = pixoo_chk.isChecked()
+                is_pix = pixoo_chk.isChecked()
+                new_filters[chan_name] = is_pix
+                if self.storage:
+                    self.storage.update_channel_pixoo_enabled(chan_name, is_pix)
+
+            is_fav = False
             if fav_chk and isinstance(fav_chk, QCheckBox):
-                if fav_chk.isChecked():
+                is_fav = fav_chk.isChecked()
+                if is_fav:
                     new_favorites.append(chan_name)
+            if self.storage:
+                self.storage.set_channel_favorite(chan_name, is_fav)
 
         self.config.pixoo.channel_filters = new_filters
-        self.config.favorites = new_favorites
+        self.config.favorite_channels = new_favorites
+        self.config.favorites = list(new_favorites)
+        bus.emit(EventType.CHANNELS_UPDATED, None)
+        bus.emit(EventType.FAVORITES_UPDATED, None)
 
-        # 4. Update Colors
+        # 4. Update App UI Colors & Map Settings
+        self.config.meshcore.node_freshness_fading = self.chk_freshness.isChecked()
+        self._sync_color_pickers_to_config()
+
+        # 5. Update Pixoo Matrix Colors
         self.config.pixoo_colors.channel_color = self.btn_col_channel.current_hex
         self.config.pixoo_colors.alert_color = self.btn_col_alert.current_hex
         self.config.pixoo_colors.message_color = self.btn_col_msg.current_hex
@@ -527,7 +1697,7 @@ class SettingsDialog(QDialog):
         self.config.pixoo_colors.sender_color = self.btn_col_sender.current_hex
         self.config.pixoo_colors.favorite_star_color = self.btn_col_star.current_hex
 
-        # 5. Update Notifications
+        # 6. Update Notifications
         self.config.notifications.desktop_notifications = self.chk_desktop_notif.isChecked()
         self.config.notifications.notify_on_node_mentions = self.chk_mention_notif.isChecked()
         kw_list = []
@@ -535,7 +1705,7 @@ class SettingsDialog(QDialog):
             kw_list.append(self.kw_list.item(i).text())
         self.config.notifications.watched_keywords = kw_list
 
-        # 6. Update Rotations & Gateway
+        # 7. Update Rotations & Gateway
         self.config.telemetry.enabled = self.chk_telem_rot.isChecked()
         self.config.telemetry.interval_mins = self.telem_interval_spin.value()
         self.config.neighbours.enabled = self.chk_neigh_rot.isChecked()
@@ -549,4 +1719,46 @@ class SettingsDialog(QDialog):
         # Save to disk
         self.config.save()
         bus.emit(EventType.SETTINGS_UPDATED, self.config)
-        self.accept()
+
+        if close_on_finish:
+            self.accept()
+        else:
+            self.apply_status_lbl.setText("✓ Saved to config.json & applied live!")
+            QTimer.singleShot(3000, lambda: self.apply_status_lbl.setText(""))
+
+    def _save_and_close(self):
+        """Saves and closes the dialog/view."""
+        self._apply_settings(close_on_finish=True)
+
+    def result(self) -> int:
+        """Compatibility method returning dialog result code (0 = rejected / active, 1 = accepted)."""
+        return getattr(self, "_result", 0)
+
+    def setResult(self, r: int):
+        self._result = int(r)
+
+    def accept(self):
+        """Compatibility method: emits close_requested to switch back to chat & map."""
+        self._result = 1
+        self.close_requested.emit()
+
+    def reject(self):
+        """Compatibility method: emits close_requested without saving additional changes."""
+        self._result = 0
+        self.close_requested.emit()
+
+    def exec(self):
+        """Compatibility method for callers expecting a modal dialog."""
+        self.show()
+
+    def reload(self):
+        """Refreshes dynamic settings tabs such as hop preferences and channel tables."""
+        if hasattr(self, "_refresh_hop_preferences_ui"):
+            self._refresh_hop_preferences_ui()
+        if hasattr(self, "_refresh_phantom_nodes_ui"):
+            self._refresh_phantom_nodes_ui()
+
+
+# Alias for backward compatibility
+SettingsDialog = SettingsWidget
+
