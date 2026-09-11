@@ -17,7 +17,7 @@ from meshcore_tray.ui.nav_dock import NavDockWidget
 def qapp():
     app = QApplication.instance()
     if not app:
-        app = QApplication([])
+        app = QApplication(["meshcore-test"])
     return app
 
 

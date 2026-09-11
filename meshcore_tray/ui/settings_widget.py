@@ -1004,6 +1004,72 @@ class SettingsWidget(QWidget):
         c_vis.add_row("📡 Repeater with No GPS Route Color:", self.btn_col_no_gps_path, 300)
         layout.addWidget(c_vis)
 
+        # Card 4B: ADS-B Flight Color Schemes
+        c_adsb = SettingsCard("✈️ ADS-B Aircraft Flight Color Schemes")
+
+        self.combo_adsb_mode = QComboBox()
+        self.combo_adsb_mode.setStyleSheet("""
+            QComboBox {
+                background-color: #2B2F38;
+                color: #FFFFFF;
+                border: 1px solid #414143;
+                border-radius: 4px;
+                padding: 4px 10px;
+                font-size: 11px;
+                min-width: 170px;
+            }
+            QComboBox::drop-down { border: none; }
+            QComboBox QAbstractItemView {
+                background-color: #1E2024;
+                color: #FFFFFF;
+                selection-background-color: #3B82F6;
+            }
+        """)
+        self.combo_adsb_mode.addItems(["Altitude (Flight Level)", "Aircraft Type", "Distance from Station"])
+        cur_mode = getattr(self.config.app_colors, "adsb_color_mode", "altitude")
+        if cur_mode == "type":
+            self.combo_adsb_mode.setCurrentIndex(1)
+        elif cur_mode == "distance":
+            self.combo_adsb_mode.setCurrentIndex(2)
+        else:
+            self.combo_adsb_mode.setCurrentIndex(0)
+        self.combo_adsb_mode.currentIndexChanged.connect(self._on_adsb_mode_combo_changed)
+        c_adsb.add_row("🎨 Active Flight Coloring Mode:", self.combo_adsb_mode, 300)
+
+        # Altitude Scheme Colors
+        self.btn_col_adsb_alt_ground = ColorPickerButton(getattr(self.config.app_colors, "adsb_alt_ground", "#FF00FF"))
+        c_adsb.add_row("🏔️ Altitude: Lowest / Ground (< 2,000 ft):", self.btn_col_adsb_alt_ground, 300)
+        self.btn_col_adsb_alt_low = ColorPickerButton(getattr(self.config.app_colors, "adsb_alt_low", "#FF0000"))
+        c_adsb.add_row("🏔️ Altitude: Sub-7,000 ft (< 7k ft):", self.btn_col_adsb_alt_low, 300)
+        self.btn_col_adsb_alt_mid = ColorPickerButton(getattr(self.config.app_colors, "adsb_alt_mid", "#0000FF"))
+        c_adsb.add_row("🏔️ Altitude: Mid Flight Level (10k - 25k ft):", self.btn_col_adsb_alt_mid, 300)
+        self.btn_col_adsb_alt_high = ColorPickerButton(getattr(self.config.app_colors, "adsb_alt_high", "#FFFFFF"))
+        c_adsb.add_row("🏔️ Altitude: High Flight Level (> 25k ft):", self.btn_col_adsb_alt_high, 300)
+
+        # Type Scheme Colors
+        self.btn_col_adsb_type_airliner = ColorPickerButton(getattr(self.config.app_colors, "adsb_type_airliner", "#FFFFFF"))
+        c_adsb.add_row("✈️ Aircraft Type: Commercial Airliner:", self.btn_col_adsb_type_airliner, 300)
+        self.btn_col_adsb_type_light = ColorPickerButton(getattr(self.config.app_colors, "adsb_type_light", "#0000FF"))
+        c_adsb.add_row("🛩️ Aircraft Type: Light Aircraft / Prop:", self.btn_col_adsb_type_light, 300)
+        self.btn_col_adsb_type_military = ColorPickerButton(getattr(self.config.app_colors, "adsb_type_military", "#00FF00"))
+        c_adsb.add_row("⚔️ Aircraft Type: Military Fast Jet / Transport:", self.btn_col_adsb_type_military, 300)
+        self.btn_col_adsb_type_helicopter = ColorPickerButton(getattr(self.config.app_colors, "adsb_type_helicopter", "#FFFF00"))
+        c_adsb.add_row("🚁 Aircraft Type: Helicopter / Rotorcraft:", self.btn_col_adsb_type_helicopter, 300)
+        self.btn_col_adsb_type_glider = ColorPickerButton(getattr(self.config.app_colors, "adsb_type_glider", "#FF00FF"))
+        c_adsb.add_row("🪂 Aircraft Type: Glider / Sailplane:", self.btn_col_adsb_type_glider, 300)
+
+        # Distance Scheme Colors
+        self.btn_col_adsb_dist_close = ColorPickerButton(getattr(self.config.app_colors, "adsb_dist_close", "#FF0000"))
+        c_adsb.add_row("📏 Distance: Closest Range (0 - 25% Radius):", self.btn_col_adsb_dist_close, 300)
+        self.btn_col_adsb_dist_mid_close = ColorPickerButton(getattr(self.config.app_colors, "adsb_dist_mid_close", "#FFA500"))
+        c_adsb.add_row("📏 Distance: Mid-Close Range (25% - 50% Radius):", self.btn_col_adsb_dist_mid_close, 300)
+        self.btn_col_adsb_dist_mid_far = ColorPickerButton(getattr(self.config.app_colors, "adsb_dist_mid_far", "#FFFF00"))
+        c_adsb.add_row("📏 Distance: Mid-Far Range (50% - 75% Radius):", self.btn_col_adsb_dist_mid_far, 300)
+        self.btn_col_adsb_dist_far = ColorPickerButton(getattr(self.config.app_colors, "adsb_dist_far", "#00FF00"))
+        c_adsb.add_row("📏 Distance: Outer Boundary (75% - 100%+ Radius):", self.btn_col_adsb_dist_far, 300)
+
+        layout.addWidget(c_adsb)
+
         # Connect all color pickers for automatic real-time save
         self._connect_app_color_pickers()
 
@@ -1041,12 +1107,35 @@ class SettingsWidget(QWidget):
             (self.btn_col_phantom_path, "map_phantom_path_color"),
             (self.btn_col_unknown_path, "map_unknown_path_color"),
             (self.btn_col_no_gps_path, "map_no_gps_path_color"),
+            (self.btn_col_adsb_alt_ground, "adsb_alt_ground"),
+            (self.btn_col_adsb_alt_low, "adsb_alt_low"),
+            (self.btn_col_adsb_alt_mid, "adsb_alt_mid"),
+            (self.btn_col_adsb_alt_high, "adsb_alt_high"),
+            (self.btn_col_adsb_type_airliner, "adsb_type_airliner"),
+            (self.btn_col_adsb_type_light, "adsb_type_light"),
+            (self.btn_col_adsb_type_military, "adsb_type_military"),
+            (self.btn_col_adsb_type_helicopter, "adsb_type_helicopter"),
+            (self.btn_col_adsb_type_glider, "adsb_type_glider"),
+            (self.btn_col_adsb_dist_close, "adsb_dist_close"),
+            (self.btn_col_adsb_dist_mid_close, "adsb_dist_mid_close"),
+            (self.btn_col_adsb_dist_mid_far, "adsb_dist_mid_far"),
+            (self.btn_col_adsb_dist_far, "adsb_dist_far"),
         ]
         for btn, attr in bindings:
             btn.color_changed.connect(lambda hex_val, b=btn, a=attr: self._on_app_color_changed(a, hex_val, b))
 
         self.slider_dot_size.valueChanged.connect(self._on_dot_size_slider_changed)
         self.chk_freshness.toggled.connect(self._on_freshness_chk_toggled)
+
+    def _on_adsb_mode_combo_changed(self, idx: int):
+        modes = ["altitude", "type", "distance"]
+        if 0 <= idx < len(modes):
+            self.config.app_colors.adsb_color_mode = modes[idx]
+            try:
+                self.config.save()
+            except Exception:
+                pass
+            bus.emit(EventType.SETTINGS_UPDATED, self.config)
 
     def _on_app_color_changed(self, attr_name: str, hex_val: str, btn: Optional[ColorPickerButton] = None):
         if btn and btn.current_hex != hex_val:
@@ -1106,6 +1195,19 @@ class SettingsWidget(QWidget):
         c.map_phantom_path_color = self.btn_col_phantom_path.current_hex
         c.map_unknown_path_color = self.btn_col_unknown_path.current_hex
         c.map_no_gps_path_color = self.btn_col_no_gps_path.current_hex
+        c.adsb_alt_ground = self.btn_col_adsb_alt_ground.current_hex
+        c.adsb_alt_low = self.btn_col_adsb_alt_low.current_hex
+        c.adsb_alt_mid = self.btn_col_adsb_alt_mid.current_hex
+        c.adsb_alt_high = self.btn_col_adsb_alt_high.current_hex
+        c.adsb_type_airliner = self.btn_col_adsb_type_airliner.current_hex
+        c.adsb_type_light = self.btn_col_adsb_type_light.current_hex
+        c.adsb_type_military = self.btn_col_adsb_type_military.current_hex
+        c.adsb_type_helicopter = self.btn_col_adsb_type_helicopter.current_hex
+        c.adsb_type_glider = self.btn_col_adsb_type_glider.current_hex
+        c.adsb_dist_close = self.btn_col_adsb_dist_close.current_hex
+        c.adsb_dist_mid_close = self.btn_col_adsb_dist_mid_close.current_hex
+        c.adsb_dist_mid_far = self.btn_col_adsb_dist_mid_far.current_hex
+        c.adsb_dist_far = self.btn_col_adsb_dist_far.current_hex
 
     def _sync_config_to_color_pickers(self):
         c = self.config.app_colors
@@ -1135,6 +1237,26 @@ class SettingsWidget(QWidget):
         self.btn_col_phantom_path.set_color(getattr(c, "map_phantom_path_color", "#FFFF00"))
         self.btn_col_unknown_path.set_color(getattr(c, "map_unknown_path_color", "#EF4444"))
         self.btn_col_no_gps_path.set_color(getattr(c, "map_no_gps_path_color", "#000000"))
+        self.btn_col_adsb_alt_ground.set_color(getattr(c, "adsb_alt_ground", "#FF00FF"))
+        self.btn_col_adsb_alt_low.set_color(getattr(c, "adsb_alt_low", "#FF0000"))
+        self.btn_col_adsb_alt_mid.set_color(getattr(c, "adsb_alt_mid", "#0000FF"))
+        self.btn_col_adsb_alt_high.set_color(getattr(c, "adsb_alt_high", "#FFFFFF"))
+        self.btn_col_adsb_type_airliner.set_color(getattr(c, "adsb_type_airliner", "#FFFFFF"))
+        self.btn_col_adsb_type_light.set_color(getattr(c, "adsb_type_light", "#0000FF"))
+        self.btn_col_adsb_type_military.set_color(getattr(c, "adsb_type_military", "#00FF00"))
+        self.btn_col_adsb_type_helicopter.set_color(getattr(c, "adsb_type_helicopter", "#FFFF00"))
+        self.btn_col_adsb_type_glider.set_color(getattr(c, "adsb_type_glider", "#FF00FF"))
+        self.btn_col_adsb_dist_close.set_color(getattr(c, "adsb_dist_close", "#FF0000"))
+        self.btn_col_adsb_dist_mid_close.set_color(getattr(c, "adsb_dist_mid_close", "#FFA500"))
+        self.btn_col_adsb_dist_mid_far.set_color(getattr(c, "adsb_dist_mid_far", "#FFFF00"))
+        self.btn_col_adsb_dist_far.set_color(getattr(c, "adsb_dist_far", "#00FF00"))
+        mode = getattr(c, "adsb_color_mode", "altitude")
+        if mode == "type":
+            self.combo_adsb_mode.setCurrentIndex(1)
+        elif mode == "distance":
+            self.combo_adsb_mode.setCurrentIndex(2)
+        else:
+            self.combo_adsb_mode.setCurrentIndex(0)
 
     def _on_save_theme_clicked(self):
         self._sync_color_pickers_to_config()

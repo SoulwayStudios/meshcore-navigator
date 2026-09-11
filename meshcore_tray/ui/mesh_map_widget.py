@@ -6,10 +6,13 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from PyQt6.QtCore import QObject, Qt, QUrl, pyqtSignal, pyqtSlot, QTimer
+import math
+import time
+from PyQt6.QtCore import QObject, Qt, QUrl, pyqtSignal, pyqtSlot, QTimer, QPoint, QEvent
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+    QButtonGroup, QComboBox, QFrame, QHBoxLayout, QLabel, QMenu, QPushButton,
+    QSplitter, QVBoxLayout, QWidget, QApplication
 )
 
 logger = logging.getLogger("meshcore_tray.mesh_map")
@@ -17,37 +20,65 @@ logger = logging.getLogger("meshcore_tray.mesh_map")
 # Check WebEngine availability
 try:
     from PyQt6.QtWebEngineWidgets import QWebEngineView
+    from PyQt6.QtWebEngineCore import QWebEnginePage
     from PyQt6.QtWebChannel import QWebChannel
     WEBENGINE_AVAILABLE = True
 except ImportError:
     WEBENGINE_AVAILABLE = False
     logger.warning("PyQt6.QtWebEngineWidgets not available; MeshMapWidget will use fallback canvas.")
 
+if WEBENGINE_AVAILABLE:
+    class LoggingWebEnginePage(QWebEnginePage):
+        """Custom QWebEnginePage capturing all browser/JS console messages, warnings, and errors."""
+        def javaScriptConsoleMessage(self, level, message, lineNumber, sourceID):
+            lvl_map = {
+                QWebEnginePage.JavaScriptConsoleMessageLevel.InfoMessageLevel: (logging.INFO, "JS-INFO"),
+                QWebEnginePage.JavaScriptConsoleMessageLevel.WarningMessageLevel: (logging.WARNING, "JS-WARN"),
+                QWebEnginePage.JavaScriptConsoleMessageLevel.ErrorMessageLevel: (logging.ERROR, "JS-ERROR"),
+            }
+            lvl, tag = lvl_map.get(level, (logging.INFO, "JS-LOG"))
+            src = sourceID.split("/")[-1] if sourceID else "inline"
+            logger.log(lvl, f"[{tag}] {message} ({src}:{lineNumber})")
+else:
+    class LoggingWebEnginePage:
+        pass
+
 from meshcore_tray.core.event_bus import bus, EventType
 from meshcore_tray.core.models import MessageEnvelope, NodeContact, PacketPathInfo, is_valid_coordinate
 from meshcore_tray.core.tropo_service import TropoForecastService
 from meshcore_tray.core.adsb_service import ADSBService
 from meshcore_tray.core.thunderstorm_service import ThunderstormService
+from meshcore_tray.core.elevation_service import ElevationService
+from meshcore_tray.core.viewshed_service import ViewshedService
+from meshcore_tray.ui.elevation_profile_widget import ElevationProfileWidget
 
 STATIC_VENDOR_DIR = Path(__file__).parent / "static" / "vendor"
 _CACHED_LEAFLET_HTML: Optional[str] = None
 
 
-def _load_vendor_js(filename: str) -> str:
+def _load_vendor_asset(filename: str) -> str:
     path = STATIC_VENDOR_DIR / filename
     if path.exists():
         return path.read_text(encoding="utf-8")
     return ""
 
 
+def _load_vendor_js(filename: str) -> str:
+    return _load_vendor_asset(filename)
+
+
 def get_leaflet_html() -> str:
     global _CACHED_LEAFLET_HTML
     if _CACHED_LEAFLET_HTML is None:
+        vendor_css = f"<style>\n{_load_vendor_asset('leaflet.css')}\n</style>\n"
         vendor_js = (
-            f"<script>{_load_vendor_js('d3.v4.min.js')}</script>\n"
-            f"<script>{_load_vendor_js('d3-contour.min.js')}</script>\n"
+            f"<script>{_load_vendor_asset('leaflet.js')}</script>\n"
+            f"<script>{_load_vendor_asset('d3.v4.min.js')}</script>\n"
+            f"<script>{_load_vendor_asset('d3-contour.min.js')}</script>\n"
         )
-        _CACHED_LEAFLET_HTML = LEAFLET_HTML_TEMPLATE.replace("<!-- __VENDOR_SCRIPTS__ -->", vendor_js)
+        html = LEAFLET_HTML_TEMPLATE.replace("<!-- __VENDOR_STYLES__ -->", vendor_css)
+        html = html.replace("<!-- __VENDOR_SCRIPTS__ -->", vendor_js)
+        _CACHED_LEAFLET_HTML = html
     return _CACHED_LEAFLET_HTML
 
 
@@ -57,10 +88,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MeshCore Watcher Map</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+    <!-- __VENDOR_STYLES__ -->
     <!-- __VENDOR_SCRIPTS__ -->
+    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
     <style>
         html, body, #map {
             width: 100%;
@@ -114,6 +144,59 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             animation: pathPulse 1.6s infinite ease-in-out;
             pointer-events: auto !important;
             cursor: pointer;
+        }
+
+        /* Dark Monochromatic Elevation Layer (Pure Grayscale relief matching mockup) */
+        .dark-topo-tiles {
+            filter: grayscale(100%) invert(100%) brightness(70%) contrast(140%) !important;
+            background-color: #12151a !important;
+        }
+
+        /* In-Map Non-blocking Loading HUD */
+        .map-loading-hud {
+            position: absolute;
+            top: 14px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 2000;
+            background: rgba(18, 21, 26, 0.90);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            border: 1px solid rgba(16, 185, 129, 0.45);
+            box-shadow: 0 4px 18px rgba(0, 0, 0, 0.55);
+            color: #E5E7EB;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-size: 12px;
+            font-weight: 500;
+            padding: 6px 14px;
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            pointer-events: none;
+            transition: opacity 0.25s ease, transform 0.25s ease;
+        }
+        .map-loading-hud.hidden {
+            opacity: 0;
+            transform: translate(-50%, -10px);
+            pointer-events: none;
+        }
+        .loading-spinner {
+            width: 12px;
+            height: 12px;
+            border: 2px solid rgba(16, 185, 129, 0.3);
+            border-top-color: #10B981;
+            border-radius: 50%;
+            animation: hudSpin 0.8s linear infinite;
+        }
+        @keyframes hudSpin {
+            to { transform: rotate(360deg); }
+        }
+
+        @keyframes losBeaconPulse {
+            0% { transform: scale(0.9); opacity: 0.9; }
+            50% { transform: scale(2.2); opacity: 0.0; }
+            100% { transform: scale(0.9); opacity: 0.0; }
         }
 
         .switch-hop-btn {
@@ -1118,8 +1201,69 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             gap: 6px;
             box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
             user-select: none;
-            width: 220px;
+            width: 235px;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+        .adsb-mode-bar {
+            display: flex;
+            background: #1C1C1E;
+            border: 1px solid #383A40;
+            border-radius: 6px;
+            padding: 2px;
+            gap: 2px;
+        }
+        .adsb-mode-pill {
+            flex: 1;
+            background: transparent;
+            border: none;
+            border-radius: 4px;
+            color: #9CA3AF;
+            font-size: 9px;
+            font-weight: 600;
+            padding: 3px 2px;
+            cursor: pointer;
+            text-align: center;
+            transition: all 0.15s ease;
+        }
+        .adsb-mode-pill:hover {
+            color: #FFFFFF;
+            background: rgba(255, 255, 255, 0.06);
+        }
+        .adsb-mode-pill.active {
+            background: #2D3748;
+            color: #38BDF8;
+            font-weight: 700;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+        }
+        .adsb-photo-box {
+            margin-top: 5px;
+            border-top: 1px solid #374151;
+            padding-top: 4px;
+            text-align: center;
+        }
+        .adsb-photo-img {
+            max-width: 100%;
+            height: auto;
+            max-height: 120px;
+            border-radius: 4px;
+            border: 1px solid #4B5563;
+            display: block;
+            margin: 0 auto;
+        }
+        .adsb-photo-meta {
+            font-size: 8px;
+            color: #9CA3AF;
+            margin-top: 3px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .adsb-photo-link {
+            color: #38BDF8;
+            text-decoration: none;
+        }
+        .adsb-photo-link:hover {
+            text-decoration: underline;
         }
         .adsb-header {
             display: flex;
@@ -1218,17 +1362,210 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             border-radius: 50%;
             display: inline-block;
         }
-        .adsb-plane-marker {
-            cursor: pointer;
-            transform-origin: center center;
-            transition: transform 0.25s ease;
+        .adsb-legend-distress-dot {
+            background: #EF4444 !important;
+            animation: adsb-distress-glow 2.2s infinite ease-in-out;
+        }
+        @keyframes adsb-distress-glow {
+            0%, 100% {
+                opacity: 0.35;
+                box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+            }
+            50% {
+                opacity: 1;
+                box-shadow: 0 0 8px 2px rgba(239, 68, 68, 0.85);
+            }
+        }
+        .adsb-plane-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
             display: flex;
             align-items: center;
             justify-content: center;
         }
+        .adsb-distress-echo-ring {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 24px;
+            height: 24px;
+            margin-top: -12px;
+            margin-left: -12px;
+            border-radius: 50%;
+            border: 2px solid #EF4444;
+            background: rgba(239, 68, 68, 0.15);
+            box-sizing: border-box;
+            pointer-events: none;
+            animation: adsb-echo-pulse 2.4s infinite cubic-bezier(0.2, 0.6, 0.35, 1);
+            z-index: 1;
+        }
+        .adsb-distress-echo-ring-2 {
+            animation-delay: 1.2s;
+        }
+        @keyframes adsb-echo-pulse {
+            0% {
+                transform: scale(0.6);
+                opacity: 0.95;
+            }
+            70% {
+                transform: scale(3.2);
+                opacity: 0.25;
+            }
+            100% {
+                transform: scale(4.4);
+                opacity: 0;
+            }
+        }
+        .adsb-distress-tag {
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            margin-top: 3px;
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            background: rgba(220, 38, 38, 0.95);
+            border: 1px solid #F87171;
+            border-radius: 3px;
+            color: #FFFFFF;
+            font-size: 8px;
+            font-weight: 700;
+            letter-spacing: 0.3px;
+            padding: 1px 4px;
+            white-space: nowrap;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.8), 0 0 6px rgba(239, 68, 68, 0.5);
+            pointer-events: none;
+            z-index: 10;
+        }
+        .adsb-distress-beacon-dot {
+            width: 5px;
+            height: 5px;
+            border-radius: 50%;
+            background: #FFFFFF;
+            animation: adsb-distress-glow 2.2s infinite ease-in-out;
+            display: inline-block;
+        }
+        .adsb-distress-banner {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            background: rgba(185, 28, 28, 0.35);
+            border: 1px solid #EF4444;
+            border-radius: 4px;
+            padding: 3px 6px;
+            margin-bottom: 5px;
+            font-size: 9.5px;
+            font-weight: 600;
+            color: #FCA5A5;
+        }
+        .adsb-plane-marker {
+            cursor: pointer;
+            position: relative;
+            transform-origin: center center;
+            transition: transform 0.2s ease, filter 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            pointer-events: auto !important;
+            z-index: 2;
+        }
+        /* Enlarged invisible hit target ensuring clicks on or near the plane always register */
+        .adsb-plane-marker::before {
+            content: '';
+            position: absolute;
+            top: -8px;
+            left: -8px;
+            right: -8px;
+            bottom: -8px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.001);
+            pointer-events: auto !important;
+        }
+        .adsb-plane-marker:hover {
+            filter: drop-shadow(0 0 6px #38BDF8) drop-shadow(0 0 2px #FFFFFF) !important;
+        }
+        .adsb-plane-marker.pinned {
+            filter: drop-shadow(0 0 8px #38BDF8) drop-shadow(0 0 2px #38BDF8) !important;
+        }
         .adsb-icon-wrap {
             background: transparent !important;
             border: none !important;
+            overflow: visible !important;
+            pointer-events: auto !important;
+        }
+        .adsb-radar-center-wrap {
+            background: transparent !important;
+            border: none !important;
+            overflow: visible !important;
+            pointer-events: none !important;
+        }
+        .adsb-radar-center-beacon {
+            position: relative;
+            width: 28px;
+            height: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .adsb-radar-center-dot {
+            font-size: 16px;
+            filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.9));
+            z-index: 2;
+        }
+        .adsb-radar-center-pulse {
+            position: absolute;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            border: 1.5px solid #38BDF8;
+            background: rgba(56, 189, 248, 0.15);
+            animation: adsb-radar-pulse 2.5s infinite ease-out;
+            pointer-events: none;
+            z-index: 1;
+        }
+        @keyframes adsb-radar-pulse {
+            0% { transform: scale(0.3); opacity: 0.95; }
+            100% { transform: scale(2.4); opacity: 0; }
+        }
+        .adsb-range-ring-label {
+            background: transparent !important;
+            border: none !important;
+            pointer-events: none !important;
+            white-space: nowrap;
+        }
+        .adsb-cluster-bar {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 3px 6px;
+            background: #111827;
+            border-radius: 4px;
+            margin-bottom: 5px;
+            border: 1px solid #374151;
+            font-size: 9px;
+            flex-wrap: wrap;
+        }
+        .adsb-cluster-pill {
+            padding: 1px 5px;
+            background: #1F2937;
+            border: 1px solid #4B5563;
+            border-radius: 3px;
+            color: #D1D5DB;
+            cursor: pointer;
+            transition: background 0.15s, color 0.15s, border-color 0.15s;
+        }
+        .adsb-cluster-pill:hover {
+            background: #374151;
+            color: #FFFFFF;
+            border-color: #38BDF8;
+        }
+        .adsb-cluster-pill.active {
+            background: #0284C7;
+            color: #FFFFFF;
+            border-color: #38BDF8;
+            font-weight: 600;
         }
         .adsb-tooltip {
             background: rgba(26, 28, 32, 0.96) !important;
@@ -1241,8 +1578,46 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             pointer-events: auto !important;
             user-select: text;
         }
+        /* Hover bridge: transparent invisible zone extending downwards so moving mouse from marker to tooltip doesn't lose hover */
+        .adsb-tooltip::after {
+            content: '';
+            position: absolute;
+            bottom: -14px;
+            left: -10px;
+            right: -10px;
+            height: 18px;
+            background: transparent;
+            pointer-events: auto !important;
+        }
         .adsb-tooltip:before {
             border-top-color: #41444C !important;
+        }
+        .adsb-photo-placeholder {
+            margin-top: 5px;
+            margin-bottom: 2px;
+            padding: 8px 6px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            background: rgba(31, 41, 55, 0.45);
+            border-radius: 4px;
+            border: 1px dashed #4B5563;
+            box-sizing: border-box;
+            min-height: 48px;
+        }
+        .adsb-photo-placeholder-icon {
+            font-size: 15px;
+            line-height: 1;
+            margin-bottom: 3px;
+            opacity: 0.55;
+        }
+        .adsb-photo-placeholder-text {
+            font-size: 9.5px;
+            color: #9CA3AF;
+            font-weight: 500;
+            letter-spacing: 0.2px;
         }
         .adsb-tip-close {
             display: inline-flex;
@@ -1317,10 +1692,19 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
 </head>
 <body>
     <div id="map"></div>
+    <div id="map-loading-hud" class="map-loading-hud hidden">
+        <span class="loading-spinner"></span>
+        <span id="loading-hud-text">Initializing MeshCore Map &amp; RF Services...</span>
+    </div>
     <div id="adsb-panel" class="adsb-panel" style="display: none;">
         <div class="adsb-header">
             <span class="adsb-title">✈️ ADS-B FLIGHTS <span id="adsb-count-badge" class="scope-pill-count">0</span></span>
             <button class="adsb-close-btn" onclick="if (window.pyBridge && window.pyBridge.on_adsb_toggled) window.pyBridge.on_adsb_toggled(false)" title="Close ADS-B Layer">×</button>
+        </div>
+        <div class="adsb-mode-bar">
+            <button id="adsb-mode-alt" class="adsb-mode-pill active" onclick="setAdsbColorMode('altitude')">🏔️ Altitude</button>
+            <button id="adsb-mode-type" class="adsb-mode-pill" onclick="setAdsbColorMode('type')">✈️ Type</button>
+            <button id="adsb-mode-dist" class="adsb-mode-pill" onclick="setAdsbColorMode('distance')">📏 Distance</button>
         </div>
         <div class="adsb-target-box">
             <div class="adsb-target-row">
@@ -1329,19 +1713,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             </div>
             <button id="adsb-reset-btn" class="adsb-reset-btn" onclick="if (window.pyBridge && window.pyBridge.on_reset_adsb_target) window.pyBridge.on_reset_adsb_target()" style="display: none;">↺ Reset to Local Node</button>
         </div>
-        <div class="adsb-legend-row">
-            <span class="adsb-legend-item"><span class="adsb-legend-dot" style="background: #10B981;"></span>&lt;10k ft</span>
-            <span class="adsb-legend-item"><span class="adsb-legend-dot" style="background: #38BDF8;"></span>10-25k</span>
-            <span class="adsb-legend-item"><span class="adsb-legend-dot" style="background: #C084FC;"></span>&gt;25k ft</span>
-            <span class="adsb-legend-item"><span class="adsb-legend-dot" style="background: #EF4444;"></span>7700</span>
-        </div>
-        <div class="adsb-legend-row" style="margin-top: 3px; border-top: 1px solid #2F333B; padding-top: 3px; font-size: 8.5px; color: #9CA3AF; justify-content: space-around;">
-            <span title="Commercial Airliner">✈️ Airliner</span>
-            <span title="Light Aircraft / Prop">🛩️ Light</span>
-            <span title="Military Fast Jet">⚔️ Military</span>
-            <span title="Helicopter">🚁 Heli</span>
-            <span title="Glider / Sailplane">🪂 Glider</span>
-        </div>
+        <div id="adsb-legend-container"></div>
     </div>
     <div id="scope-filter-bar" class="scope-filter-bar" style="display: none;">
         <div class="scope-filter-title">🌐 Scopes</div>
@@ -1421,6 +1793,13 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
         </div>
     </div>
     <script>
+        window.addEventListener('error', function(e) {
+            console.error('[Leaflet Window Error] ' + (e.message || e) + ' at ' + (e.filename || '') + ':' + (e.lineno || ''));
+        });
+        window.addEventListener('unhandledrejection', function(e) {
+            console.error('[Leaflet Unhandled Rejection] ' + (e.reason ? (e.reason.message || e.reason) : 'unknown'));
+        });
+
         var map = L.map('map', {
             zoomControl: false,
             attributionControl: false,
@@ -1428,16 +1807,88 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             preferCanvas: true
         }).setView([54.5, -3.0], 8);
 
+        // Debounced ResizeObserver & window resize to prevent compositor lockups and DOM thrashing during window maximize/resize
+        var _mapResizeDebounceTimer = null;
+        function debouncedMapInvalidate() {
+            if (_mapResizeDebounceTimer) clearTimeout(_mapResizeDebounceTimer);
+            _mapResizeDebounceTimer = setTimeout(function() {
+                if (typeof map !== 'undefined' && map) {
+                    map.invalidateSize(false);
+                }
+            }, 120);
+        }
+
+        if (typeof ResizeObserver !== 'undefined') {
+            var _mapResizeObserver = new ResizeObserver(function() {
+                debouncedMapInvalidate();
+            });
+            var _mapEl = document.getElementById('map');
+            if (_mapEl) _mapResizeObserver.observe(_mapEl);
+        }
+        window.addEventListener('resize', function() {
+            debouncedMapInvalidate();
+        });
+
         L.control.zoom({ position: 'topright' }).addTo(map);
 
-        // Esri World Dark Gray Canvas Base - Clean, simplified dark map with NO API KEY required
-        L.tileLayer('https://services.arcgisonline.com/arcgis/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+        // Base Layer 1: Esri World Dark Gray Canvas Base
+        var canvasBaseLayer = L.tileLayer('https://services.arcgisonline.com/arcgis/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
             maxZoom: 16,
             updateWhenIdle: true,
             updateWhenZooming: false,
             keepBuffer: 2,
             attribution: 'Esri Canvas'
-        }).addTo(map);
+        });
+        canvasBaseLayer.on('tileerror', function(err) {
+            console.warn('[Leaflet Base Tile Error] Canvas: ' + (err.tile ? err.tile.src : 'unknown'));
+        });
+
+        // Base Layer 2: OpenTopoMap Topographic Relief (with dark inversion & relief contrast)
+        var topoBaseLayer = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+            maxZoom: 17,
+            subdomains: ['a', 'b', 'c'],
+            className: 'dark-topo-tiles',
+            updateWhenIdle: true,
+            updateWhenZooming: false,
+            keepBuffer: 2,
+            attribution: 'OpenTopoMap (CC-BY-SA)'
+        });
+        topoBaseLayer.on('tileerror', function(err) {
+            console.warn('[Leaflet Base Tile Error] Topo: ' + (err.tile ? err.tile.src : 'unknown'));
+        });
+
+        // Default to Canvas base layer initially
+        canvasBaseLayer.addTo(map);
+        var currentBaseLayerType = 'canvas';
+
+        function setBaseMapLayer(type) {
+            if (type === 'topo') {
+                if (map.hasLayer(canvasBaseLayer)) map.removeLayer(canvasBaseLayer);
+                if (!map.hasLayer(topoBaseLayer)) map.addLayer(topoBaseLayer);
+                currentBaseLayerType = 'topo';
+            } else {
+                if (map.hasLayer(topoBaseLayer)) map.removeLayer(topoBaseLayer);
+                if (!map.hasLayer(canvasBaseLayer)) map.addLayer(canvasBaseLayer);
+                currentBaseLayerType = 'canvas';
+            }
+        }
+        window.setBaseMapLayer = setBaseMapLayer;
+
+        function showLoadingHud(text) {
+            var hud = document.getElementById('map-loading-hud');
+            var txt = document.getElementById('loading-hud-text');
+            if (hud) {
+                if (txt && text) txt.textContent = text;
+                hud.classList.remove('hidden');
+            }
+        }
+        window.showLoadingHud = showLoadingHud;
+
+        function hideLoadingHud() {
+            var hud = document.getElementById('map-loading-hud');
+            if (hud) hud.classList.add('hidden');
+        }
+        window.hideLoadingHud = hideLoadingHud;
 
         // Dedicated pane for Tropo Forecast at zIndex 350 (strictly beneath markers at 600, routes at 400)
         map.createPane('tropoPane');
@@ -1459,28 +1910,59 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             pane: 'labelsPane'
         }).addTo(map);
 
-        // Dedicated pane for ADS-B Flight Markers at zIndex 550 (below node markers at 600, above routes at 400)
+        // Dedicated pane for ADS-B Radar Overlay at zIndex 410 (pointer-events strictly none)
+        map.createPane('adsbRadarPane');
+        map.getPane('adsbRadarPane').style.zIndex = 410;
+        map.getPane('adsbRadarPane').style.pointerEvents = 'none';
+
+        // Dedicated pane for ADS-B Flight Trails at zIndex 420 (pointer-events strictly none)
+        map.createPane('adsbTrailsPane');
+        map.getPane('adsbTrailsPane').style.zIndex = 420;
+        map.getPane('adsbTrailsPane').style.pointerEvents = 'none';
+
+        // Dedicated pane for ADS-B Interactive Aircraft Markers at zIndex 620 (strictly above node markers at 600, routes at 400)
+        map.createPane('adsbMarkersPane');
+        map.getPane('adsbMarkersPane').style.zIndex = 620;
+
         map.createPane('adsbPane');
-        map.getPane('adsbPane').style.zIndex = 550;
-        var adsbTrailsGroup = L.layerGroup([], { pane: 'adsbPane' }).addTo(map);
-        var adsbLayerGroup = L.layerGroup([], { pane: 'adsbPane' }).addTo(map);
+        map.getPane('adsbPane').style.zIndex = 620;
+
+        var adsbTrailsGroup = L.layerGroup([], { pane: 'adsbTrailsPane' }).addTo(map);
+        var adsbLayerGroup = L.layerGroup([], { pane: 'adsbMarkersPane' }).addTo(map);
+        var adsbRadarRingsGroup = L.layerGroup([], { pane: 'adsbRadarPane' }).addTo(map);
         var adsbRangeCircle = null;
         var adsbRadarOverlay = null;
         var adsbRadarRadius = null;
+        var adsbCenterMarker = null;
+        var adsbLastTargetCoord = null;
         var adsbActive = false;
         var aircraftHistory = {};
         var aircraftTrails = {};
         var aircraftMarkers = {};
+        var currentAircraftData = {};
+        var _aircraftContainerPoints = {};
         var pinnedTooltipHex = null;
+        var _activeHoverHex = null;
+        var _adsbHoverCloseTimer = null;
 
         // Dedicated pane for Thunderstorm Precipitation Radar at zIndex 360 (above tropo at 350, below routes at 400)
         map.createPane('thunderstormPane');
         map.getPane('thunderstormPane').style.zIndex = 360;
         map.getPane('thunderstormPane').style.pointerEvents = 'none';
 
-        // Dedicated pane for Lightning Strikes at zIndex 580 (above adsb at 550, below node markers at 600)
+        // Dedicated pane for Lightning Strikes at zIndex 580 (above trails at 420, below node markers at 600)
         map.createPane('lightningPane');
         map.getPane('lightningPane').style.zIndex = 580;
+        map.getPane('lightningPane').style.pointerEvents = 'none';
+
+        // Dedicated pane for LOS / Viewshed Coverage Overlay at zIndex 370 (above tropo/radar, below routes at 400)
+        map.createPane('losPane');
+        map.getPane('losPane').style.zIndex = 370;
+        map.getPane('losPane').style.pointerEvents = 'none';
+
+        // Dedicated pane for Point-to-Point Path & Fresnel Profile Line at zIndex 590 (above routes at 400, below node markers at 600)
+        map.createPane('p2pPane');
+        map.getPane('p2pPane').style.zIndex = 590;
 
         var thunderstormActive = false;
         var rainViewerRadarLayer = null;
@@ -2013,12 +2495,17 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             }
         }
 
+        var _moveEndDebounceTimer = null;
         map.on('moveend', function() {
-            var center = map.getCenter().wrap();
-            var zoom = map.getZoom();
-            if (pyBridge && pyBridge.on_map_moved) {
-                pyBridge.on_map_moved(center.lat, center.lng, zoom);
-            }
+            if (_moveEndDebounceTimer) clearTimeout(_moveEndDebounceTimer);
+            _moveEndDebounceTimer = setTimeout(function() {
+                if (typeof map === 'undefined' || !map) return;
+                var center = map.getCenter().wrap();
+                var zoom = map.getZoom();
+                if (pyBridge && pyBridge.on_map_moved) {
+                    pyBridge.on_map_moved(center.lat, center.lng, zoom);
+                }
+            }, 150);
         });
 
         if (typeof QWebChannel !== "undefined") {
@@ -2377,6 +2864,10 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 scopeInfoHtml +
                 dockedOrbitalsHtml +
                 '<button class="popup-btn" data-node-id="' + encodeURIComponent(node.node_id) + '" onclick="onNodeClicked(decodeURIComponent(this.dataset.nodeId))">' + (isRep ? 'Open Repeater Console' : 'Direct Message') + '</button>' +
+                '<div style="margin-top: 5px; display: flex; gap: 4px;">' +
+                    '<button class="popup-btn" style="flex: 1; margin-top: 0; background-color: #1E293B; color: #38BDF8; border: 1px solid #38BDF8;" data-nid="' + encodeURIComponent(node.node_id) + '" data-alias="' + encodeURIComponent(node.alias || node.node_id || '') + '" data-lat="' + Number(node.lat) + '" data-lon="' + Number(node.lon) + '" onclick="onProfileNodeClicked(this)">🏔️ Path Profile</button>' +
+                    '<button class="popup-btn" style="flex: 1; margin-top: 0; background-color: #064E3B; color: #34D399; border: 1px solid #10B981;" data-nid="' + encodeURIComponent(node.node_id) + '" data-alias="' + encodeURIComponent(node.alias || node.node_id || '') + '" data-lat="' + Number(node.lat) + '" data-lon="' + Number(node.lon) + '" onclick="onCalcViewshedClicked(this)">🟢 LOS Viewshed</button>' +
+                '</div>' +
                 '<button class="popup-btn" style="margin-top: 5px; background-color: #24262B; color: #38BDF8; border: 1px solid #38BDF8;" data-nid="' + encodeURIComponent(node.node_id) + '" data-alias="' + encodeURIComponent(node.alias || node.node_id || '') + '" data-lat="' + Number(node.lat) + '" data-lon="' + Number(node.lon) + '" onclick="onTrackAdsbClicked(this)">✈️ Track ADS-B Around Node</button>' +
                 '</div>';
         }
@@ -3718,26 +4209,67 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             var panel = document.getElementById('adsb-panel');
             if (panel) {
                 panel.style.display = adsbActive ? 'flex' : 'none';
+                if (adsbActive) renderAdsbLegend();
             }
             if (!adsbActive) {
                 if (adsbLayerGroup) adsbLayerGroup.clearLayers();
                 if (adsbTrailsGroup) adsbTrailsGroup.clearLayers();
+                if (adsbRadarRingsGroup) adsbRadarRingsGroup.clearLayers();
+                if (adsbCenterMarker) {
+                    try {
+                        if (adsbRadarRingsGroup) adsbRadarRingsGroup.removeLayer(adsbCenterMarker);
+                        map.removeLayer(adsbCenterMarker);
+                    } catch (e) {}
+                    adsbCenterMarker = null;
+                }
                 aircraftMarkers = {};
                 pinnedTooltipHex = null;
+                _activeHoverHex = null;
                 aircraftTrails = {};
                 aircraftHistory = {};
+                currentAircraftData = {};
+                _aircraftContainerPoints = {};
+                adsbLastTargetCoord = null;
                 if (adsbRadarOverlay) {
-                    map.removeLayer(adsbRadarOverlay);
+                    try { map.removeLayer(adsbRadarOverlay); } catch (e) {}
                     adsbRadarOverlay = null;
                     adsbRadarRadius = null;
                 }
                 if (adsbRangeCircle) {
-                    map.removeLayer(adsbRangeCircle);
+                    try { map.removeLayer(adsbRangeCircle); } catch (e) {}
                     adsbRangeCircle = null;
                 }
             }
         }
         window.setAdsbVisible = setAdsbVisible;
+
+        window.clearAdsbForRetarget = function() {
+            if (_adsbHoverCloseTimer) {
+                clearTimeout(_adsbHoverCloseTimer);
+                _adsbHoverCloseTimer = null;
+            }
+            if (map && map.closeTooltip) {
+                try { map.closeTooltip(); } catch (e) {}
+            }
+            if (adsbLayerGroup) adsbLayerGroup.clearLayers();
+            if (adsbTrailsGroup) adsbTrailsGroup.clearLayers();
+            if (adsbRadarRingsGroup) adsbRadarRingsGroup.clearLayers();
+            if (adsbCenterMarker) {
+                try {
+                    if (adsbRadarRingsGroup) adsbRadarRingsGroup.removeLayer(adsbCenterMarker);
+                    map.removeLayer(adsbCenterMarker);
+                } catch (e) {}
+                adsbCenterMarker = null;
+            }
+            aircraftMarkers = {};
+            pinnedTooltipHex = null;
+            _activeHoverHex = null;
+            aircraftTrails = {};
+            aircraftHistory = {};
+            currentAircraftData = {};
+            _aircraftContainerPoints = {};
+            adsbLastTargetCoord = null;
+        };
 
         function setActivityHeatmap(enabled, timeframeHours, data) {
             activityHeatmapActive = !!enabled;
@@ -3931,20 +4463,443 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 if (e.stopPropagation) e.stopPropagation();
                 if (e.preventDefault) e.preventDefault();
             }
-            if (pinnedTooltipHex === hex) {
+            if (_adsbHoverCloseTimer) {
+                clearTimeout(_adsbHoverCloseTimer);
+                _adsbHoverCloseTimer = null;
+            }
+            var h = (hex || '').toLowerCase();
+            if (pinnedTooltipHex === h || (pinnedTooltipHex && pinnedTooltipHex.toLowerCase() === h)) {
                 pinnedTooltipHex = null;
             }
-            if (aircraftMarkers && aircraftMarkers[hex]) {
-                aircraftMarkers[hex].closeTooltip();
+            if (_activeHoverHex === h) {
+                _activeHoverHex = null;
+            }
+            for (var mHex in aircraftMarkers) {
+                if (mHex.toLowerCase() === h) {
+                    var m = aircraftMarkers[mHex];
+                    m.closeTooltip();
+                    m.setZIndexOffset(0);
+                    if (m._icon) {
+                        var inner = m._icon.querySelector('.adsb-plane-marker');
+                        if (inner) inner.classList.remove('pinned');
+                    }
+                }
             }
         };
 
         map.on('click', function(e) {
+            if (window._p2pMeasureActive) {
+                if (!window._p2pStartPoint) {
+                    window._p2pStartPoint = { lat: e.latlng.lat, lng: e.latlng.lng };
+                    if (window._p2pStartMarker) map.removeLayer(window._p2pStartMarker);
+                    window._p2pStartMarker = L.circleMarker([e.latlng.lat, e.latlng.lng], {
+                        pane: 'p2pPane',
+                        radius: 7,
+                        color: '#FFFFFF',
+                        weight: 2,
+                        fillColor: '#38BDF8',
+                        fillOpacity: 1.0
+                    }).bindTooltip('Point A (Now click Point B to calculate profile)', { permanent: true, className: 'node-tooltip' }).addTo(map);
+                    return;
+                } else {
+                    var ptB = { lat: e.latlng.lat, lng: e.latlng.lng };
+                    var ptA = window._p2pStartPoint;
+                    if (window._p2pStartMarker) {
+                        map.removeLayer(window._p2pStartMarker);
+                        window._p2pStartMarker = null;
+                    }
+                    window._p2pStartPoint = null;
+                    if (window.setP2PMeasureMode) window.setP2PMeasureMode(false);
+                    if (window.pyBridge && window.pyBridge.on_p2p_path_selected) {
+                        window.pyBridge.on_p2p_path_selected(ptA.lat, ptA.lng, ptB.lat, ptB.lng, "Point A", "Point B");
+                    }
+                    return;
+                }
+            }
+
+            // Guard: If user clicked inside ANY marker, tooltip, popup, cluster pill, or UI panel, do NOT close!
+            if (e.originalEvent && e.originalEvent.target) {
+                var tgt = e.originalEvent.target;
+                if (tgt.closest && (
+                    tgt.closest('.leaflet-marker-icon') ||
+                    tgt.closest('.leaflet-tooltip') ||
+                    tgt.closest('.adsb-tooltip') ||
+                    tgt.closest('.adsb-icon-wrap') ||
+                    tgt.closest('.adsb-plane-container') ||
+                    tgt.closest('.adsb-plane-marker') ||
+                    tgt.closest('.adsb-distress-tag') ||
+                    tgt.closest('.adsb-distress-echo-ring') ||
+                    tgt.closest('.adsb-cluster-pill') ||
+                    tgt.closest('.adsb-panel') ||
+                    tgt.closest('.leaflet-popup')
+                )) {
+                    return;
+                }
+            }
+
+            // Check if user clicked within 24px of any aircraft marker (forgiving hit tolerance)
+            var clickedPt = e.containerPoint;
+            var nearestHex = null;
+            var nearestDist = 24;
+            for (var h in aircraftMarkers) {
+                var m = aircraftMarkers[h];
+                if (m && m.getLatLng) {
+                    var mPt = map.latLngToContainerPoint(m.getLatLng());
+                    var d = Math.sqrt(Math.pow(clickedPt.x - mPt.x, 2) + Math.pow(clickedPt.y - mPt.y, 2));
+                    if (d < nearestDist) {
+                        nearestDist = d;
+                        nearestHex = h;
+                    }
+                }
+            }
+
+            if (nearestHex && window.openAircraftTooltip) {
+                var nMarker = aircraftMarkers[nearestHex];
+                window.openAircraftTooltip(nearestHex, nMarker, true);
+                return;
+            }
+
+            if (_adsbHoverCloseTimer) {
+                clearTimeout(_adsbHoverCloseTimer);
+                _adsbHoverCloseTimer = null;
+            }
+            if (_activeHoverHex && aircraftMarkers && aircraftMarkers[_activeHoverHex]) {
+                var prevHover = aircraftMarkers[_activeHoverHex];
+                try { prevHover.closeTooltip(); } catch (e) {}
+                try { prevHover.setZIndexOffset(0); } catch (e) {}
+                _activeHoverHex = null;
+            }
+
             if (pinnedTooltipHex && aircraftMarkers && aircraftMarkers[pinnedTooltipHex]) {
-                aircraftMarkers[pinnedTooltipHex].closeTooltip();
+                var prevMarker = aircraftMarkers[pinnedTooltipHex];
+                try { prevMarker.closeTooltip(); } catch (e) {}
+                try { prevMarker.setZIndexOffset(0); } catch (e) {}
+                if (prevMarker._icon) {
+                    var inner = prevMarker._icon.querySelector('.adsb-plane-marker');
+                    if (inner) inner.classList.remove('pinned');
+                }
                 pinnedTooltipHex = null;
             }
         });
+
+        // Hover grace period handling for ADS-B tooltips:
+        // When mouse moves from an aircraft marker into the tooltip, keep the tooltip open.
+        document.addEventListener('mouseover', function(e) {
+            var tip = e.target && e.target.closest ? e.target.closest('.adsb-tooltip') : null;
+            if (tip) {
+                if (_adsbHoverCloseTimer) {
+                    clearTimeout(_adsbHoverCloseTimer);
+                    _adsbHoverCloseTimer = null;
+                }
+            }
+        }, true);
+
+        document.addEventListener('mouseout', function(e) {
+            var tip = e.target && e.target.closest ? e.target.closest('.adsb-tooltip') : null;
+            if (tip) {
+                var related = e.relatedTarget && e.relatedTarget.closest ? e.relatedTarget.closest('.adsb-tooltip') : null;
+                if (related === tip) {
+                    return;
+                }
+                if (!pinnedTooltipHex && _activeHoverHex) {
+                    if (_adsbHoverCloseTimer) clearTimeout(_adsbHoverCloseTimer);
+                    _adsbHoverCloseTimer = setTimeout(function() {
+                        if (!pinnedTooltipHex && _activeHoverHex) {
+                            var m = aircraftMarkers[_activeHoverHex];
+                            if (m) {
+                                try { m.closeTooltip(); } catch (e) {}
+                                try { m.setZIndexOffset(0); } catch (e) {}
+                            }
+                            _activeHoverHex = null;
+                        }
+                        _adsbHoverCloseTimer = null;
+                    }, 800);
+                }
+            }
+        }, true);
+
+        // Prevent clicks and mousedowns inside .adsb-tooltip from propagating to Leaflet map canvas
+        document.addEventListener('click', function(e) {
+            if (e.target && e.target.closest && e.target.closest('.adsb-tooltip')) {
+                // If it is the close button '✕', let closeAdsbTooltip handle it
+                if (e.target.classList && e.target.classList.contains('adsb-tip-close')) {
+                    return;
+                }
+                e.stopPropagation();
+            }
+        }, true);
+
+        document.addEventListener('mousedown', function(e) {
+            if (e.target && e.target.closest && e.target.closest('.adsb-tooltip')) {
+                e.stopPropagation();
+            }
+        }, true);
+
+        // Intercept right-click and suppress default Chromium browser context menu
+        var _lastContextMenuTime = 0;
+        function triggerMapContextMenu(lat, lon, x, y) {
+            var now = Date.now();
+            if (now - _lastContextMenuTime < 250) return;
+            _lastContextMenuTime = now;
+            if (window.pyBridge && window.pyBridge.on_map_context_menu) {
+                try {
+                    window.pyBridge.on_map_context_menu(
+                        lat,
+                        lon,
+                        Math.round(x),
+                        Math.round(y)
+                    );
+                } catch (err) {
+                    console.error("Context menu error:", err);
+                }
+            }
+        }
+
+        document.addEventListener('contextmenu', function(e) {
+            e.preventDefault();
+        }, false);
+
+        map.on('contextmenu', function(e) {
+            if (e.originalEvent) {
+                e.originalEvent.preventDefault();
+                e.originalEvent.stopPropagation();
+            }
+            triggerMapContextMenu(e.latlng.lat, e.latlng.lng, e.containerPoint.x, e.containerPoint.y);
+        });
+
+        window._tempPinMarker = null;
+        window.dropTemporaryPin = function(lat, lon, label) {
+            if (window._tempPinMarker) {
+                map.removeLayer(window._tempPinMarker);
+                window._tempPinMarker = null;
+            }
+            var text = label || "Waypoint";
+            window._tempPinMarker = L.marker([lat, lon], {
+                icon: L.divIcon({
+                    className: 'custom-temp-pin',
+                    html: '<div style="display:inline-flex; align-items:center; gap:4px; background:rgba(239, 68, 68, 0.92); color:#FFFFFF; border:1.5px solid #FFFFFF; border-radius:12px; padding:3px 8px; font-size:11px; font-weight:700; box-shadow:0 3px 10px rgba(0,0,0,0.6); white-space:nowrap;">📍 ' + text + '</div>',
+                    iconSize: [100, 26],
+                    iconAnchor: [50, 13]
+                })
+            }).addTo(map);
+        };
+
+        window.clearTemporaryPin = function() {
+            if (window._tempPinMarker) {
+                map.removeLayer(window._tempPinMarker);
+                window._tempPinMarker = null;
+            }
+        };
+
+        // ==========================================
+        // RF Line-of-Sight (LOS) & Topographic Viewshed Overlays
+        // ==========================================
+        var currentViewshedLayer = null;
+        var viewshedCenterCircle = null;
+        var losCenterCoords = null;
+        var losRadiusM = 25000;
+
+        function updateLosGradient() {
+            if (!losCenterCoords) return;
+            var losPane = map.getPane('losPane');
+            if (!losPane) return;
+            var gradEl = losPane.querySelector('#losRadialGrad');
+            if (!gradEl) return;
+            var centerPt = map.latLngToLayerPoint(losCenterCoords);
+            var latOffset = (losRadiusM || 25000) / 111320.0;
+            var edgePt = map.latLngToLayerPoint([losCenterCoords[0] + latOffset, losCenterCoords[1]]);
+            var rPx = Math.max(10, centerPt.distanceTo(edgePt));
+            gradEl.setAttribute('cx', centerPt.x);
+            gradEl.setAttribute('cy', centerPt.y);
+            gradEl.setAttribute('r', rPx);
+        }
+
+        function clearViewshedOverlay() {
+            map.off('move zoom viewreset', updateLosGradient);
+            losCenterCoords = null;
+            if (currentViewshedLayer !== null) {
+                map.removeLayer(currentViewshedLayer);
+                currentViewshedLayer = null;
+            }
+            if (viewshedCenterCircle !== null) {
+                map.removeLayer(viewshedCenterCircle);
+                viewshedCenterCircle = null;
+            }
+            var losPane = map.getPane('losPane');
+            if (losPane) {
+                var defs = losPane.querySelector('#los-defs');
+                if (defs) defs.remove();
+            }
+        }
+        window.clearViewshedOverlay = clearViewshedOverlay;
+
+        function renderViewshedOverlay(payload) {
+            clearViewshedOverlay();
+            if (!payload) return;
+            try {
+                // 1. Add 2D coverage raster overlay via L.imageOverlay
+                if (payload.image_data_url && payload.bounds) {
+                    currentViewshedLayer = L.imageOverlay(payload.image_data_url, payload.bounds, {
+                        pane: 'losPane',
+                        opacity: 0.88,
+                        interactive: false
+                    }).addTo(map);
+                } else if (payload.geojson) {
+                    // Fallback to vector geojson if raster is absent
+                    currentViewshedLayer = L.geoJSON(payload.geojson, {
+                        pane: 'losPane',
+                        style: {
+                            stroke: false,
+                            weight: 0,
+                            fill: true,
+                            fillColor: '#10B981',
+                            fillOpacity: 0.55
+                        }
+                    }).addTo(map);
+                }
+
+                // 2. Anchor pulse emitter marker to transmitter coordinates
+                if (payload.center_lat !== undefined && payload.center_lon !== undefined) {
+                    var pulseIcon = L.divIcon({
+                        className: 'los-beacon-icon-wrap',
+                        html: '<div style="position:relative; width:26px; height:26px; display:flex; align-items:center; justify-content:center;">' +
+                              '<div style="position:absolute; width:24px; height:24px; border-radius:50%; border:2px solid #10B981; animation:losBeaconPulse 2s infinite ease-out;"></div>' +
+                              '<div style="width:10px; height:10px; border-radius:50%; background:#10B981; border:2px solid #FFFFFF; box-shadow:0 0 10px #10B981;"></div>' +
+                              '</div>',
+                        iconSize: [26, 26],
+                        iconAnchor: [13, 13]
+                    });
+                    viewshedCenterCircle = L.marker([payload.center_lat, payload.center_lon], {
+                        pane: 'p2pPane',
+                        icon: pulseIcon
+                    }).bindTooltip('LOS Emitter: ' + (payload.observer_alias || 'Observer') + ' (' + (payload.tx_height_m || 8) + 'm AGL)', { permanent: false, className: 'node-tooltip' }).addTo(map);
+                }
+            } catch (err) {
+                console.error('Error rendering viewshed coverage overlay:', err);
+            }
+        }
+        window.renderViewshedOverlay = renderViewshedOverlay;
+
+        // ==========================================
+        // Point-to-Point Topographic Profile & Fresnel Zone
+        // ==========================================
+        var currentP2PLine = null;
+        var currentP2PMarkers = [];
+        var currentP2PScrubMarker = null;
+
+        function clearP2PLine() {
+            if (currentP2PLine !== null) {
+                map.removeLayer(currentP2PLine);
+                currentP2PLine = null;
+            }
+            for (var i = 0; i < currentP2PMarkers.length; i++) {
+                map.removeLayer(currentP2PMarkers[i]);
+            }
+            currentP2PMarkers = [];
+            clearP2PScrubMarker();
+        }
+        window.clearP2PLine = clearP2PLine;
+
+        function renderP2PLine(lat1, lon1, lat2, lon2, status, alias1, alias2) {
+            clearP2PLine();
+            var color = '#38BDF8';
+            if (status === 'FRESNEL_INCURSION') color = '#FBBF24';
+            if (status === 'OBSTRUCTED') color = '#EF4444';
+
+            currentP2PLine = L.polyline([[lat1, lon1], [lat2, lon2]], {
+                pane: 'p2pPane',
+                color: color,
+                weight: 3.5,
+                opacity: 0.85,
+                dashArray: (status === 'OBSTRUCTED' ? '6, 6' : null)
+            }).addTo(map);
+
+            var m1 = L.circleMarker([lat1, lon1], {
+                pane: 'p2pPane',
+                radius: 6,
+                color: '#FFFFFF',
+                weight: 2,
+                fillColor: '#38BDF8',
+                fillOpacity: 1.0
+            }).bindTooltip(alias1 || 'Tx Point', { permanent: false, className: 'node-tooltip' }).addTo(map);
+
+            var m2 = L.circleMarker([lat2, lon2], {
+                pane: 'p2pPane',
+                radius: 6,
+                color: '#FFFFFF',
+                weight: 2,
+                fillColor: color,
+                fillOpacity: 1.0
+            }).bindTooltip(alias2 || 'Rx Point', { permanent: false, className: 'node-tooltip' }).addTo(map);
+
+            currentP2PMarkers = [m1, m2];
+        }
+        window.renderP2PLine = renderP2PLine;
+
+        function updateP2PScrubMarker(lat, lon) {
+            if (!currentP2PScrubMarker) {
+                currentP2PScrubMarker = L.circleMarker([lat, lon], {
+                    pane: 'p2pPane',
+                    radius: 7,
+                    color: '#FBBF24',
+                    weight: 2.5,
+                    fillColor: '#FFFFFF',
+                    fillOpacity: 0.95
+                }).addTo(map);
+            } else {
+                currentP2PScrubMarker.setLatLng([lat, lon]);
+            }
+        }
+        window.updateP2PScrubMarker = updateP2PScrubMarker;
+
+        function clearP2PScrubMarker() {
+            if (currentP2PScrubMarker) {
+                map.removeLayer(currentP2PScrubMarker);
+                currentP2PScrubMarker = null;
+            }
+        }
+        window.clearP2PScrubMarker = clearP2PScrubMarker;
+
+        window._p2pMeasureActive = false;
+        window._p2pStartPoint = null;
+        window._p2pStartMarker = null;
+
+        function setP2PMeasureMode(active) {
+            window._p2pMeasureActive = !!active;
+            window._p2pStartPoint = null;
+            if (window._p2pStartMarker) {
+                map.removeLayer(window._p2pStartMarker);
+                window._p2pStartMarker = null;
+            }
+            if (active) {
+                map.getContainer().style.cursor = 'crosshair';
+            } else {
+                map.getContainer().style.cursor = '';
+            }
+        }
+        window.setP2PMeasureMode = setP2PMeasureMode;
+
+        window.onProfileNodeClicked = function(btn) {
+            if (window.pyBridge && window.pyBridge.on_profile_node_requested) {
+                window.pyBridge.on_profile_node_requested(
+                    decodeURIComponent(btn.dataset.nid),
+                    decodeURIComponent(btn.dataset.alias),
+                    parseFloat(btn.dataset.lat),
+                    parseFloat(btn.dataset.lon)
+                );
+            }
+        };
+
+        window.onCalcViewshedClicked = function(btn) {
+            if (window.pyBridge && window.pyBridge.on_calc_node_viewshed_requested) {
+                window.pyBridge.on_calc_node_viewshed_requested(
+                    decodeURIComponent(btn.dataset.nid),
+                    decodeURIComponent(btn.dataset.alias),
+                    parseFloat(btn.dataset.lat),
+                    parseFloat(btn.dataset.lon)
+                );
+            }
+        };
 
         function getRadarCircleBounds(lat, lon, radiusNm) {
             var dLat = radiusNm / 60.0;
@@ -3982,25 +4937,472 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             }
         }
 
-        function createAirplaneIcon(plane) {
+        window._adsbColorMode = 'altitude';
+        window._adsbColors = {
+            alt_ground: '#FF00FF',
+            alt_low: '#FF0000',
+            alt_mid: '#0000FF',
+            alt_high: '#FFFFFF',
+            type_airliner: '#FFFFFF',
+            type_light: '#0000FF',
+            type_military: '#00FF00',
+            type_helicopter: '#FFFF00',
+            type_glider: '#FF00FF',
+            dist_close: '#FF0000',
+            dist_mid_close: '#FFA500',
+            dist_mid_far: '#FFFF00',
+            dist_far: '#00FF00'
+        };
+        window._aircraftPhotos = {};
+        var currentAircraftData = {};
+
+        function renderAdsbLegend() {
+            var container = document.getElementById('adsb-legend-container');
+            if (!container) return;
+            var mode = window._adsbColorMode || 'altitude';
+            var c = window._adsbColors;
+
+            var distressItem = '<span class="adsb-legend-item"><span class="adsb-legend-dot adsb-legend-distress-dot"></span>Distress</span>';
+
+            if (mode === 'altitude') {
+                container.innerHTML = 
+                    '<div class="adsb-legend-row">' +
+                    '  <span class="adsb-legend-item"><span class="adsb-legend-dot" style="background:' + c.alt_ground + ';"></span>&lt;2k ft</span>' +
+                    '  <span class="adsb-legend-item"><span class="adsb-legend-dot" style="background:' + c.alt_low + ';"></span>&lt;7k ft</span>' +
+                    '  <span class="adsb-legend-item"><span class="adsb-legend-dot" style="background:' + c.alt_mid + ';"></span>10-25k</span>' +
+                    '  <span class="adsb-legend-item"><span class="adsb-legend-dot" style="background:' + c.alt_high + ';"></span>&gt;25k</span>' +
+                    '  ' + distressItem +
+                    '</div>';
+            } else if (mode === 'type') {
+                container.innerHTML = 
+                    '<div class="adsb-legend-row" style="font-size: 8px;">' +
+                    '  <span class="adsb-legend-item"><span class="adsb-legend-dot" style="background:' + c.type_airliner + ';"></span>Airliner</span>' +
+                    '  <span class="adsb-legend-item"><span class="adsb-legend-dot" style="background:' + c.type_light + ';"></span>Light</span>' +
+                    '  <span class="adsb-legend-item"><span class="adsb-legend-dot" style="background:' + c.type_military + ';"></span>Military</span>' +
+                    '  <span class="adsb-legend-item"><span class="adsb-legend-dot" style="background:' + c.type_helicopter + ';"></span>Heli</span>' +
+                    '  <span class="adsb-legend-item"><span class="adsb-legend-dot" style="background:' + c.type_glider + ';"></span>Glider</span>' +
+                    '  ' + distressItem +
+                    '</div>';
+            } else if (mode === 'distance') {
+                container.innerHTML = 
+                    '<div class="adsb-legend-row">' +
+                    '  <span class="adsb-legend-item"><span class="adsb-legend-dot" style="background:' + c.dist_close + ';"></span>Close</span>' +
+                    '  <span class="adsb-legend-item"><span class="adsb-legend-dot" style="background:' + c.dist_mid_close + ';"></span>Mid-Close</span>' +
+                    '  <span class="adsb-legend-item"><span class="adsb-legend-dot" style="background:' + c.dist_mid_far + ';"></span>Mid-Far</span>' +
+                    '  <span class="adsb-legend-item"><span class="adsb-legend-dot" style="background:' + c.dist_far + ';"></span>Far</span>' +
+                    '  ' + distressItem +
+                    '</div>';
+            }
+        }
+
+        function recolorAllAircraft() {
+            for (var hex in aircraftMarkers) {
+                var marker = aircraftMarkers[hex];
+                if (marker && marker._planeData) {
+                    var iconData = createAirplaneIcon(marker._planeData);
+                    marker._lastColor = iconData.color;
+                    var distress = getAircraftDistressInfo(marker._planeData);
+                    var distressKey = distress ? distress.code : '';
+                    if (marker._lastDistress !== distressKey) {
+                        marker._lastDistress = distressKey;
+                        marker.setIcon(iconData.icon);
+                        if (marker._icon) {
+                            L.DomEvent.disableClickPropagation(marker._icon);
+                            L.DomEvent.disableScrollPropagation(marker._icon);
+                        }
+                    } else if (marker._icon) {
+                        var svg = marker._icon.querySelector('svg');
+                        if (svg) svg.setAttribute('fill', iconData.color);
+                    }
+                }
+            }
+            for (var hex in aircraftTrails) {
+                var trailLine = aircraftTrails[hex];
+                var plane = currentAircraftData[hex];
+                if (trailLine && plane) {
+                    var newCol = getAircraftColor(plane);
+                    if (trailLine.setStyle) {
+                        trailLine.setStyle({ color: newCol });
+                    } else if (trailLine.eachLayer) {
+                        trailLine.eachLayer(function(layer) {
+                            if (layer.setStyle) layer.setStyle({ color: newCol });
+                        });
+                    }
+                }
+            }
+        }
+
+        window.setAdsbColorMode = function(mode, fromPython) {
+            window._adsbColorMode = mode || 'altitude';
+            var pills = ['alt', 'type', 'dist'];
+            var modeKeys = { 'altitude': 'alt', 'type': 'type', 'distance': 'dist' };
+            var activeKey = modeKeys[window._adsbColorMode] || 'alt';
+            for (var i = 0; i < pills.length; i++) {
+                var el = document.getElementById('adsb-mode-' + pills[i]);
+                if (el) {
+                    if (pills[i] === activeKey) el.classList.add('active');
+                    else el.classList.remove('active');
+                }
+            }
+            renderAdsbLegend();
+            recolorAllAircraft();
+            if (!fromPython && window.pyBridge && window.pyBridge.on_adsb_color_mode_changed) {
+                window.pyBridge.on_adsb_color_mode_changed(window._adsbColorMode);
+            }
+        };
+
+        window.setAdsbColorConfig = function(mode, colors) {
+            if (colors) window._adsbColors = Object.assign(window._adsbColors, colors);
+            window.setAdsbColorMode(mode || window._adsbColorMode, true);
+        };
+
+        function getOverlappingAircraft(targetPlane, pixelRadius) {
+            var radius = pixelRadius || 26;
+            if (!targetPlane || typeof targetPlane.lat !== 'number' || typeof targetPlane.lon !== 'number') return [];
+            var tHex = (targetPlane.hex || '').toLowerCase();
+            var targetPt = _aircraftContainerPoints[tHex];
+            if (!targetPt) {
+                targetPt = map.latLngToContainerPoint(L.latLng(targetPlane.lat, targetPlane.lon));
+                _aircraftContainerPoints[tHex] = targetPt;
+            }
+            var cluster = [];
+            for (var h in currentAircraftData) {
+                var other = currentAircraftData[h];
+                if (other && typeof other.lat === 'number' && typeof other.lon === 'number') {
+                    var otherPt = _aircraftContainerPoints[h];
+                    if (!otherPt) {
+                        otherPt = map.latLngToContainerPoint(L.latLng(other.lat, other.lon));
+                        _aircraftContainerPoints[h] = otherPt;
+                    }
+                    var dx = targetPt.x - otherPt.x;
+                    var dy = targetPt.y - otherPt.y;
+                    if (Math.sqrt(dx * dx + dy * dy) <= radius) {
+                        cluster.push(other);
+                    }
+                }
+            }
+            return cluster;
+        }
+
+        function buildAircraftTooltipHtml(plane, clusterList) {
+            var hexCode = escapeHtml(plane.hex || '').toUpperCase();
+            var flightTitle = escapeHtml(plane.flight || hexCode);
+            var planeType = escapeHtml(plane.t || 'Unknown');
+            var reg = escapeHtml(plane.r || 'N/A');
+            var altStr = (plane.alt_baro !== null && plane.alt_baro !== undefined) ? (plane.alt_baro.toLocaleString() + ' ft') : 'Ground';
+            var spdStr = plane.gs ? (Math.round(plane.gs) + ' kts') : 'N/A';
+            var distStr = (plane.dst !== null && plane.dst !== undefined) ? (plane.dst + ' NM') : '';
+            var squawkStr = plane.squawk ? escapeHtml(plane.squawk) : '';
+            var catBadge = getAircraftCategoryBadge(plane.category || 'general');
+            var flightParam = encodeURIComponent(plane.flight || hexCode);
+            var hexParam = encodeURIComponent(hexCode);
+
+            var clusterBarHtml = '';
+            if (clusterList && clusterList.length > 1) {
+                var pills = '';
+                for (var ci = 0; ci < clusterList.length; ci++) {
+                    var cp = clusterList[ci];
+                    var cHex = escapeHtml(cp.hex || '').toUpperCase();
+                    var cLabel = escapeHtml(cp.flight || cHex);
+                    var isActive = (cHex === hexCode);
+                    pills += '<span class="adsb-cluster-pill' + (isActive ? ' active' : '') + '" title="Select ' + cLabel + ' (' + cHex + ')" onclick="selectAdsbAircraft(&quot;' + cHex + '&quot;, event)">' + cLabel + '</span>';
+                }
+                clusterBarHtml = '<div class="adsb-cluster-bar"><span style="color:#9CA3AF; margin-right:2px; font-weight: 500;">Stacked (' + clusterList.length + '):</span>' + pills + '</div>';
+            }
+
+            var photoCached = window._aircraftPhotos[hexCode] || window._aircraftPhotos[hexCode.toLowerCase()];
+            var photoInnerHtml = '';
+            if (photoCached && photoCached.thumbnail) {
+                var thumb = escapeHtml(photoCached.thumbnail);
+                var photog = escapeHtml(photoCached.photographer || 'Aircraft Photo');
+                var pLink = escapeHtml(photoCached.link || ('https://globe.adsbexchange.com/?icao=' + hexParam));
+                var srcLabel = escapeHtml(photoCached.source_label || (photoCached.source ? photoCached.source + ' ↗' : 'Photo ↗'));
+                photoInnerHtml = '<div style="margin-top: 4px; border-top: 1px solid #374151; padding-top: 4px;">' +
+                                 '  <img src="' + thumb + '" class="adsb-photo-img" alt="Aircraft photo" />' +
+                                 '  <div class="adsb-photo-meta">' +
+                                 '    <span>© ' + photog + '</span>' +
+                                 '    <a href="' + pLink + '" class="adsb-photo-link" onclick="if(window.pyBridge&&window.pyBridge.on_open_external_url){window.pyBridge.on_open_external_url(this.href);return false;}">' + srcLabel + '</a>' +
+                                 '  </div>' +
+                                 '</div>';
+            } else {
+                photoInnerHtml = '<div class="adsb-photo-placeholder">' +
+                                 '  <div class="adsb-photo-placeholder-icon">📷</div>' +
+                                 '  <div class="adsb-photo-placeholder-text">No aircraft photo available</div>' +
+                                 '</div>';
+            }
+
+            var distress = getAircraftDistressInfo(plane);
+            var distressBannerHtml = '';
+            if (distress) {
+                distressBannerHtml = '<div class="adsb-distress-banner">' +
+                                     '  <span class="adsb-distress-beacon-dot"></span>' +
+                                     '  <span>DISTRESS BEACON: <b>' + escapeHtml(distress.label) + '</b></span>' +
+                                     '</div>';
+            }
+            var squawkStr = plane.squawk ? escapeHtml(plane.squawk) : '';
+            var squawkDisplay = squawkStr;
+            if (distress) {
+                squawkDisplay = '<b style="color: #EF4444;">' + squawkStr + ' (' + escapeHtml(distress.shortDesc) + ')</b>';
+            }
+
+            return '<div style="line-height: 1.35; min-width: 205px;">' +
+                   clusterBarHtml +
+                   distressBannerHtml +
+                   '  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px;">' +
+                   '    <div><span class="adsb-cat-badge">' + catBadge + '</span> <b>' + flightTitle + '</b> <span style="font-weight: normal; color: #9CA3AF; font-size: 9.5px;">(' + planeType + ')</span></div>' +
+                   '    <span class="adsb-tip-close" onclick="closeAdsbTooltip(&quot;' + hexCode + '&quot;, event)" title="Close">✕</span>' +
+                   '  </div>' +
+                   '  <div style="color: #E5E7EB; font-size: 10px; margin-bottom: 2px;">' + altStr + ' • ' + spdStr + (distStr ? ' • ' + distStr : '') + '</div>' +
+                   '  <div style="color: #9CA3AF; font-size: 9px; margin-bottom: 4px;">Reg: ' + reg + ' • Hdg: ' + Math.round(plane.track || 0) + '°' + (squawkDisplay ? ' • Sq: ' + squawkDisplay : '') + '</div>' +
+                   '  <div id="adsb-photo-box-' + hexCode + '" class="adsb-photo-box" style="display: block;">' + photoInnerHtml + '</div>' +
+                   '  <div style="border-top: 1px solid #374151; padding-top: 4px; margin-top: 4px; display: flex; flex-direction: column; gap: 3px;">' +
+                   '    <a href="https://globe.adsbexchange.com/?icao=' + hexParam + '" class="adsb-tip-link" onclick="if(window.pyBridge&&window.pyBridge.on_open_external_url){window.pyBridge.on_open_external_url(this.href);return false;}">🌐 ADS-B Exchange ↗</a>' +
+                   '    <div style="display: flex; gap: 8px;">' +
+                   '      <a href="https://www.flightradar24.com/' + flightParam + '" class="adsb-tip-link" onclick="if(window.pyBridge&&window.pyBridge.on_open_external_url){window.pyBridge.on_open_external_url(this.href);return false;}">✈️ Flightradar24 ↗</a>' +
+                   '      <a href="https://www.flightaware.com/live/modes/' + hexParam + '/redirect" class="adsb-tip-link" onclick="if(window.pyBridge&&window.pyBridge.on_open_external_url){window.pyBridge.on_open_external_url(this.href);return false;}">📡 FlightAware ↗</a>' +
+                   '    </div>' +
+                   '  </div>' +
+                   '</div>';
+        }
+
+        window.openAircraftTooltip = function(h, marker, isPinned) {
+            if (!h) return;
+            var lowHex = h.toLowerCase();
+            if (!marker) marker = aircraftMarkers[lowHex];
+            if (!marker) return;
+            var plane = currentAircraftData[lowHex];
+            if (!plane) return;
+
+            if (!window._aircraftPhotos) window._aircraftPhotos = {};
+            if (!window._aircraftPhotos[lowHex] && window.pyBridge && window.pyBridge.request_aircraft_photo) {
+                window._aircraftPhotos[lowHex] = { loading: true };
+                window.pyBridge.request_aircraft_photo(lowHex.toUpperCase());
+            }
+
+            // Unpin previous pinned marker if different
+            if (pinnedTooltipHex && pinnedTooltipHex !== lowHex && aircraftMarkers[pinnedTooltipHex]) {
+                var prev = aircraftMarkers[pinnedTooltipHex];
+                prev.closeTooltip();
+                prev.setZIndexOffset(0);
+                if (prev._icon) {
+                    var prevInner = prev._icon.querySelector('.adsb-plane-marker');
+                    if (prevInner) prevInner.classList.remove('pinned');
+                }
+            }
+
+            // If an unpinned hover tooltip is open on another plane, close it
+            if (!isPinned && _activeHoverHex && _activeHoverHex !== lowHex && aircraftMarkers[_activeHoverHex]) {
+                var prevH = aircraftMarkers[_activeHoverHex];
+                prevH.closeTooltip();
+                prevH.setZIndexOffset(0);
+            }
+
+            var cluster = getOverlappingAircraft(plane, 26);
+            var tipHtml = buildAircraftTooltipHtml(plane, cluster);
+            marker.setTooltipContent(tipHtml);
+            marker.setZIndexOffset(10000);
+
+            if (marker._icon) {
+                var inner = marker._icon.querySelector('.adsb-plane-marker');
+                if (inner) {
+                    if (isPinned) inner.classList.add('pinned');
+                    else inner.classList.remove('pinned');
+                }
+            }
+
+            if (isPinned) {
+                pinnedTooltipHex = lowHex;
+                _activeHoverHex = null;
+                if (_adsbHoverCloseTimer) {
+                    clearTimeout(_adsbHoverCloseTimer);
+                    _adsbHoverCloseTimer = null;
+                }
+            } else {
+                _activeHoverHex = lowHex;
+            }
+            marker.openTooltip();
+
+            var tip = marker.getTooltip();
+            if (tip && tip._container) {
+                L.DomEvent.disableClickPropagation(tip._container);
+                L.DomEvent.disableScrollPropagation(tip._container);
+            }
+        };
+
+        window.selectAdsbAircraft = function(hex, e) {
+            if (e) {
+                if (e.stopPropagation) e.stopPropagation();
+                if (e.preventDefault) e.preventDefault();
+            }
+            if (_adsbHoverCloseTimer) {
+                clearTimeout(_adsbHoverCloseTimer);
+                _adsbHoverCloseTimer = null;
+            }
+            if (!hex) return;
+            var h = hex.toLowerCase();
+            var marker = aircraftMarkers[h];
+            if (marker) {
+                window.openAircraftTooltip(h, marker, true);
+            }
+        };
+
+        window.onAircraftPhotoReady = function(hex, photoInfo) {
+            if (!hex) return;
+            var h = hex.toUpperCase();
+            var lowH = hex.toLowerCase();
+            window._aircraftPhotos[h] = photoInfo;
+            window._aircraftPhotos[lowH] = photoInfo;
+            var box = document.getElementById('adsb-photo-box-' + h);
+            if (box) {
+                box.style.display = 'block';
+                if (photoInfo && photoInfo.thumbnail) {
+                    var thumb = escapeHtml(photoInfo.thumbnail);
+                    var photog = escapeHtml(photoInfo.photographer || 'Aircraft Photo');
+                    var link = escapeHtml(photoInfo.link || ('https://globe.adsbexchange.com/?icao=' + h));
+                    var srcLabel = escapeHtml(photoInfo.source_label || (photoInfo.source ? photoInfo.source + ' ↗' : 'Photo ↗'));
+                    box.innerHTML = 
+                        '<div style="margin-top: 4px; border-top: 1px solid #374151; padding-top: 4px;">' +
+                        '  <img src="' + thumb + '" class="adsb-photo-img" alt="Aircraft photo" />' +
+                        '  <div class="adsb-photo-meta">' +
+                        '    <span>© ' + photog + '</span>' +
+                        '    <a href="' + link + '" class="adsb-photo-link" onclick="if(window.pyBridge&&window.pyBridge.on_open_external_url){window.pyBridge.on_open_external_url(this.href);return false;}">' + srcLabel + '</a>' +
+                        '  </div>' +
+                        '</div>';
+                } else {
+                    box.innerHTML = 
+                        '<div class="adsb-photo-placeholder">' +
+                        '  <div class="adsb-photo-placeholder-icon">📷</div>' +
+                        '  <div class="adsb-photo-placeholder-text">No aircraft photo available</div>' +
+                        '</div>';
+                }
+            }
+
+            // Update marker tooltip content so subsequent hovers/clicks show photo immediately
+            for (var mHex in aircraftMarkers) {
+                if (mHex && mHex.toLowerCase() === lowH) {
+                    var marker = aircraftMarkers[mHex];
+                    var plane = currentAircraftData[mHex];
+                    if (marker && plane) {
+                        var cluster = getOverlappingAircraft(plane, 26);
+                        var newTipHtml = buildAircraftTooltipHtml(plane, cluster);
+                        marker.setTooltipContent(newTipHtml);
+                    }
+                    break;
+                }
+            }
+        };
+
+        function getAircraftDistressInfo(plane) {
+            if (!plane) return null;
+            var sq = String(plane.squawk || '').trim();
+            var em = String(plane.emergency || '').toLowerCase().trim();
+            if (sq === '7700' || em === 'general') {
+                return {
+                    code: '7700',
+                    label: '7700 (General Emergency)',
+                    badge: 'EMERG 7700',
+                    shortDesc: 'General Emergency'
+                };
+            }
+            if (sq === '7600' || em === 'radio') {
+                return {
+                    code: '7600',
+                    label: '7600 (Radio Comm Failure)',
+                    badge: 'NORDO 7600',
+                    shortDesc: 'Radio Failure'
+                };
+            }
+            if (sq === '7500' || em === 'unlawful') {
+                return {
+                    code: '7500',
+                    label: '7500 (Hijack Alert)',
+                    badge: 'HIJACK 7500',
+                    shortDesc: 'Hijack Alert'
+                };
+            }
+            if (em === 'lifeguard') {
+                return {
+                    code: 'MEDEVAC',
+                    label: 'Lifeguard / Medevac',
+                    badge: 'MEDEVAC',
+                    shortDesc: 'Medevac'
+                };
+            }
+            if (em && em !== 'none') {
+                return {
+                    code: 'DISTRESS',
+                    label: 'Emergency (' + em + ')',
+                    badge: 'DISTRESS',
+                    shortDesc: em
+                };
+            }
+            return null;
+        }
+
+        function getAircraftColor(plane) {
+            var distress = getAircraftDistressInfo(plane);
+            if (distress) return '#EF4444';
+
+            var mode = window._adsbColorMode || 'altitude';
+            var c = window._adsbColors;
+
+            if (mode === 'type') {
+                var cat = plane.category || 'general';
+                if (cat === 'airliner') return c.type_airliner || '#FFFFFF';
+                if (cat === 'light') return c.type_light || '#0000FF';
+                if (cat === 'military') return c.type_military || '#00FF00';
+                if (cat === 'helicopter') return c.type_helicopter || '#FFFF00';
+                if (cat === 'glider') return c.type_glider || '#FF00FF';
+                return '#00D2FF';
+            }
+
+            if (mode === 'distance') {
+                var dst = (typeof plane.dst === 'number') ? plane.dst : 0;
+                var maxRad = (window._adsbTarget && window._adsbTarget.radius_nm) ? window._adsbTarget.radius_nm : 50;
+                var ratio = maxRad > 0 ? (dst / maxRad) : 0;
+                if (ratio <= 0.25) return c.dist_close || '#FF0000';
+                if (ratio <= 0.50) return c.dist_mid_close || '#FFA500';
+                if (ratio <= 0.75) return c.dist_mid_far || '#FFFF00';
+                return c.dist_far || '#00FF00';
+            }
+
+            // Default: 'altitude'
             var alt = (plane.alt_baro !== null && plane.alt_baro !== undefined) ? plane.alt_baro : (plane.alt_geom || 0);
+            if (alt < 2000) return c.alt_ground || '#FF00FF';
+            if (alt < 7000) return c.alt_low || '#FF0000';
+            if (alt <= 25000) return c.alt_mid || '#0000FF';
+            return c.alt_high || '#FFFFFF';
+        }
+
+        function createAirplaneIcon(plane) {
             var track = (plane.track !== null && plane.track !== undefined) ? plane.track : 0;
-            var isEmergency = plane.squawk === '7700' || plane.squawk === '7600' || plane.squawk === '7500' || plane.emergency === 'general' || plane.emergency === 'lifeguard';
             var cat = plane.category || 'general';
-            var color = '#38BDF8';
-            if (isEmergency) color = '#EF4444';
-            else if (cat === 'military') color = '#F59E0B';
-            else if (alt < 10000) color = '#10B981';
-            else if (alt > 25000) color = '#C084FC';
+            var color = getAircraftColor(plane);
+            var distress = getAircraftDistressInfo(plane);
 
             var pathD = getAircraftSvgPath(cat);
             var iconW = (cat === 'glider') ? 26 : ((cat === 'airliner') ? 24 : 22);
             var iconH = (cat === 'glider') ? 26 : ((cat === 'airliner') ? 24 : 22);
 
-            var html = '<div class="adsb-plane-marker" style="transform: rotate(' + track + 'deg);">' +
+            var pulseHtml = '';
+            var distressTagHtml = '';
+            if (distress) {
+                pulseHtml = '<div class="adsb-distress-echo-ring"></div>' +
+                            '<div class="adsb-distress-echo-ring adsb-distress-echo-ring-2"></div>';
+                distressTagHtml = '<div class="adsb-distress-tag" title="Distress beacon: ' + escapeHtml(distress.label) + '">' +
+                                  '  <span class="adsb-distress-beacon-dot"></span>' +
+                                  '  <span>' + escapeHtml(distress.code) + '</span>' +
+                                  '</div>';
+            }
+
+            var html = '<div class="adsb-plane-container">' +
+                       pulseHtml +
+                       '<div class="adsb-plane-marker" style="transform: rotate(' + track + 'deg);">' +
                        '<svg width="' + iconW + '" height="' + iconH + '" viewBox="0 0 24 24" fill="' + color + '" style="filter: drop-shadow(0 0 3px rgba(0,0,0,0.85));">' +
                        pathD +
                        '</svg>' +
+                       '</div>' +
+                       distressTagHtml +
                        '</div>';
             return {
                 icon: L.divIcon({
@@ -4009,105 +5411,120 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     iconSize: [iconW, iconH],
                     iconAnchor: [Math.floor(iconW / 2), Math.floor(iconH / 2)]
                 }),
-                color: color
+                color: color,
+                distress: distress
             };
         }
 
         function updateRadarSweepOverlay(target) {
             if (typeof target.lat !== 'number' || typeof target.lon !== 'number') return;
             var radNm = target.radius_nm || 50;
-            var bounds = getRadarCircleBounds(target.lat, target.lon, radNm);
+            var targetKey = target.lat.toFixed(4) + '_' + target.lon.toFixed(4) + '_' + radNm;
 
-            if (!adsbRadarOverlay || adsbRadarRadius !== radNm) {
-                if (adsbRadarOverlay) {
-                    map.removeLayer(adsbRadarOverlay);
-                    adsbRadarOverlay = null;
-                }
-                adsbRadarRadius = radNm;
-
-                var maxNm = radNm > 0 ? radNm : 50;
-                var rings = [10, 25, 50];
-                var ringsHtml = '';
-
-                // Concentric range rings marked at 10, 25, and 50 NM
-                var hasOuterRing = false;
-                for (var ri = 0; ri < rings.length; ri++) {
-                    var d = rings[ri];
-                    if (d <= maxNm) {
-                        var r = (d / maxNm) * 99.5;
-                        var isMax = Math.abs(d - maxNm) < 0.1;
-                        if (isMax) hasOuterRing = true;
-                        var strokeW = isMax ? '0.6' : '0.45';
-                        var op = isMax ? '0.45' : '0.28';
-                        var yText = (100 - r + 3.8).toFixed(2);
-                        ringsHtml += '<circle cx="100" cy="100" r="' + r.toFixed(2) + '" fill="none" stroke="#9CA3AF" stroke-width="' + strokeW + '" stroke-dasharray="3, 4" opacity="' + op + '"/>';
-                        ringsHtml += '<text x="101.5" y="' + yText + '" fill="#9CA3AF" font-size="4" font-family="system-ui, -apple-system, sans-serif" opacity="0.65" font-weight="500" letter-spacing="0.2">' + d + ' NM</text>';
-                    }
-                }
-                if (!hasOuterRing) {
-                    ringsHtml += '<circle cx="100" cy="100" r="99.5" fill="none" stroke="#9CA3AF" stroke-width="0.6" stroke-dasharray="3, 4" opacity="0.45"/>';
-                    ringsHtml += '<text x="101.5" y="4.3" fill="#9CA3AF" font-size="4" font-family="system-ui, -apple-system, sans-serif" opacity="0.65" font-weight="500" letter-spacing="0.2">' + maxNm + ' NM</text>';
-                }
-
-                // Smooth exponential angular fade slices for the radar trail (0 to 90 deg counterclockwise)
-                var sliceAngles = [
-                    { s: 0, e: 2.5, op: 0.12 },
-                    { s: 2.5, e: 5.5, op: 0.095 },
-                    { s: 5.5, e: 9.0, op: 0.075 },
-                    { s: 9.0, e: 13.0, op: 0.058 },
-                    { s: 13.0, e: 17.5, op: 0.043 },
-                    { s: 17.5, e: 22.5, op: 0.031 },
-                    { s: 22.5, e: 28.0, op: 0.021 },
-                    { s: 28.0, e: 34.0, op: 0.014 },
-                    { s: 34.0, e: 40.5, op: 0.0085 },
-                    { s: 40.5, e: 47.5, op: 0.0050 },
-                    { s: 47.5, e: 55.0, op: 0.0028 },
-                    { s: 55.0, e: 63.0, op: 0.0014 },
-                    { s: 63.0, e: 71.5, op: 0.0006 },
-                    { s: 71.5, e: 80.5, op: 0.0002 },
-                    { s: 80.5, e: 90.0, op: 0.00005 }
-                ];
-
-                var slicesHtml = '';
-                for (var si = 0; si < sliceAngles.length; si++) {
-                    var sl = sliceAngles[si];
-                    var rad1 = sl.s * Math.PI / 180;
-                    var rad2 = sl.e * Math.PI / 180;
-                    var x1 = (100 - 100 * Math.sin(rad1)).toFixed(2);
-                    var y1 = (100 - 100 * Math.cos(rad1)).toFixed(2);
-                    var x2 = (100 - 100 * Math.sin(rad2)).toFixed(2);
-                    var y2 = (100 - 100 * Math.cos(rad2)).toFixed(2);
-                    var pathD = 'M 100 100 L ' + x1 + ' ' + y1 + ' A 100 100 0 0 0 ' + x2 + ' ' + y2 + ' Z';
-                    slicesHtml += '<path d="' + pathD + '" fill="#9CA3AF" opacity="' + sl.op + '" />';
-                }
-
-                var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-                svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-                svg.setAttribute('viewBox', '0 0 200 200');
-                svg.setAttribute('style', 'pointer-events: none;');
-                svg.innerHTML =
-                    '<defs>' +
-                        '<clipPath id="radarSweepClip">' +
-                            '<circle cx="100" cy="100" r="99.5" />' +
-                        '</clipPath>' +
-                        '<filter id="radarSweepBlur" x="-20%" y="-20%" width="140%" height="140%">' +
-                            '<feGaussianBlur stdDeviation="1.5" />' +
-                        '</filter>' +
-                    '</defs>' +
-                    '<g clip-path="url(#radarSweepClip)">' +
-                        ringsHtml +
-                        '<g class="adsb-radar-sweeper">' +
-                            '<animateTransform attributeName="transform" type="rotate" from="0 100 100" to="360 100 100" dur="5s" repeatCount="indefinite" />' +
-                            '<g filter="url(#radarSweepBlur)">' +
-                                slicesHtml +
-                            '</g>' +
-                            '<line x1="100" y1="100" x2="100" y2="0.5" stroke="#9CA3AF" stroke-width="0.65" opacity="0.75" stroke-linecap="round" />' +
-                        '</g>' +
-                    '</g>';
-                adsbRadarOverlay = L.svgOverlay(svg, bounds, { pane: 'adsbPane', interactive: false }).addTo(map);
-            } else {
-                adsbRadarOverlay.setBounds(bounds);
+            if (adsbLastTargetCoord === targetKey) {
+                return;
             }
+            adsbLastTargetCoord = targetKey;
+
+            if (adsbRadarRingsGroup) adsbRadarRingsGroup.clearLayers();
+            if (adsbCenterMarker) {
+                try {
+                    if (adsbRadarRingsGroup) adsbRadarRingsGroup.removeLayer(adsbCenterMarker);
+                    map.removeLayer(adsbCenterMarker);
+                } catch (e) {}
+                adsbCenterMarker = null;
+            }
+
+            var maxNm = radNm > 0 ? radNm : 50;
+            var rings = [10, 25, 50];
+            var hasOuterRing = false;
+
+            // Concentric range rings marked at 10, 25, and 50 NM (using vector circles, hardware-clipped)
+            for (var ri = 0; ri < rings.length; ri++) {
+                var d = rings[ri];
+                if (d <= maxNm) {
+                    var isMax = Math.abs(d - maxNm) < 0.1;
+                    if (isMax) hasOuterRing = true;
+                    var ringCircle = L.circle([target.lat, target.lon], {
+                        radius: d * 1852.0, // 1852 meters per Nautical Mile
+                        color: isMax ? '#38BDF8' : '#9CA3AF',
+                        weight: isMax ? 1.4 : 0.8,
+                        opacity: isMax ? 0.55 : 0.28,
+                        dashArray: isMax ? '6, 6' : '3, 5',
+                        fill: false,
+                        interactive: false,
+                        pane: 'adsbRadarPane'
+                    });
+                    adsbRadarRingsGroup.addLayer(ringCircle);
+
+                    var labelLat = target.lat + (d / 60.0);
+                    var labelMarker = L.marker([labelLat, target.lon], {
+                        icon: L.divIcon({
+                            className: 'adsb-range-ring-label',
+                            html: '<span style="color:' + (isMax ? '#38BDF8' : '#9CA3AF') + '; font-size:9.5px; font-weight:600; background:rgba(17,24,39,0.78); padding:1px 5px; border-radius:3px; border:1px solid rgba(75,85,99,0.5); font-family:system-ui, -apple-system, sans-serif;">' + d + ' NM</span>',
+                            iconSize: [44, 16],
+                            iconAnchor: [22, 8]
+                        }),
+                        interactive: false,
+                        pane: 'adsbRadarPane'
+                    });
+                    adsbRadarRingsGroup.addLayer(labelMarker);
+                }
+            }
+
+            if (!hasOuterRing) {
+                var outerRing = L.circle([target.lat, target.lon], {
+                    radius: maxNm * 1852.0,
+                    color: '#38BDF8',
+                    weight: 1.4,
+                    opacity: 0.55,
+                    dashArray: '6, 6',
+                    fill: false,
+                    interactive: false,
+                    pane: 'adsbRadarPane'
+                });
+                adsbRadarRingsGroup.addLayer(outerRing);
+
+                var outerLabelLat = target.lat + (maxNm / 60.0);
+                var outerLabel = L.marker([outerLabelLat, target.lon], {
+                    icon: L.divIcon({
+                        className: 'adsb-range-ring-label',
+                        html: '<span style="color:#38BDF8; font-size:9.5px; font-weight:600; background:rgba(17,24,39,0.78); padding:1px 5px; border-radius:3px; border:1px solid rgba(56,189,248,0.5); font-family:system-ui, -apple-system, sans-serif;">' + maxNm + ' NM</span>',
+                        iconSize: [44, 16],
+                        iconAnchor: [22, 8]
+                    }),
+                    interactive: false,
+                    pane: 'adsbRadarPane'
+                });
+                adsbRadarRingsGroup.addLayer(outerLabel);
+            }
+
+            // Animated Center Radar Dish Beacon with rotating scanner sweep
+            var centerHtml = '<div class="adsb-radar-center-beacon">' +
+                             '  <div class="adsb-radar-center-pulse"></div>' +
+                             '  <svg class="adsb-radar-center-svg" width="64" height="64" viewBox="0 0 200 200" style="position: absolute; top: -18px; left: -18px; pointer-events: none;">' +
+                             '    <defs>' +
+                             '      <filter id="radarSweepBlur" x="-20%" y="-20%" width="140%" height="140%">' +
+                             '        <feGaussianBlur stdDeviation="1.5" />' +
+                             '      </filter>' +
+                             '    </defs>' +
+                             '    <g class="adsb-radar-sweeper">' +
+                             '      <line x1="100" y1="100" x2="100" y2="10" stroke="#38BDF8" stroke-width="0.65" opacity="0.85" stroke-linecap="round" />' +
+                             '    </g>' +
+                             '  </svg>' +
+                             '  <div class="adsb-radar-center-dot">📡</div>' +
+                             '</div>';
+            adsbCenterMarker = L.marker([target.lat, target.lon], {
+                icon: L.divIcon({
+                    className: 'adsb-radar-center-wrap',
+                    html: centerHtml,
+                    iconSize: [28, 28],
+                    iconAnchor: [14, 14]
+                }),
+                interactive: false,
+                pane: 'adsbRadarPane'
+            });
+            adsbRadarRingsGroup.addLayer(adsbCenterMarker);
         }
 
         function onAdsbDataReady(payload) {
@@ -4138,13 +5555,23 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 updateRadarSweepOverlay(target);
             }
 
-            // Update aircraft markers and historical breadcrumb trails
+            // Pre-index active aircraft and reset container point cache
+            _aircraftContainerPoints = {};
+            currentAircraftData = {};
             var currentHexes = new Set();
+            for (var pi = 0; pi < aircraft.length; pi++) {
+                var ap = aircraft[pi];
+                if (typeof ap.lat !== 'number' || typeof ap.lon !== 'number') continue;
+                var ah = (ap.hex || '').toLowerCase();
+                if (!ah) continue;
+                currentAircraftData[ah] = ap;
+            }
 
             for (var i = 0; i < aircraft.length; i++) {
                 var plane = aircraft[i];
                 if (typeof plane.lat !== 'number' || typeof plane.lon !== 'number') continue;
-                var hex = plane.hex;
+                var hex = (plane.hex || '').toLowerCase();
+                if (!hex) continue;
                 currentHexes.add(hex);
 
                 var iconData = createAirplaneIcon(plane);
@@ -4165,121 +5592,179 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     }
                 }
 
-                // Render or update breadcrumb trail (solid segments fading out to 0% transparency at the tail)
+                // Render or update breadcrumb trail (single persistent L.polyline per aircraft updated in-place)
                 var hist = aircraftHistory[hex];
                 if (hist && hist.length >= 2) {
-                    var trailGroup = aircraftTrails[hex];
-                    if (!trailGroup) {
-                        trailGroup = L.layerGroup([], { pane: 'adsbPane' });
-                        adsbTrailsGroup.addLayer(trailGroup);
-                        aircraftTrails[hex] = trailGroup;
-                    } else {
-                        trailGroup.clearLayers();
+                    var latlngs = [];
+                    for (var hi = 0; hi < hist.length; hi++) {
+                        latlngs.push([hist[hi].lat, hist[hi].lon]);
                     }
-
-                    var numSegs = hist.length - 1;
-                    for (var k = 0; k < numSegs; k++) {
-                        // progress from 0.0 at tail tip to 1.0 at aircraft
-                        var progress = (k + 1) / numSegs;
-                        // Fade out down to 0% at the tail tip, solid 0.85 opacity near aircraft
-                        var segOpacity = Math.max(0.01, Math.min(0.85, progress * 0.85));
-                        var segLine = L.polyline([
-                            [hist[k].lat, hist[k].lon],
-                            [hist[k + 1].lat, hist[k + 1].lon]
-                        ], {
+                    var trailLine = aircraftTrails[hex];
+                    if (!trailLine) {
+                        trailLine = L.polyline(latlngs, {
                             color: iconData.color,
-                            weight: 2.5,
-                            opacity: segOpacity,
+                            weight: 2,
+                            opacity: 0.65,
                             lineCap: 'round',
                             lineJoin: 'round',
-                            pane: 'adsbPane',
+                            pane: 'adsbTrailsPane',
                             interactive: false
                         });
-                        trailGroup.addLayer(segLine);
+                        adsbTrailsGroup.addLayer(trailLine);
+                        aircraftTrails[hex] = trailLine;
+                    } else {
+                        trailLine.setLatLngs(latlngs);
+                        if (trailLine.options.color !== iconData.color) {
+                            trailLine.setStyle({ color: iconData.color });
+                        }
                     }
                 }
 
-                var flightTitle = escapeHtml(plane.flight || plane.hex.toUpperCase());
-                var planeType = escapeHtml(plane.t || 'Unknown');
-                var reg = escapeHtml(plane.r || 'N/A');
-                var altStr = (plane.alt_baro !== null && plane.alt_baro !== undefined) ? (plane.alt_baro.toLocaleString() + ' ft') : 'Ground';
-                var spdStr = plane.gs ? (Math.round(plane.gs) + ' kts') : 'N/A';
-                var distStr = (plane.dst !== null && plane.dst !== undefined) ? (plane.dst + ' NM') : '';
-                var dirStr = (plane.dir !== null && plane.dir !== undefined) ? (Math.round(plane.dir) + '°') : '';
-                var squawkStr = plane.squawk ? escapeHtml(plane.squawk) : '';
-                var catBadge = getAircraftCategoryBadge(plane.category || 'general');
-                var hexCode = escapeHtml(plane.hex || '').toUpperCase();
-                var flightParam = encodeURIComponent(plane.flight || hexCode);
-                var hexParam = encodeURIComponent(hexCode);
-
-                // Tooltip content with close button and external flight links
-                var tipHtml = '<div style="line-height: 1.35; min-width: 205px;">' +
-                              '  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px;">' +
-                              '    <div><span class="adsb-cat-badge">' + catBadge + '</span> <b>' + flightTitle + '</b> <span style="font-weight: normal; color: #9CA3AF; font-size: 9.5px;">(' + planeType + ')</span></div>' +
-                              '    <span class="adsb-tip-close" onclick="closeAdsbTooltip(&quot;' + hexCode + '&quot;, event)" title="Close">✕</span>' +
-                              '  </div>' +
-                              '  <div style="color: #E5E7EB; font-size: 10px; margin-bottom: 2px;">' + altStr + ' • ' + spdStr + (distStr ? ' • ' + distStr : '') + '</div>' +
-                              '  <div style="color: #9CA3AF; font-size: 9px; margin-bottom: 4px;">Reg: ' + reg + ' • Hdg: ' + Math.round(plane.track || 0) + '°' + (squawkStr ? ' • Sq: ' + squawkStr : '') + '</div>' +
-                              '  <div style="border-top: 1px solid #374151; padding-top: 4px; margin-top: 4px; display: flex; flex-direction: column; gap: 3px;">' +
-                              '    <a href="https://globe.adsbexchange.com/?icao=' + hexParam + '" class="adsb-tip-link" onclick="if(window.pyBridge&&window.pyBridge.on_open_external_url){window.pyBridge.on_open_external_url(this.href);return false;}">🌐 ADS-B Exchange ↗</a>' +
-                              '    <div style="display: flex; gap: 8px;">' +
-                              '      <a href="https://www.flightradar24.com/' + flightParam + '" class="adsb-tip-link" onclick="if(window.pyBridge&&window.pyBridge.on_open_external_url){window.pyBridge.on_open_external_url(this.href);return false;}">✈️ Flightradar24 ↗</a>' +
-                              '      <a href="https://www.flightaware.com/live/modes/' + hexParam + '/redirect" class="adsb-tip-link" onclick="if(window.pyBridge&&window.pyBridge.on_open_external_url){window.pyBridge.on_open_external_url(this.href);return false;}">📡 FlightAware ↗</a>' +
-                              '    </div>' +
-                              '  </div>' +
-                              '</div>';
-
+                currentAircraftData[hex] = plane;
                 var marker = aircraftMarkers[hex];
+                var distress = getAircraftDistressInfo(plane);
+                var distressKey = distress ? distress.code : '';
+                var track = (plane.track !== null && plane.track !== undefined) ? plane.track : 0;
+
                 if (!marker) {
                     marker = L.marker([plane.lat, plane.lon], {
                         icon: iconData.icon,
-                        pane: 'adsbPane'
+                        pane: 'adsbMarkersPane'
                     });
+                    marker._planeData = plane;
+                    marker._lastTrack = track;
+                    marker._lastColor = iconData.color;
+                    marker._lastDistress = distressKey;
 
                     (function(h, m) {
                         m.on('click', function(e) {
-                            if (L.DomEvent) L.DomEvent.stopPropagation(e);
-                            if (pinnedTooltipHex === h) {
-                                pinnedTooltipHex = null;
-                                m.closeTooltip();
-                            } else {
-                                if (pinnedTooltipHex && aircraftMarkers[pinnedTooltipHex] && pinnedTooltipHex !== h) {
-                                    aircraftMarkers[pinnedTooltipHex].closeTooltip();
-                                }
-                                pinnedTooltipHex = h;
-                                m.openTooltip();
+                            if (e && e.originalEvent) {
+                                if (e.originalEvent.stopPropagation) e.originalEvent.stopPropagation();
+                                if (e.originalEvent.preventDefault) e.originalEvent.preventDefault();
+                                if (L.DomEvent) L.DomEvent.stop(e.originalEvent);
                             }
+
+                            // Check if multiple aircraft overlap in this cluster to cycle through
+                            var p = currentAircraftData[h];
+                            var cl = getOverlappingAircraft(p, 26);
+                            if (cl.length > 1 && pinnedTooltipHex === h) {
+                                var curIdx = 0;
+                                for (var ci = 0; ci < cl.length; ci++) {
+                                    if ((cl[ci].hex || '').toLowerCase() === h) {
+                                        curIdx = ci;
+                                        break;
+                                    }
+                                }
+                                var nextIdx = (curIdx + 1) % cl.length;
+                                var nextHex = (cl[nextIdx].hex || '').toLowerCase();
+                                var nextMarker = aircraftMarkers[nextHex];
+                                if (nextMarker) {
+                                    window.openAircraftTooltip(nextHex, nextMarker, true);
+                                    return;
+                                }
+                            }
+
+                            // Left-clicking an aircraft marker ALWAYS pins and keeps the tooltip open!
+                            window.openAircraftTooltip(h, m, true);
                         });
                         m.on('mouseover', function() {
-                            if (!pinnedTooltipHex || pinnedTooltipHex === h) {
-                                m.openTooltip();
+                            if (_adsbHoverCloseTimer) {
+                                clearTimeout(_adsbHoverCloseTimer);
+                                _adsbHoverCloseTimer = null;
+                            }
+                            if (!pinnedTooltipHex) {
+                                window.openAircraftTooltip(h, m, false);
                             }
                         });
                         m.on('mouseout', function() {
-                            if (pinnedTooltipHex !== h) {
-                                m.closeTooltip();
+                            if (pinnedTooltipHex === h) {
+                                return; // PINNED! NEVER close on mouseout!
                             }
+                            if (_adsbHoverCloseTimer) {
+                                clearTimeout(_adsbHoverCloseTimer);
+                            }
+                            _adsbHoverCloseTimer = setTimeout(function() {
+                                if (pinnedTooltipHex !== h) {
+                                    try { m.closeTooltip(); } catch (e) {}
+                                    try { m.setZIndexOffset(0); } catch (e) {}
+                                    if (_activeHoverHex === h) {
+                                        _activeHoverHex = null;
+                                    }
+                                }
+                                _adsbHoverCloseTimer = null;
+                            }, 800);
                         });
                     })(hex, marker);
 
-                    marker.bindTooltip(tipHtml, {
+                    marker.bindTooltip('', {
                         className: 'adsb-tooltip',
                         direction: 'top',
                         offset: [0, -10],
                         interactive: true
                     });
 
+                    // CRITICAL: Disable Leaflet's built-in automatic tooltip listeners!
+                    marker.off('mouseout', marker.closeTooltip);
+                    marker.off('mouseover', marker._openTooltip);
+                    marker.off('click', marker._openTooltip);
+
                     adsbLayerGroup.addLayer(marker);
                     aircraftMarkers[hex] = marker;
+
+                    if (marker._icon) {
+                        L.DomEvent.disableClickPropagation(marker._icon);
+                        L.DomEvent.disableScrollPropagation(marker._icon);
+                    }
                 } else {
+                    marker._planeData = plane;
                     marker.setLatLng([plane.lat, plane.lon]);
-                    marker.setIcon(iconData.icon);
-                    marker.setTooltipContent(tipHtml);
+                    if (marker._lastTrack !== track) {
+                        marker._lastTrack = track;
+                        if (marker._icon) {
+                            var inner = marker._icon.querySelector('.adsb-plane-marker');
+                            if (inner) inner.style.transform = 'rotate(' + track + 'deg)';
+                        }
+                    }
+                    if (marker._lastColor !== iconData.color) {
+                        marker._lastColor = iconData.color;
+                        if (marker._icon) {
+                            var svg = marker._icon.querySelector('svg');
+                            if (svg) svg.setAttribute('fill', iconData.color);
+                        }
+                    }
+                    if (marker._lastDistress !== distressKey) {
+                        marker._lastDistress = distressKey;
+                        marker.setIcon(iconData.icon);
+                        if (marker._icon) {
+                            L.DomEvent.disableClickPropagation(marker._icon);
+                            L.DomEvent.disableScrollPropagation(marker._icon);
+                        }
+                    }
                 }
 
-                // If this aircraft tooltip was pinned, keep it open as it moves
-                if (pinnedTooltipHex === hex) {
-                    marker.openTooltip();
+                // If this aircraft tooltip is pinned or hovered, keep it open and follow the aircraft!
+                var isTargetOpen = (pinnedTooltipHex === hex) || (_activeHoverHex === hex && !pinnedTooltipHex);
+                if (isTargetOpen) {
+                    var cluster = getOverlappingAircraft(plane, 26);
+                    var tipHtml = buildAircraftTooltipHtml(plane, cluster);
+                    marker.setTooltipContent(tipHtml);
+                    marker.setZIndexOffset(10000);
+                    if (!marker.isTooltipOpen()) {
+                        marker.openTooltip();
+                    } else {
+                        var tip = marker.getTooltip();
+                        if (tip) {
+                            tip.setLatLng(marker.getLatLng());
+                        }
+                    }
+                    if (pinnedTooltipHex === hex && marker._icon) {
+                        var inner = marker._icon.querySelector('.adsb-plane-marker');
+                        if (inner) inner.classList.add('pinned');
+                    }
+                    var tipObj = marker.getTooltip();
+                    if (tipObj && tipObj._container) {
+                        L.DomEvent.disableClickPropagation(tipObj._container);
+                    }
                 }
             }
 
@@ -4289,8 +5774,13 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     if (pinnedTooltipHex === oldHex) {
                         pinnedTooltipHex = null;
                     }
+                    if (_activeHoverHex === oldHex) {
+                        _activeHoverHex = null;
+                    }
                     adsbLayerGroup.removeLayer(aircraftMarkers[oldHex]);
                     delete aircraftMarkers[oldHex];
+                    delete currentAircraftData[oldHex];
+                    delete _aircraftContainerPoints[oldHex];
                 }
             }
 
@@ -4317,6 +5807,51 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
 """
 
 
+def latlon_to_maidenhead(lat: float, lon: float) -> str:
+    """Convert decimal lat/lon to standard 6-character Maidenhead QTH Locator."""
+    try:
+        adj_lon = max(-180.0, min(179.999999, float(lon))) + 180.0
+        adj_lat = max(-90.0, min(89.999999, float(lat))) + 90.0
+
+        field_lon = chr(ord('A') + int(adj_lon / 20.0))
+        field_lat = chr(ord('A') + int(adj_lat / 10.0))
+
+        rem_lon = adj_lon % 20.0
+        rem_lat = adj_lat % 10.0
+        square_lon = str(int(rem_lon / 2.0))
+        square_lat = str(int(rem_lat / 1.0))
+
+        sub_lon = chr(ord('a') + int((rem_lon % 2.0) / (2.0 / 24.0)))
+        sub_lat = chr(ord('a') + int((rem_lat % 1.0) / (1.0 / 24.0)))
+
+        return f"{field_lon}{field_lat}{square_lon}{square_lat}{sub_lon}{sub_lat}"
+    except Exception:
+        return "Unknown"
+
+
+def calculate_distance_and_bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> tuple[float, float, float]:
+    """Calculate great-circle distance (km, miles) and initial bearing (degrees) between two points."""
+    try:
+        r_km = 6371.0
+        phi1 = math.radians(lat1)
+        phi2 = math.radians(lat2)
+        delta_phi = math.radians(lat2 - lat1)
+        delta_lambda = math.radians(lon2 - lon1)
+
+        a = math.sin(delta_phi / 2.0)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2.0)**2
+        c = 2.0 * math.atan2(math.sqrt(max(0.0, a)), math.sqrt(max(0.0, 1.0 - a)))
+        dist_km = r_km * c
+        dist_mi = dist_km * 0.621371
+
+        y = math.sin(delta_lambda) * math.cos(phi2)
+        x = math.cos(phi1) * math.sin(phi2) - math.sin(phi1) * math.cos(phi2) * math.cos(delta_lambda)
+        initial_bearing = (math.degrees(math.atan2(y, x)) + 360.0) % 360.0
+
+        return dist_km, dist_mi, initial_bearing
+    except Exception:
+        return 0.0, 0.0, 0.0
+
+
 class WebBridge(QObject):
     """Bridge for communication from Leaflet JavaScript to Python."""
     node_clicked_signal = pyqtSignal(str)
@@ -4324,6 +5859,11 @@ class WebBridge(QObject):
     visualised_path_closed_signal = pyqtSignal()
     hop_candidate_selected_signal = pyqtSignal(str, str, str)
     phantom_node_toggled_signal = pyqtSignal(str, str, bool)
+    map_context_menu_signal = pyqtSignal(float, float, int, int)
+
+    @pyqtSlot(float, float, int, int)
+    def on_map_context_menu(self, lat: float, lon: float, x: int, y: int):
+        self.map_context_menu_signal.emit(lat, lon, x, y)
 
     @pyqtSlot(str)
     def on_node_clicked(self, node_id: str):
@@ -4399,6 +5939,17 @@ class WebBridge(QObject):
     def on_thunderstorm_toggled(self, enabled: bool):
         self.thunderstorm_toggled_signal.emit(enabled)
 
+    adsb_color_mode_changed_signal = pyqtSignal(str)
+    request_aircraft_photo_signal = pyqtSignal(str)
+
+    @pyqtSlot(str)
+    def on_adsb_color_mode_changed(self, mode: str):
+        self.adsb_color_mode_changed_signal.emit(mode)
+
+    @pyqtSlot(str)
+    def request_aircraft_photo(self, hex_code: str):
+        self.request_aircraft_photo_signal.emit(hex_code)
+
     @pyqtSlot(str)
     def on_open_external_url(self, url: str):
         if not url:
@@ -4408,6 +5959,22 @@ class WebBridge(QObject):
             self.open_external_url_signal.emit(url)
         except Exception as e:
             logger.error(f"Failed opening external URL {url}: {e}")
+
+    p2p_path_selected_signal = pyqtSignal(float, float, float, float, str, str)
+    profile_node_signal = pyqtSignal(str, str, float, float)
+    calc_node_viewshed_signal = pyqtSignal(str, str, float, float)
+
+    @pyqtSlot(float, float, float, float, str, str)
+    def on_p2p_path_selected(self, lat1: float, lon1: float, lat2: float, lon2: float, alias1: str, alias2: str):
+        self.p2p_path_selected_signal.emit(lat1, lon1, lat2, lon2, alias1, alias2)
+
+    @pyqtSlot(str, str, float, float)
+    def on_profile_node_requested(self, node_id: str, alias: str, lat: float, lon: float):
+        self.profile_node_signal.emit(node_id, alias, lat, lon)
+
+    @pyqtSlot(str, str, float, float)
+    def on_calc_node_viewshed_requested(self, node_id: str, alias: str, lat: float, lon: float):
+        self.calc_node_viewshed_signal.emit(node_id, alias, lat, lon)
 
 
 class MeshMapWidget(QWidget):
@@ -4447,6 +6014,21 @@ class MeshMapWidget(QWidget):
         self.show_thunderstorm = getattr(self.config.meshcore, "map_show_thunderstorm", False) if self.config else False
         self.thunderstorm_service = ThunderstormService(parent=self)
         self.thunderstorm_service.radar_updated.connect(self._on_thunderstorm_radar_updated)
+
+        self.elevation_service = ElevationService(parent=self)
+        self.elevation_service.profile_ready.connect(self._on_elevation_profile_ready)
+        self.elevation_service.profile_error.connect(self._on_elevation_profile_error)
+
+        self.viewshed_service = ViewshedService(parent=self)
+        self.viewshed_service.viewshed_ready.connect(self._on_viewshed_ready)
+        self.viewshed_service.viewshed_error.connect(self._on_viewshed_error)
+        self.viewshed_service.loading_signal.connect(self._on_viewshed_loading)
+
+        self._current_tx_height = 8.0
+        self._current_rx_height = 2.0
+        self._current_los_radius = 25.0
+        self._current_los_center = None
+        self._last_p2p_coords = None
 
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setSingleShot(True)
@@ -4505,7 +6087,13 @@ class MeshMapWidget(QWidget):
         # Map Area (Goes flush to top edge!)
         if WEBENGINE_AVAILABLE:
             self.web_view = QWebEngineView()
+            try:
+                self.web_page = LoggingWebEnginePage(self.web_view)
+                self.web_view.setPage(self.web_page)
+            except Exception as e:
+                logger.warning(f"Could not attach LoggingWebEnginePage, using default: {e}")
             self.web_view.setStyleSheet("background-color: #12151A; border: none;")
+            self.web_view.setContextMenuPolicy(Qt.ContextMenuPolicy.PreventContextMenu)
             self.channel = QWebChannel()
             self.bridge = WebBridge()
             self.bridge.node_clicked_signal.connect(self._on_bridge_node_clicked)
@@ -4523,11 +6111,35 @@ class MeshMapWidget(QWidget):
             self.bridge.activity_timeframe_changed_signal.connect(self._on_bridge_activity_timeframe_changed)
             self.bridge.activity_heatmap_toggled_signal.connect(self._on_bridge_activity_heatmap_toggled)
             self.bridge.thunderstorm_toggled_signal.connect(self._on_bridge_thunderstorm_toggled)
+            self.bridge.map_context_menu_signal.connect(
+                lambda lat, lon, x, y: QTimer.singleShot(0, lambda: self._show_map_context_menu(lat, lon, x, y))
+            )
+            self.bridge.adsb_color_mode_changed_signal.connect(self._on_bridge_adsb_color_mode_changed)
+            self.bridge.request_aircraft_photo_signal.connect(self._on_bridge_request_aircraft_photo)
+            self.bridge.p2p_path_selected_signal.connect(self._on_p2p_path_selected)
+            self.bridge.profile_node_signal.connect(self._on_profile_node_requested)
+            self.bridge.calc_node_viewshed_signal.connect(self._on_calc_node_viewshed_requested)
+            self.adsb_service.photo_received.connect(self._on_adsb_photo_received)
             self.channel.registerObject("pyBridge", self.bridge)
             self.web_view.page().setWebChannel(self.channel)
+            if hasattr(self.web_view.page(), "renderProcessTerminated"):
+                self.web_view.page().renderProcessTerminated.connect(self._on_render_process_terminated)
             self.web_view.loadFinished.connect(self._on_map_loaded)
             self.web_view.setHtml(get_leaflet_html(), QUrl("http://localhost"))
-            layout.addWidget(self.web_view, 1)
+
+            # Vertical Splitter: 4/5ths map area, 1/5th point-to-point elevation profile
+            self.map_splitter = QSplitter(Qt.Orientation.Vertical, self)
+            self.map_splitter.setChildrenCollapsible(False)
+            self.map_splitter.setStyleSheet("""
+                QSplitter::handle {
+                    background-color: #1F242D;
+                    height: 4px;
+                }
+                QSplitter::handle:hover {
+                    background-color: #10B981;
+                }
+            """)
+            self.map_splitter.addWidget(self.web_view)
 
             # Floating In-Overlay Controls in Top-Left Corner of Map
             self.floating_controls = QFrame(self.web_view)
@@ -4581,10 +6193,135 @@ class MeshMapWidget(QWidget):
             self.btn_age_fade.clicked.connect(self._on_floating_age_fade_clicked)
             fl_layout.addWidget(self.btn_age_fade)
 
+            self._current_base_layer = getattr(self.config, "map_base_layer", "canvas") if self.config else "canvas"
+            self.btn_base_map = QPushButton("🗺️ Canvas" if self._current_base_layer == "topo" else "🏔️ Topo")
+            self.btn_base_map.setToolTip("Switch Base Map Layer: Dark Canvas vs Dark Topographic (OpenTopoMap)")
+            self.btn_base_map.clicked.connect(self._on_toggle_base_map_clicked)
+            fl_layout.addWidget(self.btn_base_map)
+
             self.floating_controls.adjustSize()
             self.floating_controls.move(10, 10)
             self.floating_controls.show()
+
+            # Floating Line-of-Sight & Topographic Profile Controls at Top of Map
+            self.los_controls = QFrame(self.web_view)
+            self.los_controls.setStyleSheet("""
+                QFrame {
+                    background-color: rgba(24, 27, 32, 0.94);
+                    border: 1px solid rgba(16, 185, 129, 0.4);
+                    border-radius: 6px;
+                }
+                QLabel {
+                    color: #10B981;
+                    font-size: 11px;
+                    font-weight: 700;
+                    background: transparent;
+                    border: none;
+                }
+                QPushButton {
+                    background-color: rgba(255, 255, 255, 0.05);
+                    color: #D1D5DB;
+                    border: 1px solid rgba(255, 255, 255, 0.1);
+                    padding: 4px 8px;
+                    font-size: 11px;
+                    font-weight: 600;
+                    border-radius: 4px;
+                }
+                QPushButton:hover {
+                    background-color: rgba(16, 185, 129, 0.2);
+                    color: #FFFFFF;
+                    border-color: #10B981;
+                }
+                QPushButton:checked {
+                    background-color: #10B981;
+                    color: #064E3B;
+                    font-weight: 700;
+                    border-color: #34D399;
+                }
+                QComboBox {
+                    background-color: #1F242D;
+                    color: #F3F4F6;
+                    border: 1px solid #374151;
+                    border-radius: 4px;
+                    padding: 2px 6px;
+                    font-size: 11px;
+                    font-weight: 600;
+                }
+                QComboBox::drop-down {
+                    border: none;
+                    width: 14px;
+                }
+                QComboBox QAbstractItemView {
+                    background-color: #1E2024;
+                    color: #F3F4F6;
+                    selection-background-color: #10B981;
+                    selection-color: #064E3B;
+                    border: 1px solid #374151;
+                }
+            """)
+            los_layout = QHBoxLayout(self.los_controls)
+            los_layout.setContentsMargins(5, 4, 5, 4)
+            los_layout.setSpacing(5)
+
+            lbl_los = QLabel("📡 LOS:")
+            lbl_los.setToolTip("Line-of-Sight & RF Propagation Coverage Tools")
+            los_layout.addWidget(lbl_los)
+
+            self.btn_toggle_los = QPushButton("🟢 Viewshed")
+            self.btn_toggle_los.setCheckable(True)
+            self.btn_toggle_los.setToolTip("Toggle 360° Terrain-Aware RF Line-of-Sight Viewshed Coverage")
+            self.btn_toggle_los.clicked.connect(self._on_los_toggle_clicked)
+            los_layout.addWidget(self.btn_toggle_los)
+
+            self.btn_los_ground = QPushButton("Ground (2m)")
+            self.btn_los_ground.setCheckable(True)
+            self.btn_los_ground.setToolTip("Handheld / mobile antenna (2m AGL)")
+            self.btn_los_rooftop = QPushButton("Rooftop (8m)")
+            self.btn_los_rooftop.setCheckable(True)
+            self.btn_los_rooftop.setChecked(True)
+            self.btn_los_rooftop.setToolTip("Residential chimney / eaves mount (8m AGL)")
+            self.btn_los_mast = QPushButton("Mast (15m)")
+            self.btn_los_mast.setCheckable(True)
+            self.btn_los_mast.setToolTip("High mast / tower mount (15m AGL)")
+
+            self.height_group = QButtonGroup(self)
+            self.height_group.addButton(self.btn_los_ground, 2)
+            self.height_group.addButton(self.btn_los_rooftop, 8)
+            self.height_group.addButton(self.btn_los_mast, 15)
+            self.height_group.idClicked.connect(self._on_los_height_button_clicked)
+
+            los_layout.addWidget(self.btn_los_ground)
+            los_layout.addWidget(self.btn_los_rooftop)
+            los_layout.addWidget(self.btn_los_mast)
+
+            lbl_r = QLabel("Radius:")
+            lbl_r.setStyleSheet("color: #9CA3AF; font-weight: normal;")
+            los_layout.addWidget(lbl_r)
+
+            self.combo_los_radius = QComboBox()
+            self.combo_los_radius.addItems(["15 km", "25 km", "50 km"])
+            self.combo_los_radius.setCurrentText("25 km")
+            self.combo_los_radius.currentTextChanged.connect(self._on_los_radius_changed)
+            los_layout.addWidget(self.combo_los_radius)
+
+            self.btn_profile_path = QPushButton("🏔️ Profile Path")
+            self.btn_profile_path.setCheckable(True)
+            self.btn_profile_path.setToolTip("Click two points on the map to profile topographic elevation & 1st Fresnel zone clearance")
+            self.btn_profile_path.clicked.connect(self._on_profile_path_toggle_clicked)
+            los_layout.addWidget(self.btn_profile_path)
+
+            self.btn_clear_los = QPushButton("✕")
+            self.btn_clear_los.setToolTip("Clear Viewshed and Path Profile overlays")
+            self.btn_clear_los.setFixedWidth(24)
+            self.btn_clear_los.clicked.connect(self._on_clear_los_clicked)
+            los_layout.addWidget(self.btn_clear_los)
+
+            self.los_controls.adjustSize()
+            show_los = getattr(self.config, "map_show_rf_los", False) if self.config else False
+            self.los_controls.setVisible(show_los)
         else:
+            self._current_base_layer = getattr(self.config, "map_base_layer", "canvas") if self.config else "canvas"
+            self.btn_base_map = QPushButton("🗺️ Canvas" if self._current_base_layer == "topo" else "🏔️ Topo")
             self.btn_age_fade = QPushButton("⏳ Age Fade")
             self.btn_age_fade.setCheckable(True)
             fade_init = getattr(self.config.meshcore, "node_freshness_fading", True) if self.config else True
@@ -4603,7 +6340,23 @@ class MeshMapWidget(QWidget):
                 border: none;
                 padding: 16px;
             """)
-            layout.addWidget(self.fallback_label, 1)
+            self.map_splitter = QSplitter(Qt.Orientation.Vertical, self)
+            self.map_splitter.addWidget(self.fallback_label)
+
+        # Bottom Dock: Point-to-Point Topographic RF Elevation Profile Widget (1/5th split)
+        self.elevation_profile_dock = ElevationProfileWidget(self.map_splitter)
+        self.elevation_profile_dock.close_requested.connect(self._on_close_elevation_profile)
+        self.elevation_profile_dock.point_scrubbed.connect(self._on_dock_point_scrubbed)
+        self.elevation_profile_dock.scrub_cleared.connect(self._on_dock_scrub_cleared)
+        self.elevation_profile_dock.heights_changed.connect(self._on_dock_heights_changed)
+        self.elevation_profile_dock.hide()
+        self.map_splitter.addWidget(self.elevation_profile_dock)
+
+        self.map_splitter.setStretchFactor(0, 4)
+        self.map_splitter.setStretchFactor(1, 1)
+        self.map_splitter.setChildrenCollapsible(False)
+
+        layout.addWidget(self.map_splitter, 1)
 
         # Purple Status Bar Below Map (Status of flood messages & watcher)
         self.watcher_status = QLabel("⚡ Watcher: Listening for live RF packet paths...")
@@ -4620,9 +6373,145 @@ class MeshMapWidget(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self._reposition_floating_controls()
+        self._schedule_map_invalidate(150)
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange:
+            # Window maximized, restored, or fullscreened.
+            # Allow OS window manager, compositor, and Chromium swapchain 250ms to settle
+            # before requesting Leaflet viewport invalidation, preventing buffer thrashing/hangs.
+            self._reposition_floating_controls()
+            self._schedule_map_invalidate(delay_ms=250)
+
+    def _reposition_floating_controls(self):
         if hasattr(self, "floating_controls"):
             self.floating_controls.move(10, 10)
             self.floating_controls.raise_()
+        if hasattr(self, "los_controls") and hasattr(self, "floating_controls") and hasattr(self, "web_view"):
+            fl_w = self.floating_controls.width()
+            los_w = self.los_controls.width()
+            web_w = self.web_view.width()
+            if fl_w + los_w + 30 <= web_w:
+                self.los_controls.move(fl_w + 20, 10)
+            else:
+                self.los_controls.move(10, self.floating_controls.height() + 16)
+            self.los_controls.raise_()
+
+    def moveEvent(self, event):
+        super().moveEvent(event)
+        self._connect_screen_listener()
+        self._schedule_map_invalidate(180)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._connect_screen_listener()
+        self._start_renderer_watchdog()
+        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and getattr(self, "_page_ready", False):
+            self.web_view.page().runJavaScript("if (typeof map !== 'undefined') map.invalidateSize(false);")
+
+    def _connect_screen_listener(self):
+        try:
+            win = self.window()
+            if win and win.windowHandle():
+                handle = win.windowHandle()
+                try:
+                    handle.screenChanged.disconnect(self._on_window_screen_changed)
+                except Exception:
+                    pass
+                handle.screenChanged.connect(self._on_window_screen_changed)
+        except Exception as e:
+            logger.debug(f"Could not connect screenChanged listener: {e}")
+
+    def _on_window_screen_changed(self, new_screen):
+        if new_screen:
+            dpr = new_screen.devicePixelRatio()
+            geo = new_screen.geometry()
+            logger.info(f"Display monitor changed to: {new_screen.name()} (DPI scale={dpr}, size={geo.width()}x{geo.height()})")
+            # 25-second grace period after monitor change so compositor sync never triggers a false-positive watchdog reload
+            self._watchdog_grace_until = time.time() + 25.0
+            self._watchdog_unanswered = 0
+            self._schedule_map_invalidate(delay_ms=250)
+
+    def _schedule_map_invalidate(self, delay_ms: int = 150):
+        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and getattr(self, "_page_ready", False):
+            if not hasattr(self, "_map_resize_timer"):
+                self._map_resize_timer = QTimer(self)
+                self._map_resize_timer.setSingleShot(True)
+                self._map_resize_timer.timeout.connect(self._on_debounced_map_resize)
+            self._map_resize_timer.stop()
+            self._map_resize_timer.start(delay_ms)
+
+    def _on_debounced_map_resize(self):
+        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and getattr(self, "_page_ready", False):
+            self.web_view.page().runJavaScript("if (typeof map !== 'undefined' && map) map.invalidateSize(false);")
+
+    def _start_renderer_watchdog(self):
+        if not hasattr(self, "_renderer_watchdog_timer"):
+            self._renderer_watchdog_timer = QTimer(self)
+            self._renderer_watchdog_timer.setInterval(10000)  # 10s heartbeat
+            self._renderer_watchdog_timer.timeout.connect(self._check_renderer_watchdog)
+            self._watchdog_unanswered = 0
+            self._watchdog_grace_until = 0.0
+        if not self._renderer_watchdog_timer.isActive():
+            self._renderer_watchdog_timer.start()
+
+    def _reset_watchdog_activity(self):
+        """Called whenever WebBridge receives user interaction or data signals (proves JS runtime is alive)."""
+        self._watchdog_unanswered = 0
+
+    def _check_renderer_watchdog(self):
+        if not (WEBENGINE_AVAILABLE and hasattr(self, "web_view") and getattr(self, "_page_ready", False)):
+            return
+        now = time.time()
+        if now < getattr(self, "_watchdog_grace_until", 0.0):
+            # Window or screen was recently moved; allow compositor buffer synchronization
+            self._watchdog_unanswered = 0
+            return
+
+        # Require 6 consecutive unanswered pings outside grace period (60+ seconds of complete silence)
+        if self._watchdog_unanswered >= 6:
+            logger.error(
+                f"WebEngine renderer process unresponsive ({self._watchdog_unanswered} consecutive watchdog timeouts over 60s). "
+                "Triggering automatic view recovery..."
+            )
+            self._watchdog_unanswered = 0
+            self._on_render_process_terminated(None, -1)
+            return
+
+        self._watchdog_unanswered += 1
+        try:
+            self.web_view.page().runJavaScript("1 + 1;", lambda res: self._on_watchdog_pong(res))
+        except Exception as e:
+            logger.warning(f"Error issuing watchdog ping to WebEngine: {e}")
+
+    def _on_watchdog_pong(self, result):
+        if result == 2:
+            self._watchdog_unanswered = 0
+
+    def _on_render_process_terminated(self, termination_status, exit_code):
+        logger.warning(f"WebEngine render process terminated ({termination_status}, code={exit_code}). Auto-recovering map view...")
+        self._page_ready = False
+        QTimer.singleShot(250, self._recover_web_view_after_termination)
+
+    def _recover_web_view_after_termination(self):
+        try:
+            if hasattr(self, "web_view"):
+                logger.info("Reloading Leaflet map HTML after WebEngine render process recovery...")
+                try:
+                    self.web_page = LoggingWebEnginePage(self.web_view)
+                    self.web_view.setPage(self.web_page)
+                except Exception as e:
+                    logger.warning(f"Could not attach LoggingWebEnginePage on recovery: {e}")
+                self.channel = QWebChannel()
+                self.channel.registerObject("pyBridge", self.bridge)
+                self.web_view.page().setWebChannel(self.channel)
+                if hasattr(self.web_view.page(), "renderProcessTerminated"):
+                    self.web_view.page().renderProcessTerminated.connect(self._on_render_process_terminated)
+                self.web_view.setHtml(get_leaflet_html(), QUrl("http://localhost"))
+        except Exception as e:
+            logger.error(f"Failed recovering web view: {e}")
 
     def _btn_style(self, active: bool) -> str:
         if active:
@@ -4694,7 +6583,11 @@ class MeshMapWidget(QWidget):
         self.refresh_map_data()
 
     def _on_map_loaded(self, ok: bool):
+        logger.info(f"Leaflet map loaded in WebEngine (ok={ok})")
         self._page_ready = True
+        self._watchdog_unanswered = 0
+        self._connect_screen_listener()
+        self._start_renderer_watchdog()
         if self.config and hasattr(self.config.meshcore, "map_center_lat") and self.config.meshcore.map_center_lat is not None and self.config.meshcore.map_center_lon is not None:
             z = self.config.meshcore.map_zoom or 8
             lon = ((float(self.config.meshcore.map_center_lon) + 180.0) % 360.0 + 360.0) % 360.0 - 180.0
@@ -4713,6 +6606,9 @@ class MeshMapWidget(QWidget):
         show_adsb = getattr(self.config.meshcore, "map_show_adsb", False) if self.config else False
         if show_adsb:
             self.set_adsb(True)
+        base_layer = getattr(self.config, "map_base_layer", "canvas") if self.config else "canvas"
+        if base_layer == "topo":
+            self.web_view.page().runJavaScript("if (window.setBaseMapLayer) window.setBaseMapLayer('topo');")
         self.apply_colors()
         self.refresh_map_data()
         self.map_ready.emit()
@@ -4873,23 +6769,46 @@ class MeshMapWidget(QWidget):
                 self.config.save()
             except Exception:
                 pass
+        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
+            self.web_view.page().runJavaScript("if (window.clearAdsbForRetarget) window.clearAdsbForRetarget();")
         self.adsb_service.set_target(node_id, alias, lat, lon, radius_nm)
         if not self.show_adsb:
             self.set_adsb(True)
-        else:
-            self.adsb_service.refresh()
 
     def _on_bridge_set_adsb_target(self, node_id: str, alias: str, lat: float, lon: float):
+        self._reset_watchdog_activity()
         radius = getattr(self.config.meshcore, "adsb_radius_nm", 50) if (self.config and hasattr(self.config, "meshcore")) else 50
         self.set_adsb_target(node_id, alias, lat, lon, radius)
 
     def _on_bridge_adsb_toggled(self, enabled: bool):
+        self._reset_watchdog_activity()
         self.set_adsb(enabled)
         p = self.window()
         if p and hasattr(p, "nav_dock") and hasattr(p.nav_dock, "btn_adsb"):
             p.nav_dock.btn_adsb.blockSignals(True)
             p.nav_dock.btn_adsb.setChecked(enabled)
             p.nav_dock.btn_adsb.blockSignals(False)
+
+    def _on_bridge_adsb_color_mode_changed(self, mode: str):
+        """Handle user changing ADS-B color mode from map panel."""
+        self._reset_watchdog_activity()
+        if self.config and hasattr(self.config, "app_colors"):
+            self.config.app_colors.adsb_color_mode = mode
+            try:
+                self.config.save()
+            except Exception as e:
+                logger.error(f"Failed saving adsb_color_mode: {e}")
+
+    def _on_bridge_request_aircraft_photo(self, hex_code: str):
+        """Asynchronously queries Planespotters photo for aircraft hex."""
+        self._reset_watchdog_activity()
+        self.adsb_service.request_aircraft_photo(hex_code)
+
+    def _on_adsb_photo_received(self, hex_code: str, photo_info: dict):
+        """Delivers photo metadata back to Leaflet map tooltip."""
+        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
+            info_json = json.dumps(photo_info or {})
+            self.web_view.page().runJavaScript(f"if (window.onAircraftPhotoReady) window.onAircraftPhotoReady('{hex_code}', {info_json});")
 
     def _on_bridge_reset_adsb_target(self):
         """Reset ADS-B target back to local node."""
@@ -4911,6 +6830,522 @@ class MeshMapWidget(QWidget):
         if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
             payload_json = json.dumps(payload)
             self.web_view.page().runJavaScript(f"onAdsbDataReady({payload_json});")
+
+    def center_map_at(self, lat: float, lon: float):
+        """Smoothly pans the map to center at the specified coordinates."""
+        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
+            self.web_view.page().runJavaScript(f"map.panTo([{lat}, {lon}]);")
+
+    def zoom_in_at(self, lat: float, lon: float):
+        """Pans and zooms in one level at the specified coordinates."""
+        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
+            self.web_view.page().runJavaScript(f"map.setView([{lat}, {lon}], Math.min(map.getMaxZoom(), map.getZoom() + 1));")
+
+    def zoom_out(self):
+        """Zooms out one level."""
+        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
+            self.web_view.page().runJavaScript("map.setZoom(Math.max(map.getMinZoom(), map.getZoom() - 1));")
+
+    def _context_monitor_adsb(self, lat: float, lon: float, qth: str):
+        """Sets the ADS-B radar monitoring center to the clicked coordinate."""
+        alias = f"Radar @ {qth}"
+        radius = getattr(self.config.meshcore, "adsb_radius_nm", 50) if (self.config and hasattr(self.config, "meshcore")) else 50
+        self.set_adsb_target("", alias, lat, lon, radius)
+        p = self.window()
+        if p and hasattr(p, "nav_dock") and hasattr(p.nav_dock, "btn_adsb"):
+            p.nav_dock.btn_adsb.blockSignals(True)
+            p.nav_dock.btn_adsb.setChecked(True)
+            p.nav_dock.btn_adsb.blockSignals(False)
+        self._notify_user(f"✈️ Monitoring ADS-B air traffic around {alias} ({lat:.4f}, {lon:.4f})")
+
+    def _context_set_station_location(self, lat: float, lon: float, qth: str):
+        """Sets local station latitude and longitude in configuration."""
+        if self.config and hasattr(self.config, "meshcore"):
+            self.config.meshcore.latitude = float(lat)
+            self.config.meshcore.longitude = float(lon)
+            try:
+                self.config.save()
+            except Exception as e:
+                logger.error(f"Failed saving station location: {e}")
+        self._notify_user(f"📡 Station Home Location set to {lat:.4f}, {lon:.4f} ({qth})")
+
+    def _context_drop_temporary_pin(self, lat: float, lon: float, qth: str):
+        """Drops a visual waypoint pin marker on the map."""
+        label = f"Pin {qth}"
+        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
+            self.web_view.page().runJavaScript(f"if (window.dropTemporaryPin) window.dropTemporaryPin({lat}, {lon}, '{label}');")
+        self._notify_user(f"📌 Dropped waypoint pin at {lat:.4f}, {lon:.4f} ({qth})")
+
+    def _context_clear_traces_and_pins(self):
+        """Clears active packet path lines, repeater neighbor routes, and waypoint pins."""
+        self.clear_visualised_path()
+        self.clear_repeater_neighbors()
+        self.clear_preview_packet_path()
+        if hasattr(self, "btn_toggle_los"):
+            self.btn_toggle_los.setChecked(False)
+        if hasattr(self, "btn_profile_path"):
+            self.btn_profile_path.setChecked(False)
+        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
+            self.web_view.page().runJavaScript("if (window.clearTemporaryPin) window.clearTemporaryPin(); if (window.clearViewshedOverlay) window.clearViewshedOverlay(); if (window.clearP2PLine) window.clearP2PLine();")
+        if hasattr(self, "elevation_profile_dock"):
+            self.elevation_profile_dock.hide()
+        self._notify_user("🧹 Cleared visualised routes, repeater neighbors, and waypoint pins")
+
+    def _context_check_weather(self, lat: float, lon: float):
+        """Centers map at coordinates and focuses weather radar."""
+        self.center_map_at(lat, lon)
+        self._notify_user(f"🌧️ Centered map on {lat:.4f}, {lon:.4f}")
+
+    def _context_check_lightning(self, lat: float, lon: float):
+        """Centers map at coordinates and enables lightning strikes layer."""
+        self.center_map_at(lat, lon)
+        if not getattr(self, "show_thunderstorm", False):
+            self.set_thunderstorm(True)
+            p = self.window()
+            if p and hasattr(p, "nav_dock") and hasattr(p.nav_dock, "btn_thunderstorm"):
+                p.nav_dock.btn_thunderstorm.blockSignals(True)
+                p.nav_dock.btn_thunderstorm.setChecked(True)
+                p.nav_dock.btn_thunderstorm.blockSignals(False)
+        self._notify_user(f"⚡ Monitoring lightning strikes around {lat:.4f}, {lon:.4f}")
+
+    def _copy_to_clipboard(self, text: str, label: str):
+        """Copies text to system clipboard and notifies user."""
+        try:
+            clipboard = QApplication.clipboard()
+            if clipboard:
+                clipboard.setText(text)
+            self._notify_user(f"📋 Copied {label} to clipboard: {text}")
+        except Exception as e:
+            logger.error(f"Failed copying to clipboard: {e}")
+
+    def _notify_user(self, text: str):
+        """Displays status bar notification in main window."""
+        try:
+            p = self.window()
+            if p and hasattr(p, "statusBar") and p.statusBar():
+                p.statusBar().showMessage(text, 4000)
+        except Exception:
+            pass
+
+    def run_js(self, script: str):
+        """Safely executes JavaScript in the WebEngine view if ready."""
+        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
+            try:
+                self.web_view.page().runJavaScript(script)
+            except Exception as e:
+                logger.warning(f"Error executing run_js: {e}")
+
+    def _get_active_observer_coords(self) -> tuple[float, float, str]:
+        """Resolves observer coordinates for viewshed / path profiling."""
+        if self._current_los_center:
+            return self._current_los_center
+        # Home station from config
+        home_lat = getattr(self.config.meshcore, "latitude", None) if self.config else None
+        home_lon = getattr(self.config.meshcore, "longitude", None) if self.config else None
+        if home_lat is not None and home_lon is not None and is_valid_coordinate(home_lat, home_lon):
+            return (home_lat, home_lon, "Home Station")
+        # Try local or first node
+        if self.storage:
+            try:
+                nodes = self.storage.get_nodes()
+                for n in nodes:
+                    if getattr(n, "is_local", False) and is_valid_coordinate(n.lat, n.lon):
+                        return (n.lat, n.lon, n.alias or "Local Node")
+                for n in nodes:
+                    if is_valid_coordinate(n.lat, n.lon):
+                        return (n.lat, n.lon, n.alias or n.node_id)
+            except Exception:
+                pass
+        # Default fallback: map center or central UK
+        return (51.5074, -0.1278, "Observer")
+
+    def set_los_view_active(self, active: bool):
+        """Toggles Line-of-Sight & Topo elevation toolbar and features from Nav Dock or action."""
+        if self.config:
+            self.config.map_show_rf_los = active
+            try:
+                self.config.save()
+            except Exception:
+                pass
+        if hasattr(self, "los_controls"):
+            self.los_controls.setVisible(active)
+            self._reposition_floating_controls()
+        if not active:
+            if hasattr(self, "elevation_profile_dock"):
+                self.elevation_profile_dock.hide()
+            if hasattr(self, "btn_profile_path"):
+                self.btn_profile_path.setChecked(False)
+            if hasattr(self, "btn_toggle_los"):
+                self.btn_toggle_los.setChecked(False)
+            self.run_js("clearViewshedOverlay()")
+            self.run_js("clearP2PLine()")
+            self.run_js("setP2PMeasureMode(false)")
+            if hasattr(self, "watcher_status"):
+                self.watcher_status.setText("⚡ Line-of-Sight overlay & profile hidden")
+
+    def _on_toggle_base_map_clicked(self):
+        new_layer = "topo" if getattr(self, "_current_base_layer", "canvas") == "canvas" else "canvas"
+        self.set_base_map_layer(new_layer)
+
+    def set_base_map_layer(self, layer_type: str):
+        """Switches base map layer between 'canvas' (Esri Dark Canvas) and 'topo' (OpenTopoMap Relief)."""
+        self._current_base_layer = layer_type
+        if hasattr(self, "btn_base_map"):
+            self.btn_base_map.setText("🗺️ Canvas" if layer_type == "topo" else "🏔️ Topo")
+        if self.config:
+            self.config.map_base_layer = layer_type
+            try:
+                self.config.save()
+            except Exception:
+                pass
+        if hasattr(self, "watcher_status"):
+            layer_name = "Dark Topographic Relief (OpenTopoMap)" if layer_type == "topo" else "Dark Canvas"
+            self.watcher_status.setText(f"🗺️ Base map switched to: {layer_name}")
+        self.run_js(f"window.setBaseMapLayer && window.setBaseMapLayer('{layer_type}');")
+
+    def _on_los_toggle_clicked(self):
+        enabled = self.btn_toggle_los.isChecked()
+        if enabled:
+            self._trigger_viewshed_calc()
+        else:
+            self.run_js("clearViewshedOverlay()")
+            if hasattr(self, "watcher_status"):
+                self.watcher_status.setText("⚡ Watcher: Viewshed overlay cleared")
+
+    def _on_los_height_button_clicked(self, height_m: int):
+        self._current_tx_height = float(height_m)
+        if hasattr(self, "btn_toggle_los") and self.btn_toggle_los.isChecked():
+            self._trigger_viewshed_calc()
+
+    def _on_los_radius_changed(self, text: str):
+        try:
+            self._current_los_radius = float(text.replace("km", "").strip())
+        except Exception:
+            self._current_los_radius = 25.0
+        if hasattr(self, "btn_toggle_los") and self.btn_toggle_los.isChecked():
+            self._trigger_viewshed_calc()
+
+    def _trigger_viewshed_calc(self, lat: Optional[float] = None, lon: Optional[float] = None, alias: Optional[str] = None):
+        if lat is None or lon is None:
+            lat, lon, alias = self._get_active_observer_coords()
+        self._current_los_center = (lat, lon, alias or "Observer")
+        if hasattr(self, "los_controls") and not self.los_controls.isVisible():
+            self.set_los_view_active(True)
+            p = self.window()
+            if p and hasattr(p, "nav_dock") and hasattr(p.nav_dock, "btn_rf_los"):
+                p.nav_dock.btn_rf_los.blockSignals(True)
+                p.nav_dock.btn_rf_los.setChecked(True)
+                p.nav_dock.btn_rf_los.blockSignals(False)
+        if hasattr(self, "btn_toggle_los"):
+            self.btn_toggle_los.setChecked(True)
+        if hasattr(self, "watcher_status"):
+            self.watcher_status.setText(f"⏳ Viewshed: Calculating coverage ({self._current_los_radius:.0f} km @ {self._current_tx_height:.0f}m AGL from {alias})...")
+        self.viewshed_service.calculate_viewshed(
+            center_lat=lat,
+            center_lon=lon,
+            tx_height_m=self._current_tx_height,
+            rx_height_m=self._current_rx_height,
+            radius_km=self._current_los_radius,
+            observer_alias=alias or "Observer"
+        )
+
+    def _on_viewshed_ready(self, payload: dict):
+        self.run_js("if (window.hideLoadingHud) window.hideLoadingHud();")
+        self.run_js(f"renderViewshedOverlay({json.dumps(payload)})")
+        pct = payload.get("visible_pct", 0.0)
+        sq_km = payload.get("coverage_sq_km", 0.0)
+        r_km = payload.get("radius_km", 0.0)
+        h_m = payload.get("tx_height_m", 8.0)
+        if hasattr(self, "watcher_status"):
+            self.watcher_status.setText(f"🟢 LOS Coverage: {pct}% visible within {r_km:.0f} km ({sq_km:.1f} km²) at {h_m:.0f}m AGL")
+
+    def _on_viewshed_error(self, err: str):
+        self.run_js("if (window.hideLoadingHud) window.hideLoadingHud();")
+        logger.warning(f"Viewshed error: {err}")
+        if hasattr(self, "btn_toggle_los"):
+            self.btn_toggle_los.setChecked(False)
+        if hasattr(self, "watcher_status"):
+            self.watcher_status.setText(f"⚠️ Viewshed error: {err}")
+
+    def _on_viewshed_loading(self, loading: bool):
+        if hasattr(self, "btn_toggle_los"):
+            self.btn_toggle_los.setText("⏳ Computing..." if loading else "🟢 Viewshed")
+        if loading:
+            self.run_js("if (window.showLoadingHud) window.showLoadingHud('Calculating Line-of-Sight Coverage (DEM Terrain & 4/3 Refraction)...');")
+        else:
+            self.run_js("if (window.hideLoadingHud) window.hideLoadingHud();")
+
+    def _on_profile_path_toggle_clicked(self):
+        active = self.btn_profile_path.isChecked()
+        self.run_js(f"setP2PMeasureMode({json.dumps(active)})")
+        if active:
+            if hasattr(self, "watcher_status"):
+                self.watcher_status.setText("🏔️ Point-to-Point Mode: Click Point A on map, then click Point B to calculate profile")
+        else:
+            if hasattr(self, "watcher_status"):
+                self.watcher_status.setText("⚡ Point-to-Point measuring cancelled")
+
+    def _start_p2p_measure_from_context(self):
+        if hasattr(self, "btn_profile_path"):
+            self.btn_profile_path.setChecked(True)
+        self._on_profile_path_toggle_clicked()
+
+    def _on_clear_los_clicked(self):
+        if hasattr(self, "btn_toggle_los"):
+            self.btn_toggle_los.setChecked(False)
+        if hasattr(self, "btn_profile_path"):
+            self.btn_profile_path.setChecked(False)
+        self.run_js("clearViewshedOverlay()")
+        self.run_js("clearP2PLine()")
+        self.run_js("setP2PMeasureMode(false)")
+        if hasattr(self, "elevation_profile_dock"):
+            self.elevation_profile_dock.hide()
+        if hasattr(self, "watcher_status"):
+            self.watcher_status.setText("🧹 Overlays cleared")
+
+    def _on_p2p_path_selected(self, lat1: float, lon1: float, lat2: float, lon2: float, alias1: str, alias2: str):
+        if hasattr(self, "btn_profile_path"):
+            self.btn_profile_path.setChecked(False)
+        self.show_elevation_profile(lat1, lon1, lat2, lon2, alias1=alias1, alias2=alias2)
+
+    def _on_profile_node_requested(self, node_id: str, alias: str, lat: float, lon: float):
+        home_lat, home_lon, home_alias = self._get_active_observer_coords()
+        if abs(home_lat - lat) < 0.0001 and abs(home_lon - lon) < 0.0001:
+            self._notify_user("Cannot profile from node to itself. Select a different target or measure on map.")
+            return
+        self.show_elevation_profile(home_lat, home_lon, lat, lon, alias1=home_alias, alias2=alias or node_id)
+
+    def _on_calc_node_viewshed_requested(self, node_id: str, alias: str, lat: float, lon: float):
+        self._trigger_viewshed_calc(lat=lat, lon=lon, alias=alias or node_id)
+
+    def show_elevation_profile(self, lat1: float, lon1: float, lat2: float, lon2: float, alias1: str = "Point A", alias2: str = "Point B"):
+        """Initiates topographic RF elevation profile calculation and docks the panel."""
+        self._last_p2p_coords = (lat1, lon1, lat2, lon2, alias1, alias2)
+        if hasattr(self, "los_controls") and not self.los_controls.isVisible():
+            self.set_los_view_active(True)
+            p = self.window()
+            if p and hasattr(p, "nav_dock") and hasattr(p.nav_dock, "btn_rf_los"):
+                p.nav_dock.btn_rf_los.blockSignals(True)
+                p.nav_dock.btn_rf_los.setChecked(True)
+                p.nav_dock.btn_rf_los.blockSignals(False)
+        if hasattr(self, "watcher_status"):
+            self.watcher_status.setText(f"⏳ Profiling terrain & 868MHz Fresnel zone: {alias1} → {alias2}...")
+        self.run_js("if (window.showLoadingHud) window.showLoadingHud('Calculating Topographic Terrain Elevation Profile...');")
+        self.elevation_service.calculate_profile(
+            lat1=lat1,
+            lon1=lon1,
+            lat2=lat2,
+            lon2=lon2,
+            tx_height_m=self._current_tx_height,
+            rx_height_m=self._current_rx_height,
+            alias1=alias1,
+            alias2=alias2
+        )
+
+    def _on_elevation_profile_ready(self, payload: dict):
+        self.run_js("if (window.hideLoadingHud) window.hideLoadingHud();")
+        if hasattr(self, "elevation_profile_dock"):
+            self.elevation_profile_dock.set_profile(payload)
+            self.elevation_profile_dock.show()
+            if hasattr(self, "map_splitter"):
+                total_h = self.map_splitter.height()
+                if total_h < 300:
+                    total_h = 600
+                map_h = int(total_h * 0.8)
+                prof_h = max(140, total_h - map_h)
+                self.map_splitter.setSizes([map_h, prof_h])
+
+        lat1 = payload.get("lat1", 0.0)
+        lon1 = payload.get("lon1", 0.0)
+        lat2 = payload.get("lat2", 0.0)
+        lon2 = payload.get("lon2", 0.0)
+        status = payload.get("status", "CLEAR")
+        a1 = payload.get("alias1", "Point A")
+        a2 = payload.get("alias2", "Point B")
+        self.run_js(f"renderP2PLine({lat1}, {lon1}, {lat2}, {lon2}, '{status}', '{a1}', '{a2}')")
+
+        dist_km = payload.get("total_distance_km", 0.0)
+        status_lbl = payload.get("status_label", status)
+        if hasattr(self, "watcher_status"):
+            self.watcher_status.setText(f"🏔️ Profile: {a1} → {a2} ({dist_km} km) | Status: {status_lbl}")
+
+    def _on_elevation_profile_error(self, err: str):
+        self.run_js("if (window.hideLoadingHud) window.hideLoadingHud();")
+        logger.warning(f"Elevation profile error: {err}")
+        if hasattr(self, "watcher_status"):
+            self.watcher_status.setText(f"⚠️ Elevation profile error: {err}")
+
+    def _on_dock_point_scrubbed(self, lat: float, lon: float):
+        self.run_js(f"updateP2PScrubMarker({lat}, {lon})")
+
+    def _on_dock_scrub_cleared(self):
+        self.run_js("clearP2PScrubMarker()")
+
+    def _on_dock_heights_changed(self, tx_height: float, rx_height: float):
+        self._current_tx_height = tx_height
+        self._current_rx_height = rx_height
+        if self._last_p2p_coords:
+            lat1, lon1, lat2, lon2, a1, a2 = self._last_p2p_coords
+            self.elevation_service.calculate_profile(
+                lat1=lat1,
+                lon1=lon1,
+                lat2=lat2,
+                lon2=lon2,
+                tx_height_m=tx_height,
+                rx_height_m=rx_height,
+                alias1=a1,
+                alias2=a2
+            )
+
+    def _on_close_elevation_profile(self):
+        if hasattr(self, "elevation_profile_dock"):
+            self.elevation_profile_dock.hide()
+        self.run_js("clearP2PLine()")
+        if hasattr(self, "btn_profile_path"):
+            self.btn_profile_path.setChecked(False)
+        if hasattr(self, "watcher_status"):
+            self.watcher_status.setText("⚡ Watcher: Ready")
+
+    def _show_map_context_menu(self, lat: float, lon: float, x: int, y: int):
+        """Displays custom dark-themed context menu for map operations."""
+        now = time.time()
+        if hasattr(self, "_last_context_menu_time") and (now - self._last_context_menu_time) < 0.25:
+            return
+        self._last_context_menu_time = now
+
+        if hasattr(self, "_active_context_menu") and self._active_context_menu:
+            try:
+                self._active_context_menu.close()
+            except Exception:
+                pass
+            self._active_context_menu = None
+
+        menu = QMenu(self)
+        self._active_context_menu = menu
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #1E2024;
+                color: #F3F4F6;
+                border: 1px solid #374151;
+                border-radius: 8px;
+                padding: 6px;
+            }
+            QMenu::item {
+                padding: 7px 18px;
+                border-radius: 5px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            QMenu::item:selected {
+                background-color: #2D3748;
+                color: #38BDF8;
+            }
+            QMenu::item:disabled {
+                color: #38BDF8;
+                font-size: 12px;
+                font-weight: 700;
+                padding: 6px 14px;
+            }
+            QMenu::separator {
+                height: 1px;
+                background-color: #374151;
+                margin: 4px 6px;
+            }
+        """)
+
+        lat_dir = "N" if lat >= 0 else "S"
+        lon_dir = "E" if lon >= 0 else "W"
+        qth = latlon_to_maidenhead(lat, lon)
+        header_text = f"📍 {abs(lat):.4f}° {lat_dir}, {abs(lon):.4f}° {lon_dir}  •  {qth}"
+
+        # 1. Location Header
+        act_header = menu.addAction(header_text)
+        act_header.setEnabled(False)
+
+        menu.addSeparator()
+
+        # 2. Navigation
+        act_center = menu.addAction("🎯 Center Map Here")
+        act_center.triggered.connect(lambda: self.center_map_at(lat, lon))
+
+        act_zoom_in = menu.addAction("🔍 Zoom In Here")
+        act_zoom_in.triggered.connect(lambda: self.zoom_in_at(lat, lon))
+
+        act_zoom_out = menu.addAction("🔎 Zoom Out")
+        act_zoom_out.triggered.connect(lambda: self.zoom_out())
+
+        menu.addSeparator()
+
+        # 3. ADS-B Monitoring
+        act_adsb = menu.addAction("✈️ Monitor ADS-B Air Traffic Here")
+        act_adsb.triggered.connect(lambda: self._context_monitor_adsb(lat, lon, qth))
+
+        target_alias = getattr(self.config.meshcore, "adsb_target_alias", "") if (self.config and hasattr(self.config, "meshcore")) else ""
+        if target_alias and "Local Node" not in target_alias and "Station" not in target_alias:
+            act_reset_adsb = menu.addAction("↺ Reset ADS-B Center to Home Station")
+            act_reset_adsb.triggered.connect(self._on_bridge_reset_adsb_target)
+
+        menu.addSeparator()
+
+        # 4. Station & Distance
+        act_set_station = menu.addAction("📡 Set Station Home Location Here")
+        act_set_station.triggered.connect(lambda: self._context_set_station_location(lat, lon, qth))
+
+        home_lat = getattr(self.config.meshcore, "latitude", None) if (self.config and hasattr(self.config, "meshcore")) else None
+        home_lon = getattr(self.config.meshcore, "longitude", None) if (self.config and hasattr(self.config, "meshcore")) else None
+        if home_lat is not None and home_lon is not None:
+            d_km, d_mi, bearing = calculate_distance_and_bearing(home_lat, home_lon, lat, lon)
+            act_dist = menu.addAction(f"📏 Distance from Home: {d_mi:.1f} mi ({d_km:.1f} km) @ {bearing:.0f}°")
+            act_dist.triggered.connect(lambda: self._notify_user(f"📍 Point is {d_mi:.1f} miles ({d_km:.1f} km) bearing {bearing:.0f}° from station ({qth})"))
+
+        menu.addSeparator()
+
+        # 5. RF Line of Sight & Topographic Path Profile
+        act_los_calc = menu.addAction("🟢 Calculate LOS Viewshed Here")
+        act_los_calc.triggered.connect(lambda: self._trigger_viewshed_calc(lat=lat, lon=lon, alias=f"Point ({lat:.3f}, {lon:.3f})"))
+
+        if home_lat is not None and home_lon is not None:
+            act_profile_here = menu.addAction("🏔️ Profile RF Path From Home Here")
+            act_profile_here.triggered.connect(lambda: self.show_elevation_profile(home_lat, home_lon, lat, lon, alias1="Home Station", alias2=f"Point ({lat:.3f}, {lon:.3f})"))
+
+        act_measure_p2p = menu.addAction("📏 Measure Point-to-Point Profile...")
+        act_measure_p2p.triggered.connect(self._start_p2p_measure_from_context)
+
+        menu.addSeparator()
+
+        # 6. Waypoint Pins & Path Traces
+        act_drop_pin = menu.addAction("📌 Drop Waypoint Pin Here")
+        act_drop_pin.triggered.connect(lambda: self._context_drop_temporary_pin(lat, lon, qth))
+
+        act_clear = menu.addAction("🧹 Clear Traces && Waypoints")
+        act_clear.triggered.connect(self._context_clear_traces_and_pins)
+
+        menu.addSeparator()
+
+        # 6. Weather & Atmosphere
+        act_weather = menu.addAction("🌧️ Check Rain Radar Here")
+        act_weather.triggered.connect(lambda: self._context_check_weather(lat, lon))
+
+        act_lightning = menu.addAction("⚡ Monitor Lightning Strikes Here")
+        act_lightning.triggered.connect(lambda: self._context_check_lightning(lat, lon))
+
+        menu.addSeparator()
+
+        # 7. Clipboard Tools
+        act_copy_coords = menu.addAction(f"📋 Copy Coordinates ({lat:.5f}, {lon:.5f})")
+        act_copy_coords.triggered.connect(lambda: self._copy_to_clipboard(f"{lat:.5f}, {lon:.5f}", "Coordinates"))
+
+        act_copy_qth = menu.addAction(f"📻 Copy Maidenhead QTH Locator ({qth})")
+        act_copy_qth.triggered.connect(lambda: self._copy_to_clipboard(qth, "Maidenhead Locator"))
+
+        # Popup asynchronously without blocking event loop or WebEngine IPC
+        if hasattr(self, "web_view"):
+            safe_x = max(0, min(self.web_view.width(), int(x)))
+            safe_y = max(0, min(self.web_view.height(), int(y)))
+            global_pos = self.web_view.mapToGlobal(QPoint(safe_x, safe_y))
+        else:
+            global_pos = self.mapToGlobal(QPoint(int(x), int(y)))
+        menu.popup(global_pos)
 
     def set_activity_heatmap(self, enabled: bool, timeframe_hours: Optional[int] = None):
         """Toggles the node activity heatmap and updates repeater colors based on message traffic."""
@@ -5048,22 +7483,13 @@ class MeshMapWidget(QWidget):
 
     def _on_bridge_map_moved(self, lat: float, lon: float, zoom: int):
         """Persists the user's chosen map view so it remains locked and preserved."""
+        self._reset_watchdog_activity()
         if self.config and hasattr(self.config, "meshcore"):
             wrapped_lon = ((float(lon) + 180.0) % 360.0 + 360.0) % 360.0 - 180.0
             clamped_lat = max(-85.0, min(85.0, float(lat)))
             self.config.meshcore.map_center_lat = round(clamped_lat, 5)
             self.config.meshcore.map_center_lon = round(wrapped_lon, 5)
             self.config.meshcore.map_zoom = int(zoom)
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and getattr(self, "_page_ready", False):
-            self.web_view.page().runJavaScript("if (typeof map !== 'undefined') map.invalidateSize();")
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and getattr(self, "_page_ready", False):
-            self.web_view.page().runJavaScript("if (typeof map !== 'undefined') map.invalidateSize();")
 
     def _on_visualised_path_closed(self):
         """Called when the user closes the visualised path popup on the map."""
@@ -5176,7 +7602,27 @@ class MeshMapWidget(QWidget):
             }
             self.web_view.page().runJavaScript(f"setMapColors({json.dumps(theme_dict)});")
 
+            # Sync ADS-B color mode and customized color thresholds
+            adsb_colors = {
+                "alt_ground": getattr(app_colors, "adsb_alt_ground", "#FF00FF"),
+                "alt_low": getattr(app_colors, "adsb_alt_low", "#FF0000"),
+                "alt_mid": getattr(app_colors, "adsb_alt_mid", "#0000FF"),
+                "alt_high": getattr(app_colors, "adsb_alt_high", "#FFFFFF"),
+                "type_airliner": getattr(app_colors, "adsb_type_airliner", "#FFFFFF"),
+                "type_light": getattr(app_colors, "adsb_type_light", "#0000FF"),
+                "type_military": getattr(app_colors, "adsb_type_military", "#00FF00"),
+                "type_helicopter": getattr(app_colors, "adsb_type_helicopter", "#FFFF00"),
+                "type_glider": getattr(app_colors, "adsb_type_glider", "#FF00FF"),
+                "dist_close": getattr(app_colors, "adsb_dist_close", "#FF0000"),
+                "dist_mid_close": getattr(app_colors, "adsb_dist_mid_close", "#FFA500"),
+                "dist_mid_far": getattr(app_colors, "adsb_dist_mid_far", "#FFFF00"),
+                "dist_far": getattr(app_colors, "adsb_dist_far", "#00FF00"),
+            }
+            mode = getattr(app_colors, "adsb_color_mode", "altitude")
+            self.web_view.page().runJavaScript(f"if (window.setAdsbColorConfig) window.setAdsbColorConfig('{mode}', {json.dumps(adsb_colors)});\nif (window.renderAdsbLegend) window.renderAdsbLegend();")
+
     def _on_bridge_node_clicked(self, node_id: str):
+        self._reset_watchdog_activity()
         logger.info(f"Map marker clicked for node: {node_id}")
         self.node_selected.emit(node_id)
 
@@ -5285,6 +7731,15 @@ class MeshMapWidget(QWidget):
 
     def reset_map_layers(self):
         self.clear_visualised_path()
+        if hasattr(self, "btn_toggle_los"):
+            self.btn_toggle_los.setChecked(False)
+        if hasattr(self, "btn_profile_path"):
+            self.btn_profile_path.setChecked(False)
+        self.run_js("clearViewshedOverlay()")
+        self.run_js("clearP2PLine()")
+        self.run_js("setP2PMeasureMode(false)")
+        if hasattr(self, "elevation_profile_dock"):
+            self.elevation_profile_dock.hide()
         if hasattr(self, "bridge"):
             self.bridge.repeater_neighbors_cleared_signal.emit()
         self._on_center_clicked()

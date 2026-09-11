@@ -16,7 +16,7 @@ from meshcore_tray.ui.mesh_map_widget import MeshMapWidget
 
 @pytest.fixture
 def app():
-    return QApplication.instance() or QApplication([])
+    return QApplication.instance() or QApplication(["meshcore-test"])
 
 
 def test_dms_view_row_height_and_no_id_visible(app, tmp_path):

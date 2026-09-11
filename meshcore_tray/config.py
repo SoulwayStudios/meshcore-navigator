@@ -48,6 +48,8 @@ class MeshcoreConfig:
     map_show_companion_orbitals: bool = False
     map_show_scopes: bool = False
     map_show_adsb: bool = False
+    map_show_rf_los: bool = False
+    map_base_layer: str = "canvas"  # "canvas" or "topo"
     adsb_radius_nm: int = 50
     adsb_target_node_id: str = ""
     adsb_target_alias: str = ""
@@ -85,6 +87,24 @@ class AppColors:
     map_unknown_path_color: str = "#EF4444"
     map_no_gps_path_color: str = "#000000"
     map_orbital_repeater_color: str = "#FFD335"
+    # ADS-B Aircraft Flight Color Scheme Settings
+    adsb_color_mode: str = "altitude"  # "altitude", "type", "distance"
+    # Altitude Scheme Colors
+    adsb_alt_ground: str = "#FF00FF"    # Lowest / Ground (<2k ft)
+    adsb_alt_low: str = "#FF0000"       # Sub 7k ft (<7k ft)
+    adsb_alt_mid: str = "#0000FF"       # 10k - 25k ft
+    adsb_alt_high: str = "#FFFFFF"      # Cruise (>25k ft)
+    # Aircraft Type Scheme Colors
+    adsb_type_airliner: str = "#FFFFFF"   # Commercial Airliner
+    adsb_type_light: str = "#0000FF"      # Light Aircraft / General Aviation
+    adsb_type_military: str = "#00FF00"   # Military Fast Jet / Transport
+    adsb_type_helicopter: str = "#FFFF00" # Helicopter
+    adsb_type_glider: str = "#FF00FF"     # Glider / Sailplane
+    # Distance Ramp Scheme Colors (relative to monitoring center)
+    adsb_dist_close: str = "#FF0000"      # Closest (0 - 25% radius)
+    adsb_dist_mid_close: str = "#FFA500"  # Mid-Close (25% - 50% radius)
+    adsb_dist_mid_far: str = "#FFFF00"    # Mid-Far (50% - 75% radius)
+    adsb_dist_far: str = "#00FF00"        # Far (75% - 100%+ radius)
 
 
 @dataclass
@@ -175,6 +195,9 @@ class AppConfig:
     group_order: List[str] = field(default_factory=list)
     last_active_channel: str = "Public"
     first_run_completed: bool = False
+    window_maximized: bool = False
+    window_width: int = 1380
+    window_height: int = 800
 
     def is_channel_favorite(self, channel_name: str) -> bool:
         if not channel_name:
@@ -339,6 +362,12 @@ class AppConfig:
             config.group_order = list(data["group_order"])
         if "first_run_completed" in data:
             config.first_run_completed = bool(data["first_run_completed"])
+        if "window_maximized" in data:
+            config.window_maximized = bool(data["window_maximized"])
+        if "window_width" in data:
+            config.window_width = int(data["window_width"])
+        if "window_height" in data:
+            config.window_height = int(data["window_height"])
         return config
 
     def save(self, filepath: Optional[Path] = None):

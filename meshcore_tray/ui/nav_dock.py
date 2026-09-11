@@ -294,6 +294,13 @@ class NavDockWidget(QWidget):
         self.btn_scopes.toggled.connect(lambda ch: self.layer_toggled.emit("scopes", ch))
         layout.addWidget(self.btn_scopes)
 
+        # 10. RF Line of Sight & Topo Elevation View
+        show_los = getattr(self.config.meshcore, "map_show_rf_los", False) if self.config else False
+        self.btn_rf_los = LayerButton("🏔️", "Line of Sight & Topo Elevation")
+        self.btn_rf_los.setChecked(show_los)
+        self.btn_rf_los.toggled.connect(lambda ch: self.layer_toggled.emit("rf_los", ch))
+        layout.addWidget(self.btn_rf_los)
+
         layout.addStretch()
 
         # Set default active button

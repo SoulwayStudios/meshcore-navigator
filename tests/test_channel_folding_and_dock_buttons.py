@@ -17,7 +17,7 @@ from meshcore_tray.ui.repeaters_view import RepeatersViewWidget
 
 @pytest.fixture
 def app():
-    return QApplication.instance() or QApplication([])
+    return QApplication.instance() or QApplication(["meshcore-test"])
 
 
 def test_sidebar_add_channel_button_and_emission(app, tmp_path):

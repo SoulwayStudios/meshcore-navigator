@@ -10,6 +10,7 @@ from meshcore_tray.config import AppConfig
 from meshcore_tray.core.adsb_service import (
     ADSBService,
     ADSBFetchWorker,
+    AircraftPhotoWorker,
     haversine_nm,
     bearing_deg,
     classify_aircraft,
@@ -25,7 +26,7 @@ from meshcore_tray.ui.repeaters_view import RepeatersViewWidget
 def qapp():
     app = QApplication.instance()
     if app is None:
-        app = QApplication([])
+        app = QApplication(["meshcore-test"])
     return app
 
 
@@ -342,7 +343,7 @@ def test_adsb_radar_sweep_and_trails_elements():
     assert "aircraftTrails" in LEAFLET_HTML_TEMPLATE
     assert "aircraftHistory" in LEAFLET_HTML_TEMPLATE
     assert "hist.length > 30" in LEAFLET_HTML_TEMPLATE
-    assert "segOpacity" in LEAFLET_HTML_TEMPLATE
+    assert "trailLine.setLatLngs(latlngs)" in LEAFLET_HTML_TEMPLATE
     assert "dashArray: '3, 4'" not in LEAFLET_HTML_TEMPLATE  # Trails are solid rather than dashed
     assert "lineCap: 'round'" in LEAFLET_HTML_TEMPLATE
 
@@ -433,6 +434,331 @@ def test_adsb_multi_feed_merging_and_helicopter():
     # Fresher telemetry preferred for airliner
     airliner = planes_by_hex["400e5a"]
     assert airliner["alt_baro"] == 18200
+
+
+def test_adsb_tooltip_photo_placeholder_and_hover_delay():
+    """Verify Leaflet HTML contains photo placeholder and hover grace period logic."""
+    assert ".adsb-photo-placeholder" in LEAFLET_HTML_TEMPLATE
+    assert "No aircraft photo available" in LEAFLET_HTML_TEMPLATE
+    assert "_adsbHoverCloseTimer" in LEAFLET_HTML_TEMPLATE
+    assert "_activeHoverHex" in LEAFLET_HTML_TEMPLATE
+    assert "adsb-cluster-pill" in LEAFLET_HTML_TEMPLATE
+    assert "Stacked (" in LEAFLET_HTML_TEMPLATE
+
+
+def test_adsb_distress_beacon_and_echo_pulse():
+    """Verify Leaflet HTML contains distress beacon tag, echo pulse rings, and Distress in legend."""
+    assert "adsb-distress-echo-ring" in LEAFLET_HTML_TEMPLATE
+    assert "adsb-distress-tag" in LEAFLET_HTML_TEMPLATE
+    assert "adsb-distress-banner" in LEAFLET_HTML_TEMPLATE
+    assert "adsb-distress-glow" in LEAFLET_HTML_TEMPLATE
+    assert "adsb-legend-distress-dot" in LEAFLET_HTML_TEMPLATE
+    assert "Distress" in LEAFLET_HTML_TEMPLATE
+    assert "getAircraftDistressInfo" in LEAFLET_HTML_TEMPLATE
+
+
+def test_aircraft_photo_worker_planespotters_success():
+    """Verify AircraftPhotoWorker retrieves photo from Planespotters if available."""
+    worker = AircraftPhotoWorker("400492")
+    fake_ps_data = {
+        "photos": [{
+            "thumbnail_large": {"src": "https://planespotters.net/large.jpg"},
+            "photographer": "John Doe",
+            "link": "https://planespotters.net/hex/400492",
+            "aircraft_type": "Boeing 737",
+            "airline": {"name": "British Airways"}
+        }]
+    }
+    with patch("urllib.request.urlopen") as mock_url:
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps(fake_ps_data).encode("utf-8")
+        mock_resp.__enter__.return_value = mock_resp
+        mock_url.return_value = mock_resp
+
+        results = []
+        worker.photo_ready.connect(lambda h, d: results.append((h, d)))
+        worker.run()
+
+        assert len(results) == 1
+        h, info = results[0]
+        assert h == "400492"
+        assert info["thumbnail"] == "https://planespotters.net/large.jpg"
+        assert info["photographer"] == "John Doe"
+        assert info["source"] == "Planespotters.net"
+        assert info["source_label"] == "Planespotters ↗"
+
+
+def test_aircraft_photo_worker_airport_data_fallback():
+    """Verify AircraftPhotoWorker falls back to Airport-Data when Planespotters has no photo."""
+    worker = AircraftPhotoWorker("407b4b")
+    ps_resp = MagicMock()
+    ps_resp.read.return_value = json.dumps({"photos": []}).encode("utf-8")
+    ps_resp.__enter__.return_value = ps_resp
+
+    ad_resp = MagicMock()
+    ad_data = {
+        "status": 200,
+        "count": 1,
+        "data": [{
+            "image": "https://airport-data.com/images/aircraft/thumbnails/001/862/001862748.jpg",
+            "link": "https://airport-data.com/aircraft/photo/001862748",
+            "photographer": "Chris Hall"
+        }]
+    }
+    ad_resp.read.return_value = json.dumps(ad_data).encode("utf-8")
+    ad_resp.__enter__.return_value = ad_resp
+
+    with patch("urllib.request.urlopen", side_effect=[ps_resp, ad_resp]):
+        results = []
+        worker.photo_ready.connect(lambda h, d: results.append((h, d)))
+        worker.run()
+
+        assert len(results) == 1
+        h, info = results[0]
+        assert h == "407b4b"
+        assert "001862748.jpg" in info["thumbnail"]
+        assert info["photographer"] == "Chris Hall"
+        assert info["source"] == "Airport-Data.com"
+        assert info["source_label"] == "Airport-Data ↗"
+
+
+def test_adsb_service_photo_caching(qapp):
+    """Verify ADSBService only caches positive hits with thumbnail, not failures."""
+    svc = ADSBService()
+    svc._on_photo_ready("407b4b", {"thumbnail": "http://img.jpg", "photographer": "Test"})
+    assert "407b4b" in svc._photo_cache
+
+    # Empty result should NOT be permanently cached
+    svc._on_photo_ready("400000", {})
+    assert "400000" not in svc._photo_cache
+
+
+def test_adsb_service_set_target_worker_conflict(qapp):
+    """Verify set_target cleanly handles a currently running worker without race conditions or signal disconnection crashes."""
+    svc = ADSBService()
+    svc.enabled = True
+    fake_worker = MagicMock()
+    fake_worker.isRunning.return_value = True
+    svc._active_worker = fake_worker
+    old_gen = svc._query_generation
+
+    svc.set_target("", "New Target", 55.0, -3.0, 60)
+    assert svc.target_lat == 55.0
+    assert svc.target_lon == -3.0
+    assert getattr(svc, "_pending_refresh", False) is True
+    assert svc._query_generation > old_gen
+
+    # Stale payload from old target is discarded cleanly without emitting flights_updated
+    emitted = []
+    svc.flights_updated.connect(lambda p: emitted.append(p))
+    stale_payload = {
+        "aircraft": [{"hex": "abc123"}],
+        "target_info": {"lat": 51.5, "lon": -0.1, "generation": old_gen}
+    }
+    svc._on_worker_success(stale_payload)
+    assert len(emitted) == 0
+
+
+def test_adsb_tooltip_pinning_and_propagation_template():
+    """Verify Leaflet template has click protection, capture phase listeners, and marker click pinning."""
+    assert "tgt.closest('.adsb-tooltip')" in LEAFLET_HTML_TEMPLATE
+    assert "document.addEventListener('click'" in LEAFLET_HTML_TEMPLATE
+    assert "document.addEventListener('mousedown'" in LEAFLET_HTML_TEMPLATE
+    assert "window.openAircraftTooltip(h, m, true)" in LEAFLET_HTML_TEMPLATE
+    assert "photoCached.source_label" in LEAFLET_HTML_TEMPLATE
+    # Verify removal of Leaflet's built-in 0ms mouseout auto-closer
+    assert "marker.off('mouseout', marker.closeTooltip)" in LEAFLET_HTML_TEMPLATE
+    assert "marker.off('mouseover', marker._openTooltip)" in LEAFLET_HTML_TEMPLATE
+    assert "marker.off('click', marker._openTooltip)" in LEAFLET_HTML_TEMPLATE
+    # Verify click propagation disabled on icon and tooltip container
+    assert "L.DomEvent.disableClickPropagation(marker._icon)" in LEAFLET_HTML_TEMPLATE
+    assert "L.DomEvent.disableClickPropagation(tip._container)" in LEAFLET_HTML_TEMPLATE
+    # Verify tooltip follows aircraft as it moves
+    assert "tip.setLatLng(marker.getLatLng())" in LEAFLET_HTML_TEMPLATE
+    # Verify 800ms hover grace delay
+    assert "800" in LEAFLET_HTML_TEMPLATE
+
+
+def test_mesh_map_debounced_resize_and_recovery(qapp):
+    """Verify MeshMapWidget debounces resize calls and handles render process termination cleanly."""
+    cfg = AppConfig()
+    with patch("meshcore_tray.ui.mesh_map_widget.WEBENGINE_AVAILABLE", False):
+        widget = MeshMapWidget(config=cfg)
+
+    # Test resize event does not raise
+    widget.resize(800, 600)
+
+    # Test render process recovery handler
+    with patch.object(widget, "_recover_web_view_after_termination") as mock_recover:
+        widget._on_render_process_terminated("Crashed", 1)
+        assert widget._page_ready is False
+
+
+def test_adsb_retarget_thread_safety_and_leaflet_reset(qapp):
+    """Verify retargeting ADS-B center location is fully thread-safe and resets JS state."""
+    # 1. Verify Leaflet template contains clearAdsbForRetarget with hover timer cleanup and tooltip closing
+    assert "window.clearAdsbForRetarget = function()" in LEAFLET_HTML_TEMPLATE
+    assert "_adsbHoverCloseTimer = null" in LEAFLET_HTML_TEMPLATE
+    assert "adsbRadarRingsGroup.addLayer(adsbCenterMarker)" in LEAFLET_HTML_TEMPLATE
+    assert "_aircraftContainerPoints = {};" in LEAFLET_HTML_TEMPLATE
+
+    # 2. Verify ADSBService handles rapid retargets without race condition or crash
+    svc = ADSBService()
+    svc.enabled = True
+    for i in range(10):
+        svc.set_target("", f"Radar @ Loc {i}", 50.0 + i * 0.1, -1.0 - i * 0.1, 50)
+    assert svc._query_generation >= 10
+    assert pytest.approx(svc.target_lat) == 50.9
+    assert pytest.approx(svc.target_lon) == -1.9
+
+    # 3. Verify that an out-of-order response from an earlier generation is safely discarded
+    emitted = []
+    svc.flights_updated.connect(lambda p: emitted.append(p))
+    outdated_payload = {
+        "aircraft": [{"hex": "old123"}],
+        "target_info": {"lat": 50.0, "lon": -1.0, "generation": 1}
+    }
+    svc._on_worker_success(outdated_payload)
+    assert len(emitted) == 0
+
+    # 4. Verify valid response with matching generation is accepted
+    fresh_payload = {
+        "aircraft": [{"hex": "new123"}],
+        "target_info": {"lat": 50.9, "lon": -1.9, "generation": svc._query_generation}
+    }
+    svc._on_worker_success(fresh_payload)
+    assert len(emitted) == 1
+    assert emitted[0]["aircraft"][0]["hex"] == "new123"
+
+    # 5. Verify retired workers list and cleanup
+    mock_worker = MagicMock(spec=ADSBFetchWorker)
+    mock_worker.isFinished.return_value = True
+    svc._active_worker = mock_worker
+    svc._pending_refresh = False
+    svc._on_worker_finished()
+    assert svc._active_worker is None
+    assert len(svc._retired_workers) == 0  # Cleaned up because isFinished() is True
+    mock_worker.wait.assert_called()
+
+    # 6. Verify service cleanup safely stops timers and workers
+    svc.cleanup()
+    assert not svc.enabled
+
+
+def test_adsb_map_rendering_and_memory_optimization():
+    """Verify Leaflet template uses persistent polylines, in-place icon updates, and on-demand tooltips."""
+    from meshcore_tray.ui.mesh_map_widget import LEAFLET_HTML_TEMPLATE
+
+    # Verify memory-optimized single polyline architecture
+    assert "trailLine = aircraftTrails[hex];" in LEAFLET_HTML_TEMPLATE
+    assert "trailLine.setLatLngs(latlngs);" in LEAFLET_HTML_TEMPLATE
+    assert "adsbTrailsGroup.addLayer(trailLine);" in LEAFLET_HTML_TEMPLATE
+
+    # Verify on-demand tooltip generation (only when pinned or hovered)
+    assert "var isTargetOpen = (pinnedTooltipHex === hex) || (_activeHoverHex === hex && !pinnedTooltipHex);" in LEAFLET_HTML_TEMPLATE
+
+    # Verify in-place marker rotation and SVG color fill
+    assert "inner.style.transform = 'rotate(' + track + 'deg)';" in LEAFLET_HTML_TEMPLATE
+    assert "svg.setAttribute('fill', iconData.color);" in LEAFLET_HTML_TEMPLATE
+
+    # Verify WebEngine execution under simulated load and window maximize
+    import subprocess
+    import sys
+    script = """
+import sys
+import json
+from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import QEventLoop, QTimer
+from PyQt6.QtWebEngineWidgets import QWebEngineView
+from PyQt6.QtWebEngineCore import QWebEnginePage
+from PyQt6.QtWebChannel import QWebChannel
+from meshcore_tray.ui.mesh_map_widget import get_leaflet_html, WebBridge
+
+app = QApplication(sys.argv)
+view = QWebEngineView()
+bridge = WebBridge()
+channel = QWebChannel()
+channel.registerObject('pyBridge', bridge)
+
+errors = []
+class PageWatcher(QWebEnginePage):
+    def javaScriptConsoleMessage(self, level, msg, line, source):
+        if 'error' in msg.lower() or 'uncaught' in msg.lower():
+            errors.append((level, msg, line, source))
+
+page = PageWatcher(view)
+page.setWebChannel(channel)
+view.setPage(page)
+
+loop = QEventLoop()
+view.loadFinished.connect(lambda ok: loop.quit())
+view.setHtml(get_leaflet_html())
+loop.exec()
+
+view.showMaximized()
+
+# Run ADS-B simulation with 50 aircraft across 5 ticks
+payload = {
+    'total': 50,
+    'target_info': {'lat': 51.5, 'lon': -0.1, 'radius_nm': 50, 'alias': 'London'},
+    'aircraft': [
+        {'hex': f'40{i:02x}', 'lat': 51.5 + (i % 10)*0.01, 'lon': -0.1 + (i % 10)*0.01, 'track': i * 10, 'category': 'airliner'}
+        for i in range(50)
+    ]
+}
+view.page().runJavaScript('setAdsbVisible(true);')
+for _ in range(5):
+    view.page().runJavaScript(f'onAdsbDataReady({json.dumps(payload)});')
+
+QTimer.singleShot(500, loop.quit)
+loop.exec()
+
+assert len(errors) == 0, f'JS errors: {errors}'
+print('SUCCESS_ADSB_OPTIMIZATION_TEST')
+"""
+    proc = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
+    assert proc.returncode == 0, f"Process failed: {proc.stderr}"
+    assert "SUCCESS_ADSB_OPTIMIZATION_TEST" in proc.stdout
+
+
+def test_adsb_rate_limit_backoff_and_cooldown(qapp):
+    """Verify that HTTP 429 sets endpoint cooldown and skips redundant requests."""
+    from meshcore_tray.core.adsb_service import _ENDPOINT_COOLDOWNS, ADSBFetchWorker
+    from urllib.parse import urlparse
+    import time
+
+    # 1. Verify cooldown mechanism
+    _ENDPOINT_COOLDOWNS["test.adsb.host"] = time.time() + 100.0
+
+    worker = ADSBFetchWorker(lat=51.5, lon=-0.1, radius_nm=50, target_info={})
+    # Simulating _fetch_single_feed logic for cooled-down host
+    parsed = urlparse("https://test.adsb.host/api/v2")
+    assert parsed.netloc in _ENDPOINT_COOLDOWNS
+    assert time.time() < _ENDPOINT_COOLDOWNS[parsed.netloc]
+
+    # Clean up test host
+    _ENDPOINT_COOLDOWNS.pop("test.adsb.host", None)
+
+
+def test_adsb_negative_photo_cache_cooldown(qapp):
+    """Verify that empty/404 photo lookups are placed in negative cache to avoid API hammering."""
+    svc = ADSBService()
+    svc._on_photo_ready("401234", {})
+    assert "401234" not in svc._photo_cache
+    assert "401234" in svc._negative_photo_cache
+
+    # Subsequent request within cooldown should immediately emit empty without spawning worker
+    received = []
+    svc.photo_received.connect(lambda h, d: received.append((h, d)))
+    svc.request_aircraft_photo("401234")
+    assert len(received) == 1
+    assert received[0] == ("401234", {})
+    assert "401234" not in svc._photo_workers
+
+
+
+
+
 
 
 

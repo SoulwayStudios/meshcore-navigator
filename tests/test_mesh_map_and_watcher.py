@@ -16,7 +16,7 @@ from meshcore_tray.ui.main_window import MainWindow
 def qapp():
     app = QApplication.instance()
     if app is None:
-        app = QApplication([])
+        app = QApplication(["meshcore-test"])
     return app
 
 
@@ -1395,5 +1395,76 @@ def test_bodffordd_coordinates_protected_from_corrupt_flash_dump(tmp_path):
     assert saved.alias == "Bodffordd Obs"
     assert saved.longitude == -4.35804
     assert saved.latitude == 53.26558
+
+
+def test_logging_system_and_map_watchdog(tmp_path, monkeypatch):
+    """Verifies centralized logging, JS console capturing, screen change handling, and watchdog."""
+    from meshcore_tray.logger import setup_app_logging, get_log_file_path
+    from meshcore_tray.ui.mesh_map_widget import LEAFLET_HTML_TEMPLATE, LoggingWebEnginePage, MeshMapWidget
+    import logging
+
+    # 1. Verify log file creation
+    monkeypatch.setattr("meshcore_tray.logger.get_app_dir", lambda: tmp_path)
+    log_file = setup_app_logging(debug=True)
+    assert log_file.exists()
+    assert "meshcore_navigator.log" in str(log_file)
+
+    test_logger = logging.getLogger("test_module")
+    test_logger.info("Test message for file logging verification")
+    with open(log_file, "r", encoding="utf-8") as f:
+        content = f.read()
+    assert "Test message for file logging verification" in content
+
+    # 2. Verify Leaflet template contains ResizeObserver and window error listeners
+    assert "ResizeObserver" in LEAFLET_HTML_TEMPLATE
+    assert "Leaflet Window Error" in LEAFLET_HTML_TEMPLATE
+    assert "Leaflet Unhandled Rejection" in LEAFLET_HTML_TEMPLATE
+    assert "Leaflet Base Tile Error" in LEAFLET_HTML_TEMPLATE
+
+    # 3. Verify LoggingWebEnginePage captures JS console messages
+    captured_logs = []
+    class LogCatcher(logging.Handler):
+        def emit(self, record):
+            captured_logs.append(self.format(record))
+
+    catcher = LogCatcher()
+    logging.getLogger("meshcore_tray.mesh_map").addHandler(catcher)
+
+    from PyQt6.QtWebEngineCore import QWebEnginePage
+    LoggingWebEnginePage.javaScriptConsoleMessage(
+        None,
+        QWebEnginePage.JavaScriptConsoleMessageLevel.ErrorMessageLevel,
+        "Simulated WebGL Context Lost Error",
+        42,
+        "leaflet.js"
+    )
+    assert any("Simulated WebGL Context Lost Error" in msg for msg in captured_logs)
+    assert any("[JS-ERROR]" in msg for msg in captured_logs)
+
+    # 4. Verify watchdog and screen changed methods on MeshMapWidget
+    cfg = AppConfig()
+    widget = MeshMapWidget(config=cfg)
+    assert hasattr(widget, "_start_renderer_watchdog")
+    assert hasattr(widget, "_check_renderer_watchdog")
+    assert hasattr(widget, "_on_window_screen_changed")
+    assert hasattr(widget, "moveEvent")
+
+    # Simulate pong
+    widget._watchdog_unanswered = 2
+    widget._on_watchdog_pong(2)
+    assert widget._watchdog_unanswered == 0
+
+    # Verify bridge activity reset and grace period
+    import time
+    widget._watchdog_unanswered = 4
+    widget._reset_watchdog_activity()
+    assert widget._watchdog_unanswered == 0
+
+    widget._page_ready = True
+    widget._watchdog_grace_until = time.time() + 100.0
+    widget._watchdog_unanswered = 5
+    widget._check_renderer_watchdog()
+    assert widget._watchdog_unanswered == 0  # cleared during grace period
+
 
 

@@ -15,7 +15,7 @@ def app():
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
     app_instance = QApplication.instance()
     if app_instance is None:
-        app_instance = QApplication([])
+        app_instance = QApplication(["meshcore-test"])
     return app_instance
 
 

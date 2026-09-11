@@ -11,9 +11,11 @@ from datetime import datetime, timezone
 import json
 import logging
 import math
+import time
 from typing import Dict, List, Optional
 import urllib.request
 import urllib.error
+from urllib.parse import urlparse
 
 from PyQt6.QtCore import QObject, QThread, QTimer, pyqtSignal
 
@@ -26,6 +28,7 @@ COMMUNITY_API_ENDPOINTS = [
     PRIMARY_API_URL,
     FALLBACK_API_URL,
 ]
+_ENDPOINT_COOLDOWNS: Dict[str, float] = {}
 DEFAULT_RADIUS_NM = 50
 USER_AGENT = "MeshCore-Tray/1.0 (ADS-B Layer; OpenCommunityFeeds)"
 
@@ -179,12 +182,35 @@ class ADSBFetchWorker(QThread):
         ]
 
         def _fetch_single_feed(target_url: str) -> Optional[dict]:
+            parsed = urlparse(target_url)
+            host = parsed.netloc
+            now = time.time()
+            if host in _ENDPOINT_COOLDOWNS:
+                if now < _ENDPOINT_COOLDOWNS[host]:
+                    # In active rate-limit cooldown, skip request
+                    return None
+                else:
+                    _ENDPOINT_COOLDOWNS.pop(host, None)
+
             try:
                 req = urllib.request.Request(target_url, headers={"User-Agent": USER_AGENT})
                 with urllib.request.urlopen(req, timeout=4.5) as response:
                     if response.status == 200:
                         raw = response.read().decode("utf-8")
                         return json.loads(raw)
+            except urllib.error.HTTPError as e:
+                if e.code == 429:
+                    retry_after = e.headers.get("Retry-After") if e.headers else None
+                    cooldown = 60.0
+                    if retry_after:
+                        try:
+                            cooldown = float(retry_after)
+                        except (ValueError, TypeError):
+                            pass
+                    _ENDPOINT_COOLDOWNS[host] = now + cooldown
+                    logger.info("ADS-B community aggregator %s requested backoff (HTTP 429 Too Many Requests); cooling down for %ds", host, int(cooldown))
+                else:
+                    logger.debug("ADS-B query to %s failed: HTTP %s", target_url, e.code)
             except Exception as e:
                 logger.debug("ADS-B query to %s failed: %s", target_url, e)
             return None
@@ -324,6 +350,7 @@ class ADSBService(QObject):
     flights_updated = pyqtSignal(dict)
     loading_signal = pyqtSignal(bool)
     error_signal = pyqtSignal(str)
+    photo_received = pyqtSignal(str, dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -335,6 +362,11 @@ class ADSBService(QObject):
         self.target_alias: str = "Local Node"
 
         self._active_worker: Optional[ADSBFetchWorker] = None
+        self._retired_workers: List[QThread] = []
+        self._query_generation: int = 0
+        self._photo_cache: Dict[str, dict] = {}
+        self._negative_photo_cache: Dict[str, float] = {}
+        self._photo_workers: Dict[str, AircraftPhotoWorker] = {}
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(5000)  # 5s refresh to match 5s radar sweep
         self._poll_timer.timeout.connect(self._on_poll_timer)
@@ -357,9 +389,15 @@ class ADSBService(QObject):
         self.target_lat = float(lat)
         self.target_lon = float(lon)
         self.radius_nm = max(10, min(int(radius_nm), 250))
+        self._query_generation += 1
 
         if self.enabled:
-            self.refresh()
+            if self._active_worker is not None and self._active_worker.isRunning():
+                # Worker is already in flight. Queue pending refresh so when it finishes,
+                # the new target query starts immediately without thread-unsafe disconnect().
+                self._pending_refresh = True
+            else:
+                self.refresh()
 
     def set_target_from_local_or_default(self, lat: Optional[float], lon: Optional[float], alias: str = "Local Node"):
         """Set target to local radio node or fallback coordinates."""
@@ -372,18 +410,35 @@ class ADSBService(QObject):
             # Fallback UK center if zero GPS available
             self.target_lat = 54.5
             self.target_lon = -3.5
+        self._query_generation += 1
 
         if self.enabled:
-            self.refresh()
+            if self._active_worker is not None and self._active_worker.isRunning():
+                self._pending_refresh = True
+            else:
+                self.refresh()
 
     def refresh(self):
         """Trigger an immediate asynchronous query."""
         if not self.enabled or self.target_lat is None or self.target_lon is None:
             return
 
-        if self._active_worker is not None and self._active_worker.isRunning():
-            logger.debug("ADS-B worker already running, skipping overlapping request")
-            return
+        if self._active_worker is not None:
+            if self._active_worker.isRunning():
+                logger.debug("ADS-B worker already running, skipping overlapping request")
+                return
+            else:
+                try:
+                    self._active_worker.wait(50)
+                except Exception:
+                    pass
+                self._retired_workers.append(self._active_worker)
+                self._active_worker = None
+
+        self._clean_retired_workers()
+
+        self._query_generation += 1
+        current_gen = self._query_generation
 
         target_info = {
             "node_id": self.target_node_id,
@@ -391,6 +446,7 @@ class ADSBService(QObject):
             "lat": self.target_lat,
             "lon": self.target_lon,
             "radius_nm": self.radius_nm,
+            "generation": current_gen,
         }
 
         self.loading_signal.emit(True)
@@ -399,7 +455,7 @@ class ADSBService(QObject):
             lon=self.target_lon,
             radius_nm=self.radius_nm,
             target_info=target_info,
-            parent=self
+            parent=None
         )
         self._active_worker.success_signal.connect(self._on_worker_success)
         self._active_worker.error_signal.connect(self._on_worker_error)
@@ -412,11 +468,182 @@ class ADSBService(QObject):
 
     def _on_worker_success(self, payload: dict):
         self.loading_signal.emit(False)
+        ti = payload.get("target_info", {})
+        payload_gen = ti.get("generation", 0)
+        # Verify response matches current target generation and target coordinates
+        if payload_gen and payload_gen != self._query_generation:
+            logger.debug("Discarding stale ADS-B payload (generation %s != %s)", payload_gen, self._query_generation)
+            return
+        if self.target_lat is not None and self.target_lon is not None:
+            if abs(ti.get("lat", 0) - self.target_lat) > 0.001 or abs(ti.get("lon", 0) - self.target_lon) > 0.001:
+                logger.debug("Discarding stale ADS-B payload for previous target location")
+                return
         self.flights_updated.emit(payload)
 
     def _on_worker_error(self, err: str):
         self.loading_signal.emit(False)
+        if getattr(self, "_pending_refresh", False):
+            return
         self.error_signal.emit(err)
 
     def _on_worker_finished(self):
-        self._active_worker = None
+        worker = self._active_worker
+        if worker is not None:
+            try:
+                worker.wait(100)
+            except Exception:
+                pass
+            self._retired_workers.append(worker)
+            self._active_worker = None
+        self._clean_retired_workers()
+        if getattr(self, "_pending_refresh", False):
+            self._pending_refresh = False
+            self.refresh()
+
+    def _clean_retired_workers(self):
+        survivors = []
+        for w in self._retired_workers:
+            if w.isFinished():
+                try:
+                    w.wait(50)
+                except Exception:
+                    pass
+            else:
+                survivors.append(w)
+        self._retired_workers = survivors
+
+    def request_aircraft_photo(self, hex_code: str):
+        """Asynchronously query Planespotters / Airport-Data photo for aircraft hex."""
+        h = (hex_code or "").lower().strip()
+        if not h:
+            return
+        if h in self._photo_cache:
+            self.photo_received.emit(h, self._photo_cache[h])
+            return
+        if h in self._negative_photo_cache:
+            # 180s cooldown for empty/404 photos to prevent hammering external APIs
+            if time.time() - self._negative_photo_cache[h] < 180:
+                self.photo_received.emit(h, {})
+                return
+            else:
+                self._negative_photo_cache.pop(h, None)
+        if h in self._photo_workers and self._photo_workers[h].isRunning():
+            return
+
+        worker = AircraftPhotoWorker(h, parent=None)
+        self._photo_workers[h] = worker
+        worker.photo_ready.connect(self._on_photo_ready)
+        worker.finished.connect(lambda w=worker, h=h: self._on_photo_worker_finished(h, w))
+        worker.start()
+
+    def _on_photo_worker_finished(self, hex_code: str, worker: AircraftPhotoWorker):
+        try:
+            worker.wait(100)
+        except Exception:
+            pass
+        self._photo_workers.pop(hex_code, None)
+        self._retired_workers.append(worker)
+        self._clean_retired_workers()
+
+    def cleanup(self):
+        """Safely stops timers and waits for any running threads to terminate."""
+        self.enabled = False
+        if hasattr(self, "_poll_timer") and self._poll_timer.isActive():
+            self._poll_timer.stop()
+        if self._active_worker is not None:
+            if self._active_worker.isRunning():
+                self._active_worker.wait(1000)
+            self._active_worker = None
+        for h, w in list(self._photo_workers.items()):
+            if w.isRunning():
+                w.wait(1000)
+        self._photo_workers.clear()
+        for w in list(self._retired_workers):
+            if w.isRunning():
+                w.wait(1000)
+        self._retired_workers.clear()
+
+    def __del__(self):
+        try:
+            self.cleanup()
+        except Exception:
+            pass
+
+    def _on_photo_ready(self, hex_code: str, photo_info: dict):
+        if photo_info and photo_info.get("thumbnail"):
+            self._photo_cache[hex_code] = photo_info
+            self._negative_photo_cache.pop(hex_code, None)
+        else:
+            self._negative_photo_cache[hex_code] = time.time()
+        self.photo_received.emit(hex_code, photo_info or {})
+
+
+class AircraftPhotoWorker(QThread):
+    """Background worker to query Planespotters.net or Airport-Data.com API for aircraft imagery."""
+
+    photo_ready = pyqtSignal(str, dict)
+
+    def __init__(self, hex_code: str, parent=None):
+        super().__init__(parent)
+        self.hex_code = hex_code.lower().strip()
+
+    def run(self):
+        photo_info = {}
+
+        # 1. Try Planespotters.net first (high-quality airline photos)
+        try:
+            url = f"https://api.planespotters.net/pub/photos/hex/{self.hex_code}"
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": "MeshCore-Navigator/0.1.0 (+https://github.com/SoulwayStudios/meshcore-navigator)"}
+            )
+            with urllib.request.urlopen(req, timeout=3.5) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                photos = data.get("photos", [])
+                if photos:
+                    p = photos[0]
+                    thumb = (p.get("thumbnail_large") or {}).get("src") or (p.get("thumbnail") or {}).get("src") or ""
+                    if thumb:
+                        photographer = p.get("photographer") or "Planespotters"
+                        link = p.get("link") or f"https://www.planespotters.net/hex/{self.hex_code}"
+                        ac_type = p.get("aircraft_type") or ""
+                        airline = (p.get("airline") or {}).get("name") or ""
+                        photo_info = {
+                            "thumbnail": thumb,
+                            "photographer": photographer,
+                            "link": link,
+                            "aircraft_type": ac_type,
+                            "airline": airline,
+                            "source": "Planespotters.net",
+                            "source_label": "Planespotters ↗",
+                        }
+        except Exception as e:
+            logger.debug(f"Planespotters photo lookup failed for hex {self.hex_code}: {e}")
+
+        # 2. Fallback to Airport-Data.com (covers general aviation, turboprops, helicopters, private aircraft)
+        if not photo_info or not photo_info.get("thumbnail"):
+            try:
+                ap_url = f"https://airport-data.com/api/ac_thumb.json?m={self.hex_code}&n=1"
+                ap_req = urllib.request.Request(
+                    ap_url,
+                    headers={"User-Agent": "MeshCore-Navigator/0.1.0 (+https://github.com/SoulwayStudios/meshcore-navigator)"}
+                )
+                with urllib.request.urlopen(ap_req, timeout=3.5) as ap_resp:
+                    ap_data = json.loads(ap_resp.read().decode("utf-8"))
+                    if ap_data.get("status") == 200 and ap_data.get("data"):
+                        item = ap_data["data"][0]
+                        img_url = item.get("image") or ""
+                        if img_url:
+                            photographer = item.get("photographer") or "Airport-Data"
+                            link = item.get("link") or f"https://airport-data.com/aircraft/photo/{img_url.split('/')[-1].replace('.jpg', '')}"
+                            photo_info = {
+                                "thumbnail": img_url,
+                                "photographer": photographer,
+                                "link": link,
+                                "source": "Airport-Data.com",
+                                "source_label": "Airport-Data ↗",
+                            }
+            except Exception as e:
+                logger.debug(f"Airport-Data photo lookup failed for hex {self.hex_code}: {e}")
+
+        self.photo_ready.emit(self.hex_code, photo_info or {})

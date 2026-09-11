@@ -125,6 +125,8 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: release-artifacts
@@ -136,7 +138,8 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          body_path: RELEASE_NOTES.md
           files: |
             release-artifacts/meshcore-navigator-linux/*.tar.gz
             release-artifacts/meshcore-navigator-windows-x64/*.zip
-          generate_release_notes: true
+

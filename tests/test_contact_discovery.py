@@ -19,7 +19,7 @@ from meshcore_tray.ui.contact_dialog import (
 def qapp():
     app = QApplication.instance()
     if app is None:
-        app = QApplication([])
+        app = QApplication(["meshcore-test"])
     return app
 
 

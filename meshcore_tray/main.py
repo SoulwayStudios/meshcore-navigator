@@ -18,11 +18,8 @@ from meshcore_tray.storage import Storage
 from meshcore_tray.ui.main_window import MainWindow
 from meshcore_tray.ui.styles import DARK_THEME_QSS
 from meshcore_tray.ui.tray import SystemTray
+from meshcore_tray.logger import setup_app_logging, get_log_file_path
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-)
 logger = logging.getLogger("meshcore_tray.main")
 
 
@@ -106,8 +103,14 @@ def main():
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     args = parser.parse_args()
 
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
+    setup_app_logging(debug=args.debug)
+
+    import os
+    if "QTWEBENGINE_CHROMIUM_FLAGS" not in os.environ:
+        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--no-sandbox"
+
+    from PyQt6.QtCore import Qt, QCoreApplication
+    QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
 
     app = QApplication(sys.argv)
     app.setApplicationName("MESHCORE NAVIGATOR")

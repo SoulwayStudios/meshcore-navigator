@@ -55,8 +55,12 @@ class MainWindow(QMainWindow):
         icon_path = Path(__file__).parent / "static" / "icon.png"
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
-        self.resize(1380, 800)
+        win_w = getattr(self.config, "window_width", 1380) or 1380
+        win_h = getattr(self.config, "window_height", 800) or 800
+        self.resize(win_w, win_h)
         self.setMinimumSize(960, 560)
+        if getattr(self.config, "window_maximized", False):
+            self.showMaximized()
 
         self._init_ui()
         self._on_channel_selected(self.current_channel)
@@ -290,6 +294,8 @@ class MainWindow(QMainWindow):
             self.mesh_map.set_activity_heatmap(is_active)
         elif layer_key == "thunderstorm":
             self.mesh_map.set_thunderstorm(is_active)
+        elif layer_key == "rf_los":
+            self.mesh_map.set_los_view_active(is_active)
         elif layer_key == "age_fade":
             if self.config and hasattr(self.config, "meshcore"):
                 self.config.meshcore.node_freshness_fading = is_active
@@ -707,6 +713,14 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Creates a safety database backup on window close."""
+        try:
+            self.config.window_maximized = self.isMaximized()
+            if not self.isMaximized():
+                self.config.window_width = self.width()
+                self.config.window_height = self.height()
+            self.config.save()
+        except Exception as e:
+            logger.debug(f"Failed to persist window state on close: {e}")
         if hasattr(self, "storage") and self.storage:
             try:
                 self.storage.backup_database(reason="window_close")
