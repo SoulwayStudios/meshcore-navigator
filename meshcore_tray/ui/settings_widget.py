@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
     QSlider, QCheckBox, QPushButton, QListWidget, QListWidgetItem,
     QColorDialog, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox
 )
+from meshcore_tray import __version__
 from meshcore_tray.config import AppConfig
 from meshcore_tray.core.event_bus import bus, EventType
 from meshcore_tray.drivers.meshcore_driver import MeshCoreDriver
@@ -1541,7 +1542,7 @@ class SettingsWidget(QWidget):
         lbl_app.setStyleSheet("font-size: 20px; font-weight: 800; color: #38BDF8; margin-top: 4px;")
         card_about.add_widget(lbl_app)
 
-        lbl_ver = QLabel("Version 1.0.0 • Production Release")
+        lbl_ver = QLabel(f"Version {__version__} • Early Alpha")
         lbl_ver.setStyleSheet("font-size: 13px; font-weight: 600; color: #94A3B8; margin-bottom: 6px;")
         card_about.add_widget(lbl_ver)
 

@@ -10,6 +10,15 @@
 
 ---
 
+> ### ⚠️ Early Development Notice
+> **MESHCORE NAVIGATOR is very early in development. This app will have bugs and problems.**  
+> This app is developed with AI assistance by a professional working designer.  
+> 
+> If you like what you see so far, and want to help the development of this app, how about **[buying me a coffee](https://buymeacoffee.com/m7ncy)**?  
+> Feel free to give feedback and report any issues or suggestions on the [GitHub Issues](https://github.com/SoulwayStudios/meshcore-navigator/issues) page!
+
+---
+
 ## 📖 Table of Contents
 - [✨ Key Features](#-key-features)
 - [📥 Installation & Quick Start](#-installation--quick-start)
@@ -66,10 +75,10 @@ chmod +x install.sh
 `install.sh` configures a Python virtual environment, installs dependencies, and creates a desktop menu shortcut with high-resolution app icon. You can then launch **MESHCORE NAVIGATOR** directly from your application launcher or by typing `meshcore-navigator`.
 
 ### Linux (Portable Tarball)
-Download `meshcore-navigator-v1.0.0-linux.tar.gz` from GitHub Releases:
+Download `meshcore-navigator-v0.0.2-linux.tar.gz` from GitHub Releases:
 ```bash
-tar -xzf meshcore-navigator-v1.0.0-linux.tar.gz
-cd meshcore-navigator-v1.0.0-linux
+tar -xzf meshcore-navigator-v0.0.2-linux.tar.gz
+cd meshcore-navigator-v0.0.2-linux
 ./run.sh
 ```
 

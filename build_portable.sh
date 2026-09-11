@@ -4,7 +4,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-VERSION="1.0.0"
+VERSION=$(python3 -c "import meshcore_tray; print(meshcore_tray.__version__)" 2>/dev/null || echo "0.0.2")
 DIST_NAME="meshcore-navigator-v${VERSION}-linux"
 BUILD_DIR="$SCRIPT_DIR/build/$DIST_NAME"
 

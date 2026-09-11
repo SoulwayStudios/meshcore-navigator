@@ -97,7 +97,7 @@ class SplashOverlay(QWidget):
         card_layout.addWidget(title_lbl)
 
         # Version Pill Badge
-        ver_lbl = QLabel(f"v{__version__} • Production Station")
+        ver_lbl = QLabel(f"v{__version__} • Early Alpha")
         ver_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         ver_lbl.setStyleSheet("font-size: 11px; font-weight: 700; color: #38BDF8; letter-spacing: 1px;")
         card_layout.addWidget(ver_lbl)
