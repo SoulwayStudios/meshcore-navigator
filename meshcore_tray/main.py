@@ -30,7 +30,9 @@ async def async_main(args, storage_holder: dict):
     storage_holder["storage"] = storage
 
     # Run startup verification & auto-sanitization
-    sanitize_report = storage.verify_and_sanitize_database()
+    h_lat = getattr(config.meshcore, "latitude", None)
+    h_lon = getattr(config.meshcore, "longitude", None)
+    sanitize_report = storage.verify_and_sanitize_database(home_lat=h_lat, home_lon=h_lon)
     if (
         sanitize_report.get("corrupt_coords_cleared", 0) > 0
         or sanitize_report.get("phantom_nodes_removed", 0) > 0

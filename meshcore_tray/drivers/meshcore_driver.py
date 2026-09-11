@@ -13,7 +13,7 @@ import meshcore
 from meshcore.events import Event, EventType as McEventType
 from meshcore_tray.core.models import (
     ChannelInfo, MessageEnvelope, NeighbourInfo, NodeContact, TelemetryEnvelope, PacketPathInfo, DockedCompanionInfo,
-    is_valid_alias, is_valid_node_id, is_valid_coordinate
+    is_valid_alias, is_valid_node_id, is_valid_coordinate, is_plausible_rf_coordinate
 )
 from meshcore_tray.core.event_bus import bus, EventType
 from meshcore_tray.drivers.base_driver import BaseRadioDriver
@@ -1232,9 +1232,19 @@ class MeshCoreDriver(BaseRadioDriver):
 
             lat_raw = raw.get("adv_lat") or raw.get("latitude") or (c.get("adv_lat") or c.get("latitude") if c else None)
             lon_raw = raw.get("adv_lon") or raw.get("longitude") or (c.get("adv_lon") or c.get("longitude") if c else None)
-            if is_valid_coordinate(lat_raw, lon_raw):
+            home_lat, home_lon = 54.65897, -3.4346
+            if self.config and hasattr(self.config, "meshcore"):
+                if self.config.meshcore.latitude is not None:
+                    home_lat = float(self.config.meshcore.latitude)
+                if self.config.meshcore.longitude is not None:
+                    home_lon = float(self.config.meshcore.longitude)
+
+            if is_plausible_rf_coordinate(lat_raw, lon_raw, ref_lat=home_lat, ref_lon=home_lon, max_distance_km=2000.0):
                 lat = float(lat_raw)
                 lon = float(lon_raw)
+            else:
+                if lat_raw is not None and lon_raw is not None:
+                    logger.warning(f"Rejecting implausible RF coordinates ({lat_raw}, {lon_raw}) for node {alias} ({pubkey[:12]})")
 
             # Protect existing coordinates if any
             c_exist = self.storage.get_contact(pubkey[:12]) if self.storage else None
@@ -1418,9 +1428,21 @@ class MeshCoreDriver(BaseRadioDriver):
                                             break
                                 if not is_corrupt_phantom:
                                     lat, lon = None, None
-                                    if is_valid_coordinate(adv_lat, adv_lon):
-                                        lat = float(adv_lat)
-                                        lon = float(adv_lon)
+                                    if adv_lat is not None and adv_lon is not None:
+                                        h_lat, h_lon = 54.65897, -3.4346
+                                        if self.config and hasattr(self.config, "meshcore"):
+                                            if self.config.meshcore.latitude is not None:
+                                                h_lat = float(self.config.meshcore.latitude)
+                                            if self.config.meshcore.longitude is not None:
+                                                h_lon = float(self.config.meshcore.longitude)
+                                        if is_plausible_rf_coordinate(adv_lat, adv_lon, ref_lat=h_lat, ref_lon=h_lon, max_distance_km=2000.0):
+                                            lat = float(adv_lat)
+                                            lon = float(adv_lon)
+                                        else:
+                                            logger.warning(
+                                                f"Rejecting implausible/corrupt over-the-air GPS coordinates ({adv_lat}, {adv_lon}) "
+                                                f"for node {alias or adv_key} (exceeds physical RF reach of station)"
+                                            )
 
                                     if self.storage:
                                         fav = existing.is_favorite if existing else bool(self.config and self.config.is_user_favorite(node_id, alias))
@@ -1444,9 +1466,21 @@ class MeshCoreDriver(BaseRadioDriver):
                                         bus.emit(EventType.NODE_DISCOVERED, contact)
                         else:
                             lat, lon = None, None
-                            if is_valid_coordinate(adv_lat, adv_lon):
-                                lat = float(adv_lat)
-                                lon = float(adv_lon)
+                            if adv_lat is not None and adv_lon is not None:
+                                h_lat, h_lon = 54.65897, -3.4346
+                                if self.config and hasattr(self.config, "meshcore"):
+                                    if self.config.meshcore.latitude is not None:
+                                        h_lat = float(self.config.meshcore.latitude)
+                                    if self.config.meshcore.longitude is not None:
+                                        h_lon = float(self.config.meshcore.longitude)
+                                if is_plausible_rf_coordinate(adv_lat, adv_lon, ref_lat=h_lat, ref_lon=h_lon, max_distance_km=2000.0):
+                                    lat = float(adv_lat)
+                                    lon = float(adv_lon)
+                                else:
+                                    logger.warning(
+                                        f"Rejecting implausible/corrupt over-the-air GPS coordinates ({adv_lat}, {adv_lon}) "
+                                        f"for node {alias or adv_key} (exceeds physical RF reach of station)"
+                                    )
 
                             if self.storage:
                                 fav = existing.is_favorite if existing else bool(self.config and self.config.is_user_favorite(node_id, alias))

@@ -10,7 +10,7 @@ import sqlite3
 from typing import Dict, List, Optional, Union
 from meshcore_tray.core.models import (
     ChannelInfo, MessageEnvelope, NeighbourInfo, NodeContact, TelemetryEnvelope, PacketPathInfo, DockedCompanionInfo,
-    is_valid_alias, is_valid_node_id, is_valid_coordinate
+    is_valid_alias, is_valid_node_id, is_valid_coordinate, calculate_haversine_distance_km, is_plausible_rf_coordinate
 )
 from meshcore_tray.core.event_bus import bus, EventType
 
@@ -380,9 +380,14 @@ class Storage:
             logger.error(f"Failed to backup database: {e}", exc_info=True)
             return None
 
-    def verify_and_sanitize_database(self) -> dict:
+    def verify_and_sanitize_database(
+        self,
+        home_lat: Optional[float] = None,
+        home_lon: Optional[float] = None,
+        max_rf_distance_km: float = 2000.0
+    ) -> dict:
         """Verifies database health on startup, performs PRAGMA integrity check,
-        sanitizes ocean/Null Island coordinates, fixes future timestamps,
+        sanitizes ocean/Null Island and implausible remote coordinates, fixes future timestamps,
         and purges corrupt phantom nodes (e.g. framing-shifted public keys)."""
         report = {
             "integrity_ok": False,
@@ -433,6 +438,42 @@ class Storage:
                       AND (abs(latitude) < 1.0 OR latitude < -85.0 OR latitude > 85.0)
                 """)
                 report["corrupt_coords_cleared"] = len(bad_coords)
+
+            # 2b. Sanitize physically impossible RF coordinates (> max_rf_distance_km from home/reference station)
+            ref_lat, ref_lon = home_lat, home_lon
+            if ref_lat is None or ref_lon is None:
+                cursor.execute("SELECT latitude, longitude FROM contacts WHERE is_repeater = 1 AND latitude IS NOT NULL AND longitude IS NOT NULL")
+                rep_coords = cursor.fetchall()
+                if rep_coords:
+                    lats = sorted([r["latitude"] for r in rep_coords])
+                    lons = sorted([r["longitude"] for r in rep_coords])
+                    ref_lat = lats[len(lats) // 2]
+                    ref_lon = lons[len(lons) // 2]
+                else:
+                    ref_lat, ref_lon = 54.65897, -3.4346
+
+            cursor.execute("SELECT node_id, alias, latitude, longitude FROM contacts WHERE latitude IS NOT NULL AND longitude IS NOT NULL")
+            all_known_coords = cursor.fetchall()
+            impossible_nodes = []
+            for c in all_known_coords:
+                try:
+                    d = calculate_haversine_distance_km(float(ref_lat), float(ref_lon), float(c["latitude"]), float(c["longitude"]))
+                    if d > max_rf_distance_km:
+                        impossible_nodes.append((c, d))
+                except Exception:
+                    pass
+
+            if impossible_nodes:
+                if not report["backup_created"]:
+                    report["backup_created"] = str(self.backup_database("pre_sanitize") or "")
+                for c_bad, dist_val in impossible_nodes:
+                    logger.warning(
+                        f"Sanitizing implausible remote RF coordinates ({c_bad['latitude']:.4f}, {c_bad['longitude']:.4f}) "
+                        f"({dist_val:.0f}km from station > {max_rf_distance_km:.0f}km) for contact {c_bad['alias']} ({c_bad['node_id']})"
+                    )
+                    cursor.execute("UPDATE contacts SET latitude = NULL, longitude = NULL WHERE node_id = ?", (c_bad["node_id"],))
+                    cursor.execute("UPDATE neighbours SET latitude = NULL, longitude = NULL WHERE node_id = ?", (c_bad["node_id"],))
+                report["corrupt_coords_cleared"] += len(impossible_nodes)
 
             # 3. Future timestamps fix (> 24 hours from current UTC time)
             now_utc = datetime.now(timezone.utc)

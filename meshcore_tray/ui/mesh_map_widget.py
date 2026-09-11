@@ -44,7 +44,7 @@ else:
         pass
 
 from meshcore_tray.core.event_bus import bus, EventType
-from meshcore_tray.core.models import MessageEnvelope, NodeContact, PacketPathInfo, is_valid_coordinate
+from meshcore_tray.core.models import MessageEnvelope, NodeContact, PacketPathInfo, is_valid_coordinate, is_plausible_rf_coordinate
 from meshcore_tray.core.tropo_service import TropoForecastService
 from meshcore_tray.core.adsb_service import ADSBService
 from meshcore_tray.core.thunderstorm_service import ThunderstormService
@@ -7762,7 +7762,13 @@ class MeshMapWidget(QWidget):
         if not self.storage:
             return
 
-        contacts = [c for c in self.storage.get_nodes_with_coordinates() if is_valid_coordinate(c.latitude, c.longitude)]
+        local_coord = self._get_local_coordinates()
+        ref_lat, ref_lon = local_coord[0], local_coord[1]
+        contacts = [
+            c for c in self.storage.get_nodes_with_coordinates()
+            if is_plausible_rf_coordinate(c.latitude, c.longitude, ref_lat=ref_lat, ref_lon=ref_lon, max_distance_km=2500.0)
+            and not (self.storage and self.storage.is_phantom_node(c.node_id, c.alias))
+        ]
         if self.node_filter_mode == "CLIENTS":
             contacts = [c for c in contacts if not c.is_repeater and "[rep]" not in (c.alias or "").lower() and "[room]" not in (c.alias or "").lower() and "[server]" not in (c.alias or "").lower()]
         elif self.node_filter_mode == "REPEATERS" or self.show_repeaters_only:

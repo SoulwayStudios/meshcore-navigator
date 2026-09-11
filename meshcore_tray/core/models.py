@@ -144,6 +144,33 @@ def is_valid_coordinate(lat: Optional[Union[float, int, str]], lon: Optional[Uni
     return True
 
 
+def calculate_haversine_distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Calculates great-circle distance in km between two GPS coordinates."""
+    import math
+    r = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2.0) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2.0) ** 2
+    return r * 2.0 * math.atan2(math.sqrt(a), math.sqrt(max(0.0, 1.0 - a)))
+
+
+def is_plausible_rf_coordinate(
+    lat: Optional[Union[float, int, str]],
+    lon: Optional[Union[float, int, str]],
+    ref_lat: Optional[float] = None,
+    ref_lon: Optional[float] = None,
+    max_distance_km: float = 2000.0,
+) -> bool:
+    """Validates that a coordinate is structurally valid and within plausible physical RF range of reference station."""
+    if not is_valid_coordinate(lat, lon):
+        return False
+    if ref_lat is not None and ref_lon is not None and is_valid_coordinate(ref_lat, ref_lon):
+        dist = calculate_haversine_distance_km(float(ref_lat), float(ref_lon), float(lat), float(lon))
+        if dist > max_distance_km:
+            return False
+    return True
+
+
 
 @dataclass
 class NodeContact:
