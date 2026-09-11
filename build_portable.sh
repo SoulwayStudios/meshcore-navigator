@@ -15,7 +15,7 @@ mkdir -p "$BUILD_DIR" "$SCRIPT_DIR/dist"
 # Copy essential files
 cp -r meshcore_tray "$BUILD_DIR/"
 cp -r vendor "$BUILD_DIR/"
-cp pyproject.toml README.md run.sh install.sh meshcore-navigator.desktop "$BUILD_DIR/"
+cp pyproject.toml README.md LICENSE CHANGELOG.md run.sh install.sh meshcore-navigator.desktop "$BUILD_DIR/"
 
 # Remove any __pycache__ or temporary caches
 find "$BUILD_DIR" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true

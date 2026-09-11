@@ -7,6 +7,17 @@ and this project follows semantic versioning with automated build increments:
 - **Patch (+0.0.1)**: Routine bug fixes, UI adjustments, maintenance, and regular GitHub commits.
 - **Minor (+0.1.0)**: Substantial new features and architectural additions.
 
+## [0.0.5] - 2026-09-11
+
+### Added
+- **GPL-3.0 Open-Source License**:
+  - Adopted the GNU General Public License v3.0 (GPL-3.0-or-later) with root `LICENSE` file and updated project metadata in `pyproject.toml`, `README.md`, and Settings About dialog.
+- **Multi-Platform Automated Releases**:
+  - Configured automated GitHub Releases delivering portable Linux archives (`.tar.gz`) and Windows standalone x64 binaries (`.zip` containing `MESHCORE-NAVIGATOR.exe`).
+  - Created native multi-resolution Windows application icon resource (`icon.ico`).
+- **Self-Contained Dependency Architecture**:
+  - Bundled vendor components directly into the repository, resolving remote git submodule checkout failures on automated CI runners.
+
 ---
 
 ## [0.0.4] - 2026-09-11

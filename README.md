@@ -3,7 +3,7 @@
 > **The modern desktop station, interactive RF mesh map, multi-hop packet tracer, and LED matrix engine for MeshCore & Heltec V3 LoRa radios.**  
 > **Created by Nicky Proniewicz - M7NCY**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Python: 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
 [![Platform: Linux | Windows](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-brightgreen.svg)]()
 [![Buy Me A Coffee](https://img.shields.io/badge/Support-Buy%20Me%20a%20Coffee-ffdd00.svg?logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/soulwaystudios)
@@ -75,10 +75,10 @@ chmod +x install.sh
 `install.sh` configures a Python virtual environment, installs dependencies, and creates a desktop menu shortcut with high-resolution app icon. You can then launch **MESHCORE NAVIGATOR** directly from your application launcher or by typing `meshcore-navigator`.
 
 ### Linux (Portable Tarball)
-Download `meshcore-navigator-v0.0.4-linux.tar.gz` from GitHub Releases:
+Download `meshcore-navigator-v0.0.5-linux.tar.gz` from GitHub Releases:
 ```bash
-tar -xzf meshcore-navigator-v0.0.4-linux.tar.gz
-cd meshcore-navigator-v0.0.4-linux
+tar -xzf meshcore-navigator-v0.0.5-linux.tar.gz
+cd meshcore-navigator-v0.0.5-linux
 ./run.sh
 ```
 
@@ -171,6 +171,12 @@ MESHCORE NAVIGATOR features an integrated HTTP JSON REST bridge listening on `ht
 - `GET /api/v1/status`: Radio status, current node alias, and statistics.
 - `GET /api/v1/messages?channel=public`: Retrieve channel messages.
 - `POST /api/v1/messages`: Dispatch messages programmatically from external scripts, RTL-SDR bridges, or APRS gateways.
+
+---
+
+## 📄 License
+
+MESHCORE NAVIGATOR is free and open-source software licensed under the **[GNU General Public License v3.0 (GPL-3.0-or-later)](LICENSE)**.
 
 ---
 

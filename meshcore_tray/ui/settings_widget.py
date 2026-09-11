@@ -1556,8 +1556,12 @@ class SettingsWidget(QWidget):
         card_about.add_widget(lbl_desc)
 
         lbl_author = QLabel("App by Nicky Proniewicz - M7NCY")
-        lbl_author.setStyleSheet("font-size: 14px; font-weight: 700; color: #FBBF24; margin-bottom: 12px;")
+        lbl_author.setStyleSheet("font-size: 14px; font-weight: 700; color: #FBBF24; margin-bottom: 4px;")
         card_about.add_widget(lbl_author)
+
+        lbl_license = QLabel("Free & Open Source Software under GNU General Public License v3.0 (GPL-3.0)")
+        lbl_license.setStyleSheet("font-size: 12px; font-weight: 600; color: #10B981; margin-bottom: 12px;")
+        card_about.add_widget(lbl_license)
 
         coffee_row = QHBoxLayout()
         btn_coffee_large = QPushButton("☕ Buy Me a Coffee")

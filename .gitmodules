@@ -1,7 +1,0 @@
-[submodule "vendor/meshcore_py"]
-	path = vendor/meshcore_py
-	url = https://github.com/meshcore-dev/meshcore_py.git
-
-[submodule "vendor/pixoo"]
-	path = vendor/pixoo
-	url = https://github.com/SomethingWithComputers/pixoo.git

@@ -4,9 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "meshcore-navigator"
-version = "0.0.4"
+version = "0.0.5"
 description = "MESHCORE NAVIGATOR - MeshCore Desktop Station, Live Map & Matrix Integration"
 readme = "README.md"
+license = { text = "GPL-3.0-or-later" }
+classifiers = [
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+]
 requires-python = ">=3.10"
 authors = [
     { name = "Nicky Proniewicz - M7NCY" }
