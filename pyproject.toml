@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "meshcore-navigator"
-version = "0.2.5"
+version = "0.2.6"
 description = "MESHCORE NAVIGATOR - MeshCore Desktop Station, Live Map & Matrix Integration"
 readme = "README.md"
 license = { text = "GPL-3.0-or-later" }
@@ -19,6 +19,7 @@ authors = [
 ]
 dependencies = [
     "PyQt6>=6.5.0",
+    "PyQt6-WebEngine>=6.5.0",
     "qasync>=0.27.0",
     "pyserial>=3.5",
     "pillow>=10.0.0",

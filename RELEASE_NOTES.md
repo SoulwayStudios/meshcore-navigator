@@ -4,6 +4,12 @@
 
 ---
 
+## 🛠️ Arch Linux / CachyOS Installer Fix (v0.2.6)
+- **Vendored Package Resolution**: Fixed `install.sh` to install local vendored packages (`vendor/pixoo` and `vendor/meshcore_py`) prior to installing the main project. This prevents pip from pulling unpatched `pixoo` from PyPI, which locked `pillow~=10.4.0` and failed to build C-extension wheels on modern Python versions (3.13 / 3.14).
+- **Dependency Completeness**: Added `PyQt6-WebEngine>=6.5.0` to `pyproject.toml`.
+- **System Site Packages**: Added `--system-site-packages` fallback to virtual environment setup to allow fast reuse of distro-installed Qt6 and Pillow libraries.
+
+
 ## ✈️ Real-Time ADS-B Air Traffic Radar (Experimental)
 - **Live Flight Radar Overlay**: Tracks civilian, commercial, and military aircraft in real time around your station home or any arbitrary map coordinate.
 - **Dynamic Color Schemes**:

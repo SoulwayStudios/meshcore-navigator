@@ -67,18 +67,25 @@
 
 Clone the repository and run the automated installer:
 ```bash
-git clone --recursive https://github.com/SoulwayStudios/meshcore-navigator.git
+git clone https://github.com/SoulwayStudios/meshcore-navigator.git
 cd meshcore-navigator
 chmod +x install.sh
 ./install.sh
 ```
-`install.sh` configures a Python virtual environment, installs dependencies, and creates a desktop menu shortcut with high-resolution app icon. You can then launch **MESHCORE NAVIGATOR** directly from your application launcher or by typing `meshcore-navigator`.
+`install.sh` configures a Python virtual environment, installs the vendored libraries and dependencies, and creates a desktop menu shortcut with high-resolution app icon. You can then launch **MESHCORE NAVIGATOR** directly from your application launcher or by typing `meshcore-navigator`.
+
+> [!TIP]
+> **Arch Linux / CachyOS Users**:
+> If you are on Arch Linux or CachyOS, you can optionally install system Qt6 and imaging libraries via pacman for maximum speed:
+> ```bash
+> sudo pacman -S python-pyqt6 python-pyqt6-webengine python-pillow python-requests python-pyserial python-qasync
+> ```
 
 ### Linux (Portable Tarball)
-Download `meshcore-navigator-v0.0.7-linux.tar.gz` from GitHub Releases:
+Download `meshcore-navigator-v0.2.5-linux.tar.gz` from [GitHub Releases](https://github.com/SoulwayStudios/meshcore-navigator/releases):
 ```bash
-tar -xzf meshcore-navigator-v0.0.7-linux.tar.gz
-cd meshcore-navigator-v0.0.7-linux
+tar -xzf meshcore-navigator-v0.2.5-linux.tar.gz
+cd meshcore-navigator-v0.2.5-linux
 ./run.sh
 ```
 
@@ -90,9 +97,11 @@ cd meshcore-navigator-v0.0.7-linux
 ### Running from Source
 Ensure Python 3.10+ is installed:
 ```bash
-python3 -m venv venv
+python3 -m venv --system-site-packages venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install --upgrade pip
+pip install -e ./vendor/pixoo
+pip install -e ./vendor/meshcore_py
 pip install -e .
 python3 -m meshcore_tray.main
 ```

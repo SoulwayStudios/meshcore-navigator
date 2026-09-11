@@ -25,7 +25,7 @@ echo "✓ Found Python $PY_VER"
 # 2. Set up virtual environment
 if [ ! -d "$SCRIPT_DIR/venv" ]; then
     echo "Creating virtual environment in $SCRIPT_DIR/venv..."
-    $PYTHON_CMD -m venv "$SCRIPT_DIR/venv"
+    $PYTHON_CMD -m venv --system-site-packages "$SCRIPT_DIR/venv" 2>/dev/null || $PYTHON_CMD -m venv "$SCRIPT_DIR/venv"
 fi
 
 source "$SCRIPT_DIR/venv/bin/activate"
@@ -33,6 +33,9 @@ source "$SCRIPT_DIR/venv/bin/activate"
 # 3. Upgrade pip and install package
 echo "Installing dependencies..."
 pip install --upgrade pip
+# Install local vendored packages first to avoid upstream PyPI packages forcing obsolete builds
+pip install -e "$SCRIPT_DIR/vendor/pixoo"
+pip install -e "$SCRIPT_DIR/vendor/meshcore_py"
 pip install -e .
 
 # 4. Install Desktop Launcher binary to ~/.local/bin

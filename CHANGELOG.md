@@ -7,6 +7,15 @@ and this project follows semantic versioning with automated build increments:
 - **Patch (+0.0.1)**: Routine bug fixes, UI adjustments, maintenance, and regular GitHub commits.
 - **Minor (+0.1.0)**: Substantial new features and architectural additions.
 
+## [0.2.6] - 2026-09-11
+
+### Fixed & Enhanced
+- **Arch Linux / CachyOS Installer & Wheel Build Resolution**:
+  - Updated `install.sh` to install local vendored packages (`./vendor/pixoo` and `./vendor/meshcore_py`) before building the root package, preventing PyPI from pulling unpatched `pixoo` which locked `pillow~=10.4.0` and triggered failed C-extension source builds on modern Python (3.13 / 3.14).
+  - Added `PyQt6-WebEngine>=6.5.0` to `pyproject.toml` dependencies.
+  - Enabled `--system-site-packages` fallback during virtual environment creation to allow users on Arch Linux and CachyOS to optionally utilize lightning-fast pacman-managed Qt6 and Pillow libraries.
+  - Updated `README.md` documentation with clear source build steps and Arch/CachyOS package tips.
+
 ## [0.2.5] - 2026-09-11
 
 ### Fixed & Enhanced
