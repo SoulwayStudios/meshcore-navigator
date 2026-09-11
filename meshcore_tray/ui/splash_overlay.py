@@ -8,11 +8,11 @@ from PyQt6.QtWidgets import (
     QGraphicsOpacityEffect
 )
 
-from meshcore_tray import __version__, __app_name__, __author__
+from meshcore_tray import __version__, __app_name__, __author__, __coffee_url__
 
 logger = logging.getLogger("meshcore_tray.splash")
 
-COFFEE_URL = "https://buymeacoffee.com/m7ncy"
+COFFEE_URL = __coffee_url__
 
 
 class SplashOverlay(QWidget):

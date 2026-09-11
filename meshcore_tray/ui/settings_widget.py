@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QSlider, QCheckBox, QPushButton, QListWidget, QListWidgetItem,
     QColorDialog, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox
 )
-from meshcore_tray import __version__
+from meshcore_tray import __version__, __coffee_url__
 from meshcore_tray.config import AppConfig
 from meshcore_tray.core.event_bus import bus, EventType
 from meshcore_tray.drivers.meshcore_driver import MeshCoreDriver
@@ -410,7 +410,7 @@ class SettingsWidget(QWidget):
                 background-color: #E6C600;
             }
         """)
-        self.btn_coffee.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://buymeacoffee.com/m7ncy")))
+        self.btn_coffee.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(__coffee_url__)))
         btn_bar.addWidget(self.btn_coffee)
 
         self.apply_status_lbl = QLabel("")
@@ -1581,7 +1581,7 @@ class SettingsWidget(QWidget):
                 background-color: #E6C600;
             }
         """)
-        btn_coffee_large.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://buymeacoffee.com/m7ncy")))
+        btn_coffee_large.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(__coffee_url__)))
         coffee_row.addWidget(btn_coffee_large)
 
         btn_report_bug = QPushButton("🐛 Report Bug / Submit Issue")

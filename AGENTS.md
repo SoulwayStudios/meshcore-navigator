@@ -10,4 +10,4 @@
    - You can run `python3 scripts/bump_version.py` (or `--feature`).
 
 2. **Early Development Disclaimer**:
-   - Maintain the early development notice and Coffee link (`https://buymeacoffee.com/m7ncy`) in `README.md` and app About/Splash tabs.
+   - Maintain the early development notice and Coffee link (`https://buymeacoffee.com/soulwaystudios`) in `README.md` and app About/Splash tabs.
