@@ -121,6 +121,20 @@ class Storage:
                 )
             """)
 
+            # Discovered Scopes table (automatic OTA scope discoverability)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS discovered_scopes (
+                    scope_id TEXT PRIMARY KEY,
+                    display_name TEXT,
+                    color TEXT,
+                    source_type TEXT,
+                    last_heard_ts TEXT,
+                    message_count INTEGER DEFAULT 1,
+                    center_lat REAL,
+                    center_lon REAL
+                )
+            """)
+
             # Telemetry table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS telemetry (
@@ -479,6 +493,41 @@ class Storage:
                     cursor.execute("DELETE FROM docked_companions WHERE node_id = ?", (p_id,))
                 report["phantom_nodes_removed"] = len(phantoms_to_delete)
 
+            # 5. Consolidate and deduplicate channels (e.g. 'northwest' vs '#northwest')
+            cursor.execute("SELECT * FROM channels")
+            all_chans = cursor.fetchall()
+            chan_groups_map = {}
+            for ch in all_chans:
+                name = ch["name"]
+                if not name:
+                    continue
+                clean = name.strip().lstrip("#").lower()
+                key = "public" if clean == "public" else clean
+                if key not in chan_groups_map:
+                    chan_groups_map[key] = []
+                chan_groups_map[key].append(ch)
+
+            for key, dupes in chan_groups_map.items():
+                if len(dupes) > 1:
+                    master = next((c for c in dupes if (c["name"].startswith("#") or c["name"] == "Public")), dupes[0])
+                    others = [c for c in dupes if c["channel_id"] != master["channel_id"]]
+                    combined_fav = any(bool(c["is_favorite"]) for c in dupes)
+                    combined_unread = max(int(c["unread_count"] or 0) for c in dupes)
+                    combined_pixoo = any(bool(c["is_pixoo_enabled"]) for c in dupes)
+                    combined_ts = max((c["last_activity_ts"] or "") for c in dupes)
+                    canonical_name = "Public" if key == "public" else f"#{key}"
+
+                    cursor.execute("""
+                        UPDATE channels
+                        SET name = ?, is_favorite = ?, unread_count = ?, is_pixoo_enabled = ?, last_activity_ts = ?
+                        WHERE channel_id = ?
+                    """, (canonical_name, int(combined_fav), combined_unread, int(combined_pixoo), combined_ts, master["channel_id"]))
+
+                    for o in others:
+                        cursor.execute("UPDATE messages SET channel = ? WHERE channel = ?", (canonical_name, o["name"]))
+                        cursor.execute("DELETE FROM channels WHERE channel_id = ?", (o["channel_id"],))
+                        logger.info(f"Merged duplicate channel '{o['name']}' into '{canonical_name}'")
+
             conn.commit()
 
         return report
@@ -692,6 +741,16 @@ class Storage:
                 ))
             conn.commit()
 
+        # Auto-discover regional scopes from channel and message hashtags
+        try:
+            self.discover_scopes_from_text(
+                text=msg.text or "",
+                channel=msg.channel or "",
+                sender_id=msg.sender_id or ""
+            )
+        except Exception as e:
+            logger.debug(f"Scope discovery hook note: {e}")
+
     def get_messages(self, channel: Optional[str] = None, contact_id: Optional[str] = None, limit: int = 150) -> List[MessageEnvelope]:
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -857,27 +916,45 @@ class Storage:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT * FROM channels ORDER BY channel_id ASC")
-                return [
-                    ChannelInfo(
-                        channel_id=r["channel_id"],
-                        name=r["name"],
-                        is_favorite=bool(r["is_favorite"]),
-                        is_pixoo_enabled=bool(r["is_pixoo_enabled"]),
-                        last_activity_ts=r["last_activity_ts"] or "",
-                        unread_count=r["unread_count"] or 0
-                    )
-                    for r in cursor.fetchall()
-                ]
+                raw = cursor.fetchall()
+                seen = {}
+                for r in raw:
+                    name = r["name"]
+                    if not name:
+                        continue
+                    clean = name.strip().lstrip("#").lower()
+                    key = clean
+                    if key not in seen:
+                        seen[key] = ChannelInfo(
+                            channel_id=r["channel_id"],
+                            name=name,
+                            is_favorite=bool(r["is_favorite"]),
+                            is_pixoo_enabled=bool(r["is_pixoo_enabled"]),
+                            last_activity_ts=r["last_activity_ts"] or "",
+                            unread_count=r["unread_count"] or 0
+                        )
+                    else:
+                        if r["is_favorite"]:
+                            seen[key].is_favorite = True
+                        if r["unread_count"] and r["unread_count"] > seen[key].unread_count:
+                            seen[key].unread_count = r["unread_count"]
+                return list(seen.values())
         except sqlite3.OperationalError:
             return []
 
     def save_channel(self, ch: ChannelInfo):
+        clean = ch.name.strip().lstrip("#")
         with self._get_connection() as conn:
             cursor = conn.cursor()
+            cursor.execute("SELECT channel_id, name FROM channels WHERE name = ? OR name = ? OR name = ? LIMIT 1",
+                           (ch.name, f"#{clean}", clean))
+            row = cursor.fetchone()
+            cid = row["channel_id"] if row else ch.channel_id
+            name_to_use = row["name"] if row else ch.name
             cursor.execute("""
                 INSERT OR REPLACE INTO channels (channel_id, name, is_favorite, is_pixoo_enabled, last_activity_ts, unread_count)
                 VALUES (?, ?, ?, ?, ?, ?)
-            """, (ch.channel_id, ch.name, int(ch.is_favorite), int(ch.is_pixoo_enabled), ch.last_activity_ts, ch.unread_count))
+            """, (cid, name_to_use, int(ch.is_favorite), int(ch.is_pixoo_enabled), ch.last_activity_ts, ch.unread_count))
             conn.commit()
 
     def get_channel_by_name(self, name: str) -> Optional[ChannelInfo]:
@@ -1184,10 +1261,121 @@ class Storage:
                 """, (scope_name, clean_id, f"!{clean_id}", f"{clean_id}%"))
             conn.commit()
 
-    @staticmethod
-    def get_scope_definitions() -> Dict[str, Dict[str, Any]]:
-        """Returns standard scope definitions, human labels, and neon accent colors."""
-        return {
+    def discover_scopes_from_text(
+        self,
+        text: str = "",
+        channel: str = "",
+        sender_id: str = "",
+        lat: Optional[float] = None,
+        lon: Optional[float] = None
+    ) -> List[str]:
+        """Automatically discovers regional scopes from message text, hashtags, and channel names.
+        Saves new scopes to discovered_scopes table and returns list of discovered scope IDs.
+        """
+        import re
+        discovered = []
+        candidates = set()
+
+        # 1. From channel name (e.g. #gb-cum, #gb-nwk, #gb-nth, #gb-wales, #sco, #scotland, #cumbria, #northwest, #yorkshire)
+        if channel:
+            c_clean = channel.strip().lstrip("#").lower()
+            if c_clean not in ("public", "general", "test", "ops", "telemetry", "emergency", "all"):
+                if re.match(r'^(gb-[a-z0-9]+|sco-[a-z0-9]+|[a-z]{3,15})$', c_clean):
+                    candidates.add(c_clean)
+
+        # 2. From message text hashtags: e.g. #scope:gb-mid, #gb-mid, #scope:wales, [scope:xyz]
+        if text:
+            for m in re.finditer(r'(?:#scope:|\[scope:)([a-zA-Z0-9_-]+)\]?', text, re.IGNORECASE):
+                candidates.add(m.group(1).lower())
+            for m in re.finditer(r'#(gb-[a-zA-Z0-9]+|sco-[a-zA-Z0-9]+)', text, re.IGNORECASE):
+                candidates.add(m.group(1).lower())
+
+        if not candidates:
+            return []
+
+        NEON_PALETTE = [
+            "#00E5FF",  # Electric Cyan
+            "#76FF03",  # Neon Lime
+            "#D500F9",  # Vivid Violet
+            "#FF6D00",  # Neon Orange
+            "#FFD600",  # Radiant Amber
+            "#FF1744",  # Neon Red/Coral
+            "#1DE9B6",  # Vibrant Teal
+            "#F50057",  # Hot Pink
+            "#651FFF",  # Deep Indigo
+            "#00B0FF",  # Bright Sky
+        ]
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            for cand in candidates:
+                cand_id = cand.strip().lower()
+                if cand_id.startswith("gb-"):
+                    sub = cand_id[3:].upper()
+                    disp = f"{sub} (#{cand_id})"
+                elif cand_id.startswith("sco-"):
+                    sub = cand_id[4:].upper()
+                    disp = f"Scotland {sub} (#{cand_id})"
+                else:
+                    disp = f"{cand_id.title()} (#{cand_id})"
+
+                color_idx = abs(hash(cand_id)) % len(NEON_PALETTE)
+                color = NEON_PALETTE[color_idx]
+
+                cursor.execute("SELECT message_count, center_lat, center_lon FROM discovered_scopes WHERE scope_id = ?", (cand_id,))
+                existing = cursor.fetchone()
+                if existing:
+                    new_cnt = existing["message_count"] + 1
+                    c_lat = existing["center_lat"]
+                    c_lon = existing["center_lon"]
+                    if lat is not None and lon is not None and abs(lat) > 0.0001:
+                        c_lat = (c_lat + lat) / 2.0 if c_lat else lat
+                        c_lon = (c_lon + lon) / 2.0 if c_lon else lon
+                    cursor.execute("""
+                        UPDATE discovered_scopes
+                        SET last_heard_ts = ?, message_count = ?, center_lat = ?, center_lon = ?
+                        WHERE scope_id = ?
+                    """, (now_iso, new_cnt, c_lat, c_lon, cand_id))
+                else:
+                    c_lat = lat if (lat is not None and abs(lat) > 0.0001) else 54.5
+                    c_lon = lon if (lon is not None and abs(lon) > 0.0001) else -2.5
+                    cursor.execute("""
+                        INSERT INTO discovered_scopes (scope_id, display_name, color, source_type, last_heard_ts, message_count, center_lat, center_lon)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (cand_id, disp, color, "ota_activity", now_iso, 1, c_lat, c_lon))
+                    logger.info(f"Discovered new regional RF scope: {cand_id} ({disp})")
+                discovered.append(cand_id)
+            conn.commit()
+        return discovered
+
+    def get_discovered_scopes(self) -> Dict[str, Dict[str, Any]]:
+        """Returns all dynamically discovered scopes from over-the-air activity."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM discovered_scopes ORDER BY message_count DESC, last_heard_ts DESC")
+                res = {}
+                for r in cursor.fetchall():
+                    c_lat = r["center_lat"] or 54.5
+                    c_lon = r["center_lon"] or -2.5
+                    res[r["scope_id"]] = {
+                        "id": r["scope_id"],
+                        "name": r["scope_id"],
+                        "display_name": r["display_name"],
+                        "color": r["color"],
+                        "description": f"OTA Discovered Scope ({r['message_count']} messages heard)",
+                        "center": [c_lat, c_lon],
+                        "message_count": r["message_count"],
+                        "last_heard_ts": r["last_heard_ts"] or "",
+                    }
+                return res
+        except (sqlite3.OperationalError, Exception):
+            return {}
+
+    def get_scope_definitions(self=None) -> Dict[str, Dict[str, Any]]:
+        """Returns standard scope definitions, human labels, and neon accent colors, merged with discovered scopes."""
+        defs = {
             "gb-cum": {
                 "id": "gb-cum",
                 "name": "gb-cum",
@@ -1245,6 +1433,15 @@ class Storage:
                 "center": [54.40, -6.20],
             },
         }
+        if self is not None and hasattr(self, "get_discovered_scopes"):
+            try:
+                discovered = self.get_discovered_scopes()
+                for s_id, s_data in discovered.items():
+                    if s_id not in defs:
+                        defs[s_id] = s_data
+            except Exception as e:
+                logger.debug(f"Merge discovered scopes note: {e}")
+        return defs
 
     def get_repeaters_by_scope(self) -> Dict[str, Any]:
         """Groups all known repeaters with GPS coordinates into regional scopes.
@@ -1324,6 +1521,13 @@ class Storage:
                     assigned_scope = "gb-nwk"
                 elif 53.5 <= lat <= 54.8 and -2.00 < lon <= -0.50:
                     assigned_scope = "gb-nth"
+
+            # 4. Check discovered scopes matching alias
+            if not assigned_scope:
+                for sc_id in scopes_meta.keys():
+                    if sc_id in alias_u.lower() or f"#{sc_id}" in alias_u.lower():
+                        assigned_scope = sc_id
+                        break
 
             allowed = c.allowed_regions or []
             is_gateway = len(allowed) > 1 or (assigned_scope == "cax" and "gb-cum" in allowed)

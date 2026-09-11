@@ -76,9 +76,14 @@ class SystemTray(QSystemTrayIcon):
         action_settings.triggered.connect(self._open_settings)
         menu.addAction(action_settings)
 
+        action_bug = QAction("🐛 Report Bug / Issue...", self)
+        from meshcore_tray.ui.crash_dialog import open_bug_report_in_browser
+        action_bug.triggered.connect(lambda: open_bug_report_in_browser())
+        menu.addAction(action_bug)
+
         menu.addSeparator()
 
-        action_quit = QAction("Quit MeshCore Map Mixer", self)
+        action_quit = QAction("Quit MESHCORE NAVIGATOR", self)
         action_quit.triggered.connect(QApplication.instance().quit)
         menu.addAction(action_quit)
 

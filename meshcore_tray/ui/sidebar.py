@@ -8,12 +8,106 @@ from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QFont
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidget,
     QListWidgetItem, QPushButton, QFrame, QSplitter, QMenu,
-    QLineEdit, QComboBox, QInputDialog
+    QLineEdit, QComboBox, QInputDialog, QAbstractItemView
 )
 from meshcore_tray.core.models import ChannelInfo, NodeContact
 from meshcore_tray.core.event_bus import bus, EventType
 
 logger = logging.getLogger("meshcore_tray.sidebar")
+
+
+class ChannelListWidget(QListWidget):
+    """Custom QListWidget supporting intuitive drag-and-drop of channels between category groups."""
+
+    channel_group_dropped = pyqtSignal(str, str)  # (channel_name, target_group_name)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDropIndicatorShown(True)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
+        self.setDefaultDropAction(Qt.DropAction.MoveAction)
+
+    def startDrag(self, supportedActions):
+        item = self.currentItem()
+        if not item:
+            return
+        is_group = bool(item.data(Qt.ItemDataRole.UserRole + 1))
+        data_val = str(item.data(Qt.ItemDataRole.UserRole) or "")
+        # Prevent dragging group headers
+        if is_group or data_val.startswith("__group__:"):
+            return
+        super().startDrag(supportedActions)
+
+    def dragEnterEvent(self, event):
+        if event.source() == self:
+            item = self.currentItem()
+            if item:
+                is_group = bool(item.data(Qt.ItemDataRole.UserRole + 1))
+                data_val = str(item.data(Qt.ItemDataRole.UserRole) or "")
+                if not is_group and not data_val.startswith("__group__:"):
+                    event.acceptProposedAction()
+                    return
+        event.ignore()
+
+    def dragMoveEvent(self, event):
+        if event.source() == self:
+            event.acceptProposedAction()
+            return
+        event.ignore()
+
+    def dropEvent(self, event):
+        if event.source() != self:
+            event.ignore()
+            return
+
+        source_item = self.currentItem()
+        if not source_item:
+            event.ignore()
+            return
+
+        chan_name = str(source_item.data(Qt.ItemDataRole.UserRole) or "")
+        if not chan_name or chan_name.startswith("__group__:"):
+            event.ignore()
+            return
+
+        # Determine target item at drop coordinates
+        drop_pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
+        target_item = self.itemAt(drop_pos)
+
+        target_group = None
+
+        if target_item:
+            is_group = bool(target_item.data(Qt.ItemDataRole.UserRole + 1))
+            t_data = str(target_item.data(Qt.ItemDataRole.UserRole) or "")
+            if is_group or t_data.startswith("__group__:"):
+                # Dropped directly on a group header!
+                target_group = t_data.split(":", 1)[1] if ":" in t_data else t_data
+            else:
+                # Dropped onto a channel item. Find which group it belongs to by scanning backwards
+                target_row = self.row(target_item)
+                for r in range(target_row, -1, -1):
+                    prev_item = self.item(r)
+                    p_data = str(prev_item.data(Qt.ItemDataRole.UserRole) or "")
+                    if bool(prev_item.data(Qt.ItemDataRole.UserRole + 1)) or p_data.startswith("__group__:"):
+                        target_group = p_data.split(":", 1)[1] if ":" in p_data else p_data
+                        break
+        else:
+            # Dropped below all items in empty space - pick the last group header in the list
+            for r in range(self.count() - 1, -1, -1):
+                item = self.item(r)
+                i_data = str(item.data(Qt.ItemDataRole.UserRole) or "")
+                if bool(item.data(Qt.ItemDataRole.UserRole + 1)) or i_data.startswith("__group__:"):
+                    target_group = i_data.split(":", 1)[1] if ":" in i_data else i_data
+                    break
+
+        if target_group and chan_name:
+            event.accept()
+            self.channel_group_dropped.emit(chan_name, target_group)
+        else:
+            event.ignore()
 
 
 def make_star_icon(color_hex: str) -> QIcon:
@@ -125,12 +219,13 @@ class Sidebar(QWidget):
         self.btn_add_channel.clicked.connect(self._on_add_channel_clicked)
         chan_layout.addWidget(self.btn_add_channel)
 
-        self.channel_list = QListWidget()
+        self.channel_list = ChannelListWidget()
         self.channel_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.channel_list.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.channel_list.itemClicked.connect(self._on_channel_clicked)
         self.channel_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.channel_list.customContextMenuRequested.connect(self._show_channel_context_menu)
+        self.channel_list.channel_group_dropped.connect(self._on_channel_drag_dropped)
         chan_layout.addWidget(self.channel_list, 1)
 
         # --- Bottom Section: Contacts ---
@@ -274,6 +369,12 @@ class Sidebar(QWidget):
                 self.status_pill.setText("🔴 Radio: Disconnected")
                 self.status_pill.setStyleSheet("background-color: #5C1D24; color: #FF7B72; border-radius: 10px; padding: 4px;")
 
+    def _on_channel_drag_dropped(self, chan_name: str, target_group: str):
+        """Handler for dragging a channel into a category group."""
+        if self.config:
+            self.config.set_channel_group(chan_name, target_group)
+        self.reload()
+
     def reload(self):
         """Refreshes channels and contacts from storage with grouping, folding, search, and filtering."""
         if hasattr(self, "_last_conn_info") and self._last_conn_info:
@@ -294,7 +395,12 @@ class Sidebar(QWidget):
         ]
 
         groups_dict: dict[str, list[ChannelInfo]] = {}
+        seen_chans = set()
         for ch in channels:
+            clean = ch.name.strip().lstrip("#").lower()
+            if clean in seen_chans:
+                continue
+            seen_chans.add(clean)
             grp = self.config.get_channel_group(ch.name) if self.config else "Channels"
             if grp not in groups_dict:
                 groups_dict[grp] = []
@@ -308,7 +414,7 @@ class Sidebar(QWidget):
             for ch in grp_channels:
                 is_active = bool(self.active_channel and ch.name.lower().lstrip("#") == self.active_channel.lower().lstrip("#"))
                 if not is_active and self.storage:
-                    grp_unreads += int(self.storage.get_channel_unread_count(ch.name) or 0)
+                    grp_unreads += int(self.storage.get_channel_unread_count(ch.name) or self.storage.get_channel_unread_count(ch.name.lstrip("#")) or 0)
 
             is_collapsed = self.config.is_group_collapsed(grp_name) if self.config else False
 
@@ -345,7 +451,10 @@ class Sidebar(QWidget):
                 for ch in grp_channels_sorted:
                     is_fav = ch.is_favorite or (self.config and self.config.is_channel_favorite(ch.name))
                     is_active = bool(self.active_channel and ch.name.lower().lstrip("#") == self.active_channel.lower().lstrip("#"))
-                    unread = 0 if is_active else (self.storage.get_channel_unread_count(ch.name) if self.storage else 0)
+                    unread = 0 if is_active else (
+                        (self.storage.get_channel_unread_count(ch.name) or self.storage.get_channel_unread_count(ch.name.lstrip("#")) or 0)
+                        if self.storage else 0
+                    )
 
                     base_name = ch.name if ch.name.startswith("#") else f"#{ch.name}"
                     display_name = f"{base_name} ({unread})" if unread > 0 else base_name

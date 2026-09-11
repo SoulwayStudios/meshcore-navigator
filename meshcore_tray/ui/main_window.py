@@ -224,10 +224,14 @@ class MainWindow(QMainWindow):
 
         # Splash / Loading Mask Overlay
         self.splash_overlay = SplashOverlay(config=self.config, parent=self)
+        self.splash_overlay.dismissed.connect(self._on_splash_dismissed)
         self.splash_overlay.setGeometry(self.rect())
         self.splash_overlay.show()
         if hasattr(self, "mesh_map"):
             self.mesh_map.map_ready.connect(self.splash_overlay.on_map_ready)
+
+    def _on_splash_dismissed(self):
+        self.splash_overlay = None
 
     def _setup_event_subscriptions(self):
         bus.subscribe(EventType.MESSAGE_RECEIVED, self._on_bus_message_received)
@@ -696,7 +700,12 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if hasattr(self, "splash_overlay") and self.splash_overlay and self.splash_overlay.isVisible():
-            self.splash_overlay.setGeometry(self.rect())
-            self.splash_overlay.raise_()
+        overlay = getattr(self, "splash_overlay", None)
+        if overlay is not None:
+            try:
+                if overlay.isVisible():
+                    overlay.setGeometry(self.rect())
+                    overlay.raise_()
+            except (RuntimeError, AttributeError):
+                self.splash_overlay = None
 

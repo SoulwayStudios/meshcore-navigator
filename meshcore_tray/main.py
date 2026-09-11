@@ -110,9 +110,12 @@ def main():
         logging.getLogger().setLevel(logging.DEBUG)
 
     app = QApplication(sys.argv)
-    app.setApplicationName("MeshCore Map Mixer")
+    app.setApplicationName("MESHCORE NAVIGATOR")
     app.setQuitOnLastWindowClosed(False)
     app.setStyleSheet(DARK_THEME_QSS)
+
+    from meshcore_tray.ui.crash_dialog import install_crash_handler
+    install_crash_handler()
 
     loop = qasync.QEventLoop(app)
     asyncio.set_event_loop(loop)

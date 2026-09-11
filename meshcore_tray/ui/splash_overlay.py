@@ -55,7 +55,7 @@ class SplashOverlay(QWidget):
         # Centered Welcome Card
         self.card = QFrame()
         self.card.setObjectName("splashCard")
-        self.card.setFixedWidth(540)
+        self.card.setFixedWidth(560)
         self.card.setStyleSheet("""
             QFrame#splashCard {
                 background-color: #1A1D24;
@@ -68,8 +68,8 @@ class SplashOverlay(QWidget):
             }
         """)
         card_layout = QVBoxLayout(self.card)
-        card_layout.setContentsMargins(40, 36, 40, 36)
-        card_layout.setSpacing(14)
+        card_layout.setContentsMargins(36, 30, 36, 30)
+        card_layout.setSpacing(12)
         card_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # Top Badge Row (App Icon + Version)
@@ -105,20 +105,20 @@ class SplashOverlay(QWidget):
         # Author Attribution
         author_lbl = QLabel(__author__)
         author_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        author_lbl.setStyleSheet("font-size: 13px; font-weight: 700; color: #FBBF24; margin-top: 2px; margin-bottom: 4px;")
+        author_lbl.setStyleSheet("font-size: 13px; font-weight: 700; color: #FBBF24;")
         card_layout.addWidget(author_lbl)
 
-        # Description
+        # Description with clean two lines and ample height
         desc_lbl = QLabel(
-            "MeshCore LoRa desktop client with real-time interactive mesh map, "
+            "MeshCore LoRa desktop client with real-time interactive mesh map,\n"
             "multi-hop packet path tracing, ADS-B aircraft overlays, and Divoom Pixoo 64 matrix."
         )
-        desc_lbl.setWordWrap(True)
         desc_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        desc_lbl.setStyleSheet("font-size: 12px; color: #94A3B8; line-height: 1.4;")
+        desc_lbl.setStyleSheet("font-size: 12px; color: #94A3B8;")
+        desc_lbl.setMinimumHeight(42)
         card_layout.addWidget(desc_lbl)
 
-        card_layout.addSpacing(6)
+        card_layout.addSpacing(4)
 
         # Buy Me a Coffee Action Button
         coffee_btn = QPushButton("☕ Buy Me a Coffee")

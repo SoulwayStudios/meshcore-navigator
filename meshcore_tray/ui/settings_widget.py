@@ -1582,6 +1582,29 @@ class SettingsWidget(QWidget):
         """)
         btn_coffee_large.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://buymeacoffee.com/m7ncy")))
         coffee_row.addWidget(btn_coffee_large)
+
+        btn_report_bug = QPushButton("🐛 Report Bug / Submit Issue")
+        btn_report_bug.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_report_bug.setFixedHeight(40)
+        btn_report_bug.setStyleSheet("""
+            QPushButton {
+                background-color: #1E293B;
+                color: #38BDF8;
+                border: 1px solid #0284C7;
+                border-radius: 8px;
+                padding: 8px 20px;
+                font-size: 13px;
+                font-weight: 700;
+            }
+            QPushButton:hover {
+                background-color: #0369A1;
+                color: #FFFFFF;
+            }
+        """)
+        from meshcore_tray.ui.crash_dialog import open_bug_report_in_browser
+        btn_report_bug.clicked.connect(lambda: open_bug_report_in_browser())
+        coffee_row.addWidget(btn_report_bug)
+
         coffee_row.addStretch()
         card_about.add_layout(coffee_row)
 
