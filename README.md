@@ -75,10 +75,10 @@ chmod +x install.sh
 `install.sh` configures a Python virtual environment, installs dependencies, and creates a desktop menu shortcut with high-resolution app icon. You can then launch **MESHCORE NAVIGATOR** directly from your application launcher or by typing `meshcore-navigator`.
 
 ### Linux (Portable Tarball)
-Download `meshcore-navigator-v0.0.3-linux.tar.gz` from GitHub Releases:
+Download `meshcore-navigator-v0.0.4-linux.tar.gz` from GitHub Releases:
 ```bash
-tar -xzf meshcore-navigator-v0.0.3-linux.tar.gz
-cd meshcore-navigator-v0.0.3-linux
+tar -xzf meshcore-navigator-v0.0.4-linux.tar.gz
+cd meshcore-navigator-v0.0.4-linux
 ./run.sh
 ```
 

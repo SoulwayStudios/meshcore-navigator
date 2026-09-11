@@ -30,20 +30,21 @@ class FloodRowWidget(QFrame):
     unhovered = pyqtSignal()
     selected = pyqtSignal(object)
 
-    def __init__(self, path: PacketPathInfo, parent=None):
+    def __init__(self, path: PacketPathInfo, is_unread: bool = False, parent=None):
         super().__init__(parent)
         self.path = path
+        self.is_unread = is_unread
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setObjectName("floodRow")
         self._setup_ui()
-        self._set_idle_style()
+        self._setup_style()
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 8, 10, 8)
         layout.setSpacing(4)
 
-        # Header Row: Timestamp | Route Type Badge | Sender | Metrics
+        # Header Row: Timestamp | Route Type Badge | Unread Badge | Sender | Metrics
         hdr_layout = QHBoxLayout()
         hdr_layout.setContentsMargins(0, 0, 0, 0)
         hdr_layout.setSpacing(8)
@@ -77,6 +78,21 @@ class FloodRowWidget(QFrame):
         """)
         hdr_layout.addWidget(self.lbl_badge)
 
+        # Badge: Unread / New
+        if self.is_unread:
+            self.lbl_unread = QLabel("● NEW")
+            self.lbl_unread.setStyleSheet("""
+                background-color: rgba(192, 132, 252, 0.25);
+                color: #E879F9;
+                border: 1px solid #C084FC;
+                border-radius: 3px;
+                padding: 1px 5px;
+                font-family: monospace;
+                font-size: 9px;
+                font-weight: bold;
+            """)
+            hdr_layout.addWidget(self.lbl_unread)
+
         # Sender Info
         sender_disp = self.path.sender_name or self.path.sender_id or "Unknown"
         self.lbl_sender = QLabel(f"Orig: {sender_disp}")
@@ -109,34 +125,42 @@ class FloodRowWidget(QFrame):
         self.lbl_hops.setWordWrap(True)
         layout.addWidget(self.lbl_hops)
 
-    def _set_idle_style(self):
-        self.setStyleSheet("""
-            QFrame#floodRow {
-                background-color: #1A1B1E;
-                border: 1px solid #2E3035;
-                border-radius: 4px;
-                margin-bottom: 2px;
-            }
-        """)
-
-    def _set_hover_style(self):
-        self.setStyleSheet("""
-            QFrame#floodRow {
-                background-color: #242233;
-                border: 1.5px solid #C084FC;
-                border-radius: 4px;
-                margin-bottom: 2px;
-            }
-        """)
+    def _setup_style(self):
+        if self.is_unread:
+            self.setStyleSheet("""
+                QFrame#floodRow {
+                    background-color: #1E1B2E;
+                    border: 1px solid #4C1D95;
+                    border-left: 3px solid #C084FC;
+                    border-radius: 4px;
+                    margin-bottom: 2px;
+                }
+                QFrame#floodRow:hover {
+                    background-color: #27213C;
+                    border: 1px solid #C084FC;
+                    border-left: 3px solid #E879F9;
+                }
+            """)
+        else:
+            self.setStyleSheet("""
+                QFrame#floodRow {
+                    background-color: #1A1B1E;
+                    border: 1px solid #2E3035;
+                    border-radius: 4px;
+                    margin-bottom: 2px;
+                }
+                QFrame#floodRow:hover {
+                    background-color: #242233;
+                    border: 1px solid #C084FC;
+                }
+            """)
 
     def enterEvent(self, event):
         super().enterEvent(event)
-        self._set_hover_style()
         self.hovered.emit(self.path)
 
     def leaveEvent(self, event):
         super().leaveEvent(event)
-        self._set_idle_style()
         self.unhovered.emit()
 
     def mousePressEvent(self, event):
@@ -307,12 +331,47 @@ class HeardFloodsWidget(QWidget):
     def _load_recent_floods(self):
         if not self.storage:
             return
+        last_read_ts = self.storage.get_last_read_flood_timestamp()
         paths = self.storage.get_recent_packet_paths(limit=75)
-        for p in paths:
-            self._add_path_row(p, prepend=False)
 
-    def _add_path_row(self, path: PacketPathInfo, prepend: bool = False):
-        row = FloodRowWidget(path)
+        first_unread_row = None
+        newest_ts = ""
+
+        if paths and paths[0].timestamp:
+            newest_ts = paths[0].timestamp
+
+        for p in paths:
+            is_unread = False
+            if last_read_ts and p.timestamp:
+                is_unread = (p.timestamp > last_read_ts)
+            elif not last_read_ts:
+                is_unread = True
+
+            row = self._add_path_row(p, prepend=False, is_unread=is_unread)
+            if is_unread:
+                first_unread_row = row
+
+        if first_unread_row:
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(80, lambda: self._scroll_to_row(first_unread_row))
+        else:
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(80, lambda: self.scroll_area.verticalScrollBar().setValue(0))
+
+        if newest_ts:
+            self.storage.set_last_read_flood_timestamp(newest_ts)
+
+    def _scroll_to_row(self, row: FloodRowWidget):
+        if not row:
+            return
+        try:
+            y = row.pos().y()
+            self.scroll_area.verticalScrollBar().setValue(max(0, y - 8))
+        except Exception as e:
+            logger.debug("Could not scroll to row: %s", e)
+
+    def _add_path_row(self, path: PacketPathInfo, prepend: bool = False, is_unread: bool = False) -> FloodRowWidget:
+        row = FloodRowWidget(path, is_unread=is_unread)
         row.hovered.connect(self.flood_hovered.emit)
         row.unhovered.connect(self.flood_unhovered.emit)
         row.selected.connect(self.flood_selected.emit)
@@ -333,6 +392,7 @@ class HeardFloodsWidget(QWidget):
             oldest.deleteLater()
 
         self.count_badge.setText(f"{len(self._rows)} Floods")
+        return row
 
     def _toggle_pause(self):
         self.paused = not self.paused

@@ -2515,7 +2515,19 @@ class Storage:
             """, (target_key, last_read_msg_id, last_read_timestamp, now_iso))
             conn.commit()
 
-        bus.emit(EventType.READ_STATE_UPDATED, target_key)
+    def get_last_read_flood_timestamp(self) -> str:
+        """Returns the ISO timestamp up to which floods have been read/viewed."""
+        res = self.get_last_read("floods")
+        if res and res.get("last_read_timestamp"):
+            return str(res["last_read_timestamp"])
+        return str(self.get_app_state("last_read_flood_ts") or "")
+
+    def set_last_read_flood_timestamp(self, ts: str, packet_id: str = ""):
+        """Updates the last read flood timestamp."""
+        if not ts:
+            return
+        self.mark_as_read("floods", packet_id or "flood", ts)
+        self.set_app_state("last_read_flood_ts", ts)
 
     def delete_contact(self, node_id: str):
         """Deletes a contact from SQLite."""

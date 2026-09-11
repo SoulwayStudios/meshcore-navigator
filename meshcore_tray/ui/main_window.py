@@ -249,17 +249,25 @@ class MainWindow(QMainWindow):
 
     def _on_nav_view_changed(self, view_name: str):
         if view_name == "main":
+            if hasattr(self, "sidebar"):
+                self.sidebar.setVisible(True)
             self.main_stack.setCurrentIndex(0)
             self.center_stack.setCurrentIndex(0)
         elif view_name == "floods":
+            if hasattr(self, "sidebar"):
+                self.sidebar.setVisible(False)
             self.main_stack.setCurrentIndex(0)
             self.center_stack.setCurrentIndex(2)
             if hasattr(self, "heard_floods_view"):
                 self.heard_floods_view.reload()
         elif view_name == "dms":
+            if hasattr(self, "sidebar"):
+                self.sidebar.setVisible(False)
             self.dms_view.reload_contacts()
             self.main_stack.setCurrentIndex(1)
         elif view_name == "repeaters":
+            if hasattr(self, "sidebar"):
+                self.sidebar.setVisible(False)
             self.repeaters_view.reload_repeaters()
             self.main_stack.setCurrentIndex(2)
 
@@ -602,6 +610,8 @@ class MainWindow(QMainWindow):
             if self.main_stack.currentIndex() == 3:
                 self._close_settings()
             else:
+                if hasattr(self, "sidebar"):
+                    self.sidebar.setVisible(False)
                 self._previous_view_index = self.main_stack.currentIndex()
                 self.settings_view.reload()
                 self.main_stack.setCurrentIndex(3)
@@ -612,6 +622,13 @@ class MainWindow(QMainWindow):
             prev_idx = getattr(self, "_previous_view_index", 0)
             if prev_idx == 3:
                 prev_idx = 0
+            if prev_idx == 0:
+                is_main_chat = (not hasattr(self, "center_stack")) or (self.center_stack.currentIndex() == 0)
+                if hasattr(self, "sidebar"):
+                    self.sidebar.setVisible(is_main_chat)
+            else:
+                if hasattr(self, "sidebar"):
+                    self.sidebar.setVisible(False)
             self.main_stack.setCurrentIndex(prev_idx)
 
     def _on_reply_requested(self, reply_prefix: str):

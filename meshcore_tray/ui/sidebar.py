@@ -20,6 +20,7 @@ class ChannelListWidget(QListWidget):
     """Custom QListWidget supporting intuitive drag-and-drop of channels between category groups."""
 
     channel_group_dropped = pyqtSignal(str, str)  # (channel_name, target_group_name)
+    channel_reordered = pyqtSignal(str, str, str, bool)  # (chan_name, target_group, target_channel, insert_after)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -78,6 +79,8 @@ class ChannelListWidget(QListWidget):
         target_item = self.itemAt(drop_pos)
 
         target_group = None
+        target_channel = None
+        insert_after = False
 
         if target_item:
             is_group = bool(target_item.data(Qt.ItemDataRole.UserRole + 1))
@@ -85,8 +88,15 @@ class ChannelListWidget(QListWidget):
             if is_group or t_data.startswith("__group__:"):
                 # Dropped directly on a group header!
                 target_group = t_data.split(":", 1)[1] if ":" in t_data else t_data
+                target_channel = None
+                insert_after = False
             else:
-                # Dropped onto a channel item. Find which group it belongs to by scanning backwards
+                # Dropped onto a channel item.
+                target_channel = t_data
+                rect = self.visualItemRect(target_item)
+                insert_after = drop_pos.y() > (rect.top() + rect.height() // 2)
+
+                # Find which group it belongs to by scanning backwards
                 target_row = self.row(target_item)
                 for r in range(target_row, -1, -1):
                     prev_item = self.item(r)
@@ -102,9 +112,12 @@ class ChannelListWidget(QListWidget):
                 if bool(item.data(Qt.ItemDataRole.UserRole + 1)) or i_data.startswith("__group__:"):
                     target_group = i_data.split(":", 1)[1] if ":" in i_data else i_data
                     break
+            target_channel = None
+            insert_after = True
 
         if target_group and chan_name:
             event.accept()
+            self.channel_reordered.emit(chan_name, target_group, target_channel or "", insert_after)
             self.channel_group_dropped.emit(chan_name, target_group)
         else:
             event.ignore()
@@ -143,6 +156,31 @@ class Sidebar(QWidget):
         fav_user_col = self.config.app_colors.favorite_user_color if (self.config and hasattr(self.config, "app_colors")) else "#FFD700"
         self._red_star_icon = make_star_icon(fav_chan_col)
         self._yellow_star_icon = make_star_icon(fav_user_col)
+
+        # Restore group & channel ordering from storage if config missing it
+        if self.config and self.storage:
+            if not getattr(self.config, "channel_groups", None):
+                stored_cg = self.storage.get_app_state("channel_groups")
+                if stored_cg:
+                    try:
+                        self.config.channel_groups = json.loads(stored_cg)
+                    except Exception:
+                        pass
+            if not getattr(self.config, "channel_order", None):
+                stored_co = self.storage.get_app_state("channel_order")
+                if stored_co:
+                    try:
+                        self.config.channel_order = json.loads(stored_co)
+                    except Exception:
+                        pass
+            if not getattr(self.config, "group_order", None):
+                stored_go = self.storage.get_app_state("group_order")
+                if stored_go:
+                    try:
+                        self.config.group_order = json.loads(stored_go)
+                    except Exception:
+                        pass
+
         self._init_ui()
         self._subscribe_events()
 
@@ -226,6 +264,7 @@ class Sidebar(QWidget):
         self.channel_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.channel_list.customContextMenuRequested.connect(self._show_channel_context_menu)
         self.channel_list.channel_group_dropped.connect(self._on_channel_drag_dropped)
+        self.channel_list.channel_reordered.connect(self._on_channel_reordered)
         chan_layout.addWidget(self.channel_list, 1)
 
         # --- Bottom Section: Contacts ---
@@ -373,6 +412,68 @@ class Sidebar(QWidget):
         """Handler for dragging a channel into a category group."""
         if self.config:
             self.config.set_channel_group(chan_name, target_group)
+            if self.storage:
+                try:
+                    self.storage.set_app_state("channel_groups", json.dumps(self.config.channel_groups))
+                except Exception:
+                    pass
+        self.reload()
+
+    def _on_channel_reordered(self, chan_name: str, target_group: str, target_channel: str, insert_after: bool):
+        """Handler for reordering channels and updating groups simultaneously."""
+        if not self.config:
+            return
+        clean_chan = chan_name.strip().lstrip("#")
+        # 1. Update group
+        self.config.set_channel_group(clean_chan, target_group)
+
+        # 2. Update channel order
+        current_order = [c.strip().lstrip("#") for c in self.config.get_channel_order()]
+        if not current_order and self.storage:
+            all_chans = self.storage.get_channels()
+            current_order = [c.name.strip().lstrip("#") for c in all_chans]
+
+        # Remove clean_chan from current order
+        current_order = [c for c in current_order if c.lower() != clean_chan.lower()]
+
+        if target_channel and target_channel.strip():
+            clean_target = target_channel.strip().lstrip("#").lower()
+            idx = -1
+            for i, c in enumerate(current_order):
+                if c.lower() == clean_target:
+                    idx = i
+                    break
+            if idx != -1:
+                insert_idx = idx + 1 if insert_after else idx
+                current_order.insert(insert_idx, clean_chan)
+            else:
+                current_order.append(clean_chan)
+        else:
+            # Dropped on group header or empty area
+            grp_chans = [c for c in current_order if self.config.get_channel_group(c).lower() == target_group.lower()]
+            if grp_chans:
+                if insert_after:
+                    last_ch = grp_chans[-1]
+                    idx = current_order.index(last_ch)
+                    current_order.insert(idx + 1, clean_chan)
+                else:
+                    first_ch = grp_chans[0]
+                    idx = current_order.index(first_ch)
+                    current_order.insert(idx, clean_chan)
+            else:
+                current_order.append(clean_chan)
+
+        self.config.set_channel_order(current_order)
+
+        # 3. Synchronize to SQLite app_state
+        if self.storage:
+            try:
+                self.storage.set_app_state("channel_groups", json.dumps(self.config.channel_groups))
+                self.storage.set_app_state("channel_order", json.dumps(self.config.channel_order))
+                self.storage.set_app_state("group_order", json.dumps(self.config.group_order))
+            except Exception as e:
+                logger.debug("Could not backup channel order to SQLite: %s", e)
+
         self.reload()
 
     def reload(self):
@@ -406,7 +507,24 @@ class Sidebar(QWidget):
                 groups_dict[grp] = []
             groups_dict[grp].append(ch)
 
-        group_keys = sorted(groups_dict.keys(), key=lambda g: (0 if g.lower() == "channels" else 1, g.lower()))
+        saved_group_order = [g.strip().lower() for g in (self.config.get_group_order() if self.config else [])]
+        def _grp_sort_key(g: str):
+            gl = g.strip().lower()
+            if gl in saved_group_order:
+                return (0, saved_group_order.index(gl))
+            if gl == "channels":
+                return (1, -1)
+            return (1, 0, gl)
+
+        group_keys = sorted(groups_dict.keys(), key=_grp_sort_key)
+
+        saved_channel_order = [c.strip().lstrip("#").lower() for c in (self.config.get_channel_order() if self.config else [])]
+        def _chan_sort_key(ch: ChannelInfo):
+            clean = ch.name.strip().lstrip("#").lower()
+            if clean in saved_channel_order:
+                return (0, saved_channel_order.index(clean))
+            is_fav = bool(ch.is_favorite or (self.config and self.config.is_channel_favorite(ch.name)))
+            return (1 if not is_fav else 0, 999999, clean)
 
         for grp_name in group_keys:
             grp_channels = groups_dict[grp_name]
@@ -442,11 +560,7 @@ class Sidebar(QWidget):
             self.channel_list.addItem(grp_item)
 
             if not is_collapsed:
-                # Favorites first, then alphabetical
-                grp_channels_sorted = sorted(
-                    grp_channels,
-                    key=lambda ch: (not (ch.is_favorite or (self.config and self.config.is_channel_favorite(ch.name))), ch.name.lower())
-                )
+                grp_channels_sorted = sorted(grp_channels, key=_chan_sort_key)
 
                 for ch in grp_channels_sorted:
                     is_fav = ch.is_favorite or (self.config and self.config.is_channel_favorite(ch.name))

@@ -171,6 +171,8 @@ class AppConfig:
     phantom_nodes: List[str] = field(default_factory=list)
     channel_groups: Dict[str, str] = field(default_factory=dict)
     collapsed_channel_groups: List[str] = field(default_factory=list)
+    channel_order: List[str] = field(default_factory=list)
+    group_order: List[str] = field(default_factory=list)
     last_active_channel: str = "Public"
     first_run_completed: bool = False
 
@@ -249,6 +251,30 @@ class AppConfig:
             self.channel_groups[clean] = group_name.strip()
         self.save()
 
+    def get_channel_order(self) -> List[str]:
+        return list(self.channel_order)
+
+    def set_channel_order(self, order: List[str]):
+        cleaned = []
+        for c in order:
+            cl = str(c).strip().lstrip("#")
+            if cl and cl.lower() not in [x.lower() for x in cleaned]:
+                cleaned.append(cl)
+        self.channel_order = cleaned
+        self.save()
+
+    def get_group_order(self) -> List[str]:
+        return list(self.group_order)
+
+    def set_group_order(self, order: List[str]):
+        cleaned = []
+        for g in order:
+            gl = str(g).strip()
+            if gl and gl.lower() not in [x.lower() for x in cleaned]:
+                cleaned.append(gl)
+        self.group_order = cleaned
+        self.save()
+
     def is_group_collapsed(self, group_name: str) -> bool:
         gn = group_name.strip().upper()
         return gn in [g.strip().upper() for g in self.collapsed_channel_groups]
@@ -307,6 +333,10 @@ class AppConfig:
             config.channel_groups = dict(data["channel_groups"])
         if "collapsed_channel_groups" in data:
             config.collapsed_channel_groups = list(data["collapsed_channel_groups"])
+        if "channel_order" in data:
+            config.channel_order = list(data["channel_order"])
+        if "group_order" in data:
+            config.group_order = list(data["group_order"])
         if "first_run_completed" in data:
             config.first_run_completed = bool(data["first_run_completed"])
         return config
