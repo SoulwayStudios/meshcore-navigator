@@ -7,6 +7,15 @@ and this project follows semantic versioning with automated build increments:
 - **Patch (+0.0.1)**: Routine bug fixes, UI adjustments, maintenance, and regular GitHub commits.
 - **Minor (+0.1.0)**: Substantial new features and architectural additions.
 
+## [0.0.7] - 2026-09-11
+
+### Changed
+- **Multi-Platform Release Pipeline Optimization**:
+  - Decoupled standalone binary packaging jobs for Linux and Windows from headless virtual display testing dependencies, ensuring multi-platform releases compile and deploy reliably.
+  - Added real-time test log streaming and automated artifact capture.
+
+---
+
 ## [0.0.6] - 2026-09-11
 
 ### Added

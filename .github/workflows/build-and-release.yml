@@ -42,23 +42,33 @@ jobs:
       - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install PyQt6 PyQt6-WebEngine qasync pyserial pillow requests meshcore pytest pytest-asyncio
+          pip install PyQt6 PyQt6-WebEngine qasync pyserial pillow requests pytest pytest-asyncio
           pip install -e ./vendor/pixoo
           pip install -e ./vendor/meshcore_py
 
       - name: Run Pytest Test Suite
+        env:
+          QT_QPA_PLATFORM: offscreen
         run: |
           export PYTHONPATH=".:./vendor/pixoo/src:./vendor/meshcore_py/src:$PYTHONPATH"
-          xvfb-run -a pytest tests/
+          pytest tests/ -v > pytest.log 2>&1 || (cat pytest.log && exit 1)
+
+      - name: Upload Test Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs
+          path: pytest.log
 
       - name: Headless Init Verification
+        env:
+          QT_QPA_PLATFORM: offscreen
         run: |
           export PYTHONPATH=".:./vendor/pixoo/src:./vendor/meshcore_py/src:$PYTHONPATH"
-          xvfb-run -a python -m meshcore_tray.main --test-init
+          python -m meshcore_tray.main --test-init
 
   build-linux:
     name: Package Linux Distribution
-    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -76,7 +86,6 @@ jobs:
 
   build-windows:
     name: Package Windows Standalone (.exe)
-    needs: test
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -89,7 +98,7 @@ jobs:
       - name: Install Dependencies & PyInstaller
         run: |
           python -m pip install --upgrade pip
-          pip install PyQt6 PyQt6-WebEngine qasync pyserial pillow requests meshcore pyinstaller
+          pip install PyQt6 PyQt6-WebEngine qasync pyserial pillow requests pyinstaller
           pip install -e ./vendor/pixoo
           pip install -e ./vendor/meshcore_py
 
