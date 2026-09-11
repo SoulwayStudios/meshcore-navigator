@@ -58,7 +58,7 @@
 
 Clone the repository and run the automated installer:
 ```bash
-git clone --recursive https://github.com/nickyproniewicz/meshcore-navigator.git
+git clone --recursive https://github.com/SoulwayStudios/meshcore-navigator.git
 cd meshcore-navigator
 chmod +x install.sh
 ./install.sh
@@ -74,7 +74,7 @@ cd meshcore-navigator-v1.0.0-linux
 ```
 
 ### Windows
-1. Download **`meshcore-navigator-windows-x64.zip`** from [Releases](https://github.com/nickyproniewicz/meshcore-navigator/releases).
+1. Download **`meshcore-navigator-windows-x64.zip`** from [Releases](https://github.com/SoulwayStudios/meshcore-navigator/releases).
 2. Extract the ZIP archive anywhere on your PC.
 3. Double-click **`MESHCORE-NAVIGATOR.exe`**.
 
