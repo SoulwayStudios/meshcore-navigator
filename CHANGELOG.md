@@ -7,6 +7,16 @@ and this project follows semantic versioning with automated build increments:
 - **Patch (+0.0.1)**: Routine bug fixes, UI adjustments, maintenance, and regular GitHub commits.
 - **Minor (+0.1.0)**: Substantial new features and architectural additions.
 
+## [0.0.6] - 2026-09-11
+
+### Added
+- **Linux CI Headless Virtual Framebuffer & OpenGL Support**:
+  - Integrated `xvfb-run` and system OpenGL/X11 rendering libraries (`libgl1`, `libegl1`, `libxcb-*`) into automated testing workflows.
+- **Dedicated Windows PyInstaller Builder**:
+  - Added standalone `build_windows.py` cross-platform build script eliminating shell quotation ambiguities in PowerShell CI runners.
+
+---
+
 ## [0.0.5] - 2026-09-11
 
 ### Added

@@ -20,7 +20,26 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install Dependencies
+      - name: Install System GUI & OpenGL Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgl1 \
+            libegl1 \
+            libxkbcommon-x11-0 \
+            libxcb-cursor0 \
+            libxcb-icccm4 \
+            libxcb-image0 \
+            libxcb-keysyms1 \
+            libxcb-randr0 \
+            libxcb-render-util0 \
+            libxcb-xinerama0 \
+            libxcb-xinput0 \
+            libxcb-xfixes0 \
+            libxcb-shape0 \
+            xvfb
+
+      - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install PyQt6 PyQt6-WebEngine qasync pyserial pillow requests meshcore pytest pytest-asyncio
@@ -28,18 +47,14 @@ jobs:
           pip install -e ./vendor/meshcore_py
 
       - name: Run Pytest Test Suite
-        env:
-          QT_QPA_PLATFORM: offscreen
         run: |
           export PYTHONPATH=".:./vendor/pixoo/src:./vendor/meshcore_py/src:$PYTHONPATH"
-          pytest tests/
+          xvfb-run -a pytest tests/
 
       - name: Headless Init Verification
-        env:
-          QT_QPA_PLATFORM: offscreen
         run: |
           export PYTHONPATH=".:./vendor/pixoo/src:./vendor/meshcore_py/src:$PYTHONPATH"
-          python -m meshcore_tray.main --test-init
+          xvfb-run -a python -m meshcore_tray.main --test-init
 
   build-linux:
     name: Package Linux Distribution
@@ -80,18 +95,7 @@ jobs:
 
       - name: Build Windows Binary with PyInstaller
         run: |
-          pyinstaller --noconfirm --onedir --windowed `
-            --name "MESHCORE-NAVIGATOR" `
-            --icon "meshcore_tray/ui/static/icon.ico" `
-            --add-data "meshcore_tray/ui/static;meshcore_tray/ui/static" `
-            --collect-all "meshcore" `
-            --collect-all "pixoo" `
-            --collect-all "meshcore_tray" `
-            --hidden-import "PyQt6.QtWebEngineWidgets" `
-            --hidden-import "PyQt6.QtWebChannel" `
-            --hidden-import "qasync" `
-            --hidden-import "serial" `
-            meshcore_tray/main.py
+          python build_windows.py
 
       - name: Compress Windows Package
         shell: pwsh
@@ -115,6 +119,10 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: release-artifacts
+
+      - name: Inspect Downloaded Artifacts
+        run: |
+          ls -laR release-artifacts/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
