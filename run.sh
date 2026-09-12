@@ -9,7 +9,9 @@ if [ -f "$SCRIPT_DIR/venv/bin/activate" ]; then
 fi
 
 export PYTHONPATH="$SCRIPT_DIR:$SCRIPT_DIR/vendor/pixoo/src:$SCRIPT_DIR/vendor/meshcore_py/src:$PYTHONPATH"
-export QTWEBENGINE_CHROMIUM_FLAGS="--no-sandbox --disable-features=Vulkan"
+if [ -z "$QTWEBENGINE_CHROMIUM_FLAGS" ]; then
+    export QTWEBENGINE_CHROMIUM_FLAGS="--no-sandbox"
+fi
 
 exec python3 -m meshcore_tray.main "$@"
 

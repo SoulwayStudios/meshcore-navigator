@@ -87,3 +87,47 @@ def test_tray_quit_triggers_initiate_clean_exit(app):
 
     tray._on_quit_requested()
     assert mock_win.initiate_clean_exit.called
+
+
+def test_chromium_flags_do_not_disable_vulkan_by_default():
+    """Vulkan is required by QtWebEngine on Linux Wayland/NVIDIA to avoid dma_buf acquisition failures."""
+    from pathlib import Path
+    root = Path(__file__).parent.parent
+
+    # 1. run.sh
+    run_sh = (root / "run.sh").read_text(encoding="utf-8")
+    assert "--disable-features=Vulkan" not in run_sh
+
+    # 2. main.py
+    main_py = (root / "meshcore_tray" / "main.py").read_text(encoding="utf-8")
+    assert "--disable-features=Vulkan" not in main_py
+
+
+@pytest.mark.asyncio
+async def test_pending_tasks_cancellation():
+    """Verifies that pending background tasks can be cancelled and gathered cleanly."""
+    task_ran = False
+    task_cancelled = False
+
+    async def sample_task():
+        nonlocal task_ran, task_cancelled
+        task_ran = True
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            task_cancelled = True
+            raise
+
+    t = asyncio.create_task(sample_task())
+    await asyncio.sleep(0.01)
+    assert task_ran
+    assert not t.done()
+
+    # Cancel and gather
+    t.cancel()
+    await asyncio.gather(t, return_exceptions=True)
+
+    assert t.done()
+    assert task_cancelled
+
+

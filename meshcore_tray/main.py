@@ -113,9 +113,7 @@ def main():
 
     import os
     if "QTWEBENGINE_CHROMIUM_FLAGS" not in os.environ:
-        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--no-sandbox --disable-features=Vulkan"
-    elif "--disable-features=Vulkan" not in os.environ["QTWEBENGINE_CHROMIUM_FLAGS"]:
-        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] += " --disable-features=Vulkan"
+        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--no-sandbox"
 
     from PyQt6.QtCore import Qt, QCoreApplication
     QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
@@ -183,6 +181,14 @@ def main():
             if "Event loop stopped" not in str(e):
                 raise
         finally:
+            try:
+                pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
+                for t in pending:
+                    t.cancel()
+                if pending:
+                    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            except Exception:
+                pass
             try:
                 app.processEvents()
             except Exception:
