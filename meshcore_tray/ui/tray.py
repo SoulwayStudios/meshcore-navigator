@@ -58,6 +58,8 @@ class SystemTray(QSystemTrayIcon):
 
         # Connect signals
         self.activated.connect(self._on_tray_activated)
+        if self.main_window:
+            self.main_window._tray_icon = self
         bus.subscribe(EventType.NOTIFY_USER, self._on_notify_user)
         bus.subscribe(EventType.MESSAGE_RECEIVED, self._on_message_received)
 
@@ -84,10 +86,20 @@ class SystemTray(QSystemTrayIcon):
         menu.addSeparator()
 
         action_quit = QAction("Quit MESHCORE NAVIGATOR", self)
-        action_quit.triggered.connect(QApplication.instance().quit)
+        action_quit.triggered.connect(self._on_quit_requested)
         menu.addAction(action_quit)
 
         self.setContextMenu(menu)
+
+    def _on_quit_requested(self):
+        """Coordinates an orderly application shutdown with data parking."""
+        logger.info("Quit requested from system tray menu.")
+        if self.main_window and hasattr(self.main_window, "initiate_clean_exit"):
+            self.main_window.initiate_clean_exit()
+        else:
+            app = QApplication.instance()
+            if app:
+                app.quit()
 
     def _on_tray_activated(self, reason):
         if reason in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick):

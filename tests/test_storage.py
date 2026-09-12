@@ -387,14 +387,15 @@ def test_is_valid_coordinate_rejects_null_island_and_ocean():
     assert is_valid_coordinate(54.65897, -3.4346) is True  # Cumbria UK
     assert is_valid_coordinate(53.92365, -9.37733) is True  # Mayo Ireland
     assert is_valid_coordinate(-33.8688, 151.2093) is True  # Sydney
+    assert is_valid_coordinate(-0.1807, -78.4678) is True  # Quito Ecuador (equatorial)
+    assert is_valid_coordinate(0.3476, 32.5825) is True   # Kampala Uganda (equatorial)
 
     # Invalid / corrupt coordinates
     assert is_valid_coordinate(None, -3.0) is False
     assert is_valid_coordinate(54.0, None) is False
     assert is_valid_coordinate(0.0, 0.0) is False  # Null Island
     assert is_valid_coordinate(0.000111, -2.743575) is False  # Equatorial Atlantic Ocean
-    assert is_valid_coordinate(0.5, 10.0) is False  # Latitude < 1.0
-    assert is_valid_coordinate(3.0, 2.0) is False  # Within 5 deg of 0,0
+    assert is_valid_coordinate(0.5, 2.0) is False  # Gulf of Guinea open ocean near Null Island
     assert is_valid_coordinate(95.0, 0.0) is False  # Out of range
 
 

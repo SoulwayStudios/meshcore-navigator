@@ -69,23 +69,26 @@ jobs:
 
   build-linux:
     name: Package Linux Distribution
+    needs: [test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build Portable Linux Package
+      - name: Create Portable Tarball
         run: |
           chmod +x build_portable.sh
           ./build_portable.sh
+          ls -la dist/
 
       - name: Upload Linux Artifact
         uses: actions/upload-artifact@v4
         with:
           name: meshcore-navigator-linux
-          path: dist/*.tar.gz
+          path: dist/meshcore-navigator-linux-*.tar.gz
 
   build-windows:
-    name: Package Windows Standalone (.exe)
+    name: Build Standalone Windows Exe
+    needs: [test]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4

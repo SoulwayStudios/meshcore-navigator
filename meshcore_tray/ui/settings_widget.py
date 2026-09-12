@@ -1,7 +1,7 @@
 """Settings Dialog & Configuration Widget for MeshCore Pixoo Tray."""
 
 import logging
-from typing import Dict
+from typing import Any, Dict, List, Optional
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QUrl
 from PyQt6.QtGui import QColor, QDesktopServices
 from PyQt6.QtWidgets import (

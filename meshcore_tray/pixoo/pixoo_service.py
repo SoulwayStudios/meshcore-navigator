@@ -40,6 +40,12 @@ class PixooService:
         self.renderer.set_config(config)
 
     def _on_message_received(self, msg: MessageEnvelope):
+        if msg.is_direct_message:
+            show_dms = False
+            if self.config and hasattr(self.config, "pixoo") and hasattr(self.config.pixoo, "show_direct_messages"):
+                show_dms = self.config.pixoo.show_direct_messages
+            if not show_dms:
+                return
         self.renderer.trigger_message_alert(msg)
 
     def _on_telemetry_updated(self, telem: TelemetryEnvelope):

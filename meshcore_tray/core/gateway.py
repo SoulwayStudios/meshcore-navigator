@@ -54,10 +54,10 @@ class GatewayManager:
 
         elif cmd_type == "GET_MESSAGES":
             channel = cmd.payload.get("channel")
-            limit = cmd.payload.get("limit", 50)
+            limit = min(int(cmd.payload.get("limit", 50)), 200)
             if self.storage:
-                msgs = self.storage.get_messages(channel=channel, limit=limit)
-                return {"status": "ok", "messages": [m.to_dict() for m in msgs]}
+                msgs = self.storage.get_messages(channel=channel, limit=limit, include_dms=False)
+                return {"status": "ok", "messages": [m.to_dict() for m in msgs if not m.is_direct_message]}
             return {"status": "error", "message": "No storage available"}
 
         elif cmd_type == "GET_TELEMETRY":
@@ -86,11 +86,39 @@ class GatewayManager:
             def _send_json(self, status_code: int, data: Dict[str, Any]):
                 self.send_response(status_code)
                 self.send_header("Content-Type", "application/json")
-                self.send_header("Access-Control-Allow-Origin", "*")
+                # No wildcard CORS: protect against malicious websites invoking loopback APIs
                 self.end_headers()
                 self.wfile.write(json.dumps(data).encode("utf-8"))
 
+            def _is_origin_allowed(self) -> bool:
+                origin = self.headers.get("Origin")
+                if not origin:
+                    return True
+                from urllib.parse import urlparse
+                parsed = urlparse(origin)
+                return parsed.hostname in ("127.0.0.1", "localhost", "::1")
+
+            def _is_authenticated(self) -> bool:
+                expected_token = ""
+                if gateway.config and hasattr(gateway.config, "gateway") and getattr(gateway.config.gateway, "api_token", ""):
+                    expected_token = gateway.config.gateway.api_token.strip()
+                if not expected_token:
+                    return True
+                auth_hdr = self.headers.get("Authorization", "")
+                if auth_hdr.startswith("Bearer "):
+                    token = auth_hdr[7:].strip()
+                else:
+                    token = self.headers.get("X-API-Key", "").strip()
+                return token == expected_token
+
             def do_GET(self):
+                if not self._is_origin_allowed():
+                    self._send_json(403, {"error": "Cross-origin requests from external web pages are forbidden"})
+                    return
+                if not self._is_authenticated():
+                    self._send_json(401, {"error": "Unauthorized: invalid or missing API token"})
+                    return
+
                 if self.path == "/api/status":
                     self._send_json(200, {
                         "app": "MeshCore Pixoo Tray",
@@ -122,8 +150,19 @@ class GatewayManager:
                     self._send_json(404, {"error": "Not Found"})
 
             def do_POST(self):
+                if not self._is_origin_allowed():
+                    self._send_json(403, {"error": "Cross-origin requests from external web pages are forbidden"})
+                    return
+                if not self._is_authenticated():
+                    self._send_json(401, {"error": "Unauthorized: invalid or missing API token"})
+                    return
+
                 try:
                     content_length = int(self.headers.get("Content-Length", 0))
+                    if content_length > 65536:
+                        self._send_json(413, {"error": "Payload exceeds 64KB limit"})
+                        return
+
                     body = self.rfile.read(content_length).decode("utf-8")
                     data = json.loads(body) if body else {}
 

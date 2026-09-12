@@ -92,12 +92,19 @@ def test_meshcore_driver_connect_and_reconnect(tmp_path):
     storage = Storage(db_file)
     driver = MeshCoreDriver(config=AppConfig(), storage=storage)
 
-    with patch.object(driver, "_dispatch_task") as mock_dispatch:
+    def close_coro(coro):
+        try:
+            coro.close()
+        except Exception:
+            pass
+        return MagicMock()
+
+    with patch.object(driver, "_dispatch_task", side_effect=close_coro) as mock_dispatch:
         driver.connect()
         assert mock_dispatch.called
         assert driver._running is True
 
-    with patch.object(driver, "_dispatch_task") as mock_dispatch:
+    with patch.object(driver, "_dispatch_task", side_effect=close_coro) as mock_dispatch:
         driver.reconnect()
         assert mock_dispatch.called
         assert driver._running is True

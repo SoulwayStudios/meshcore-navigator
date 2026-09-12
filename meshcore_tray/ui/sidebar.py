@@ -1,6 +1,7 @@
 """Channels & Contacts Sidebar with Favorites (⭐), Search, and Resizable Splitter."""
 
 from datetime import datetime
+import json
 import logging
 from typing import List, Optional
 from PyQt6.QtCore import Qt, pyqtSignal, QPoint

@@ -356,7 +356,7 @@ class ViewshedWorker(QThread):
         visible_pct = round((total_visible / max(1, total_in_circle)) * 100.0, 1)
         coverage_sq_km = round(math.pi * (self.radius_km ** 2) * (visible_pct / 100.0), 1)
 
-        return self._make_payload(
+        payload = self._make_payload(
             center_ground_elev=center_ground_elev,
             visible_pct=visible_pct,
             coverage_sq_km=coverage_sq_km,
@@ -366,6 +366,8 @@ class ViewshedWorker(QThread):
             ne_lon=ne_lon,
             image_data_url=image_data_url
         )
+        payload["is_fallback"] = True
+        return payload
 
     def _make_payload(
         self,

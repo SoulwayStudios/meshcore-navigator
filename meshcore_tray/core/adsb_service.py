@@ -536,7 +536,7 @@ class ADSBService(QObject):
         worker.finished.connect(lambda w=worker, h=h: self._on_photo_worker_finished(h, w))
         worker.start()
 
-    def _on_photo_worker_finished(self, hex_code: str, worker: AircraftPhotoWorker):
+    def _on_photo_worker_finished(self, hex_code: str, worker: "AircraftPhotoWorker"):
         try:
             worker.wait(100)
         except Exception:

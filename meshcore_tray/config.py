@@ -154,6 +154,7 @@ class PixooDeviceConfig:
         "Public": True,
     })
     show_live_mirror: bool = False
+    show_direct_messages: bool = False
 
 
 @dataclass
@@ -170,6 +171,7 @@ class NotificationConfig:
 class GatewayConfig:
     http_bridge_enabled: bool = True
     http_port: int = 18680
+    api_token: str = ""
 
 
 @dataclass
@@ -368,14 +370,22 @@ class AppConfig:
             config.window_width = int(data["window_width"])
         if "window_height" in data:
             config.window_height = int(data["window_height"])
+        if "last_active_channel" in data:
+            config.last_active_channel = str(data["last_active_channel"])
         return config
 
     def save(self, filepath: Optional[Path] = None):
         target_path = filepath if filepath is not None else CONFIG_FILE
         try:
             target_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(target_path, "w", encoding="utf-8") as f:
+            tmp_path = target_path.with_suffix(".tmp")
+            with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(self.to_dict(), f, indent=2)
+                f.flush()
+                import os
+                os.fsync(f.fileno())
+            import os
+            os.replace(tmp_path, target_path)
             logger.info(f"Saved configuration to {target_path}")
         except Exception as e:
             logger.error(f"Failed to save configuration to {target_path}: {e}")

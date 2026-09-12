@@ -1,5 +1,6 @@
 """Main Modal Window for MeshCore Pixoo System Tray with Discord-Inspired Architecture."""
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Optional
@@ -7,7 +8,7 @@ from PyQt6.QtCore import Qt, QPoint
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QSplitter,
-    QLabel, QPushButton, QFrame, QStackedWidget, QMenu
+    QLabel, QPushButton, QFrame, QStackedWidget, QMenu, QApplication
 )
 
 from meshcore_tray.config import AppConfig
@@ -32,12 +33,18 @@ logger = logging.getLogger("meshcore_tray.main_window")
 class MainWindow(QMainWindow):
     """Primary application window featuring Left Navigation Dock, Main Chat & Map, DMs, and Repeaters Views."""
 
-    def __init__(self, config: AppConfig, storage=None, radio_driver=None, pixoo_service=None, parent=None):
+    def __init__(self, config: AppConfig, storage=None, radio_driver=None, pixoo_service=None, gateway=None, parent=None):
         super().__init__(parent)
         self.config = config
         self.storage = storage
         self.radio_driver = radio_driver
         self.pixoo_service = pixoo_service
+        self.gateway = gateway
+        self._tray_icon = None
+        self._is_shutting_down = False
+        self._shutdown_completed = False
+        self._is_cleaned_up = False
+        self._force_close = False
 
         # Restore last active channel from storage or config
         last_ch = "Public"
@@ -706,26 +713,134 @@ class MainWindow(QMainWindow):
         if hasattr(self, "mesh_map") and self.mesh_map:
             self.mesh_map.display_repeater_neighbors(repeater_contact, neighbors_data)
 
+    def _save_window_state(self):
+        """Persists window geometry and active channel cleanly."""
+        try:
+            if self.config:
+                self.config.window_maximized = self.isMaximized()
+                if not self.isMaximized():
+                    self.config.window_width = self.width()
+                    self.config.window_height = self.height()
+                if hasattr(self, "current_channel") and self.current_channel:
+                    self.config.last_active_channel = self.current_channel
+                self.config.save()
+            if self.storage and hasattr(self, "current_channel") and self.current_channel:
+                try:
+                    self.storage.set_app_state("last_active_channel", self.current_channel)
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.debug(f"Failed to persist window state: {e}")
+
+    def initiate_clean_exit(self):
+        """Coordinates an orderly asynchronous shutdown: stops drivers, checkpoints DB, cleans up WebEngine, and exits."""
+        if getattr(self, "_is_shutting_down", False):
+            return
+        self._is_shutting_down = True
+        self._force_close = True
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = None
+
+        if loop and loop.is_running():
+            asyncio.ensure_future(self._async_clean_exit())
+        else:
+            self._sync_clean_exit()
+
+    async def _async_clean_exit(self):
+        logger.info("Graceful application shutdown initiated...")
+        self._save_window_state()
+
+        # Stop radio driver
+        if self.radio_driver and hasattr(self.radio_driver, "stop"):
+            try:
+                await asyncio.wait_for(self.radio_driver.stop(), timeout=2.5)
+            except Exception as e:
+                logger.debug(f"Error stopping radio driver during exit: {e}")
+
+        # Stop pixoo service
+        if self.pixoo_service and hasattr(self.pixoo_service, "stop"):
+            try:
+                await asyncio.wait_for(self.pixoo_service.stop(), timeout=2.5)
+            except Exception as e:
+                logger.debug(f"Error stopping pixoo service during exit: {e}")
+
+        # Stop local HTTP bridge
+        if getattr(self, "gateway", None) and hasattr(self.gateway, "stop_http_bridge"):
+            try:
+                self.gateway.stop_http_bridge()
+            except Exception as e:
+                logger.debug(f"Error stopping gateway during exit: {e}")
+
+        # Release WebEngine and child widgets
+        self.cleanup()
+
+        # Checkpoint and park database
+        if self.storage and hasattr(self.storage, "backup_database"):
+            try:
+                self.storage.backup_database(reason="app_quit")
+            except Exception as e:
+                logger.warning(f"Database parking backup on exit failed: {e}")
+
+        self._shutdown_completed = True
+        app = QApplication.instance()
+        if app:
+            app.quit()
+
+    def _sync_clean_exit(self):
+        logger.info("Synchronous fallback shutdown initiated...")
+        self._save_window_state()
+
+        if getattr(self, "gateway", None) and hasattr(self.gateway, "stop_http_bridge"):
+            try:
+                self.gateway.stop_http_bridge()
+            except Exception as e:
+                logger.debug(f"Error stopping gateway: {e}")
+
+        self.cleanup()
+
+        if self.storage and hasattr(self.storage, "backup_database"):
+            try:
+                self.storage.backup_database(reason="app_quit")
+            except Exception as e:
+                logger.warning(f"Database parking backup failed: {e}")
+
+        self._shutdown_completed = True
+        app = QApplication.instance()
+        if app:
+            app.quit()
+
     def cleanup(self):
         """Releases WebEngine and async resources cleanly before exit."""
-        if hasattr(self, "mesh_map") and hasattr(self.mesh_map, "cleanup"):
-            self.mesh_map.cleanup()
+        if getattr(self, "_is_cleaned_up", False):
+            return
+        self._is_cleaned_up = True
+        if hasattr(self, "mesh_map") and self.mesh_map and hasattr(self.mesh_map, "cleanup"):
+            try:
+                self.mesh_map.cleanup()
+            except Exception as e:
+                logger.debug(f"Map cleanup note: {e}")
 
     def closeEvent(self, event):
-        """Creates a safety database backup on window close."""
-        try:
-            self.config.window_maximized = self.isMaximized()
-            if not self.isMaximized():
-                self.config.window_width = self.width()
-                self.config.window_height = self.height()
-            self.config.save()
-        except Exception as e:
-            logger.debug(f"Failed to persist window state on close: {e}")
-        if hasattr(self, "storage") and self.storage:
-            try:
-                self.storage.backup_database(reason="window_close")
-            except Exception as e:
-                logger.debug(f"Backup on window close note: {e}")
+        """Handles window close. If tray is active and quit is not forced, hide to tray."""
+        tray_active = getattr(self, "_tray_icon", None) is not None and self._tray_icon.isVisible()
+        if tray_active and not getattr(self, "_force_close", False):
+            self._save_window_state()
+            event.ignore()
+            self.hide()
+            return
+
+        self._save_window_state()
+        if not getattr(self, "_shutdown_completed", False) and not getattr(self, "_is_shutting_down", False):
+            event.ignore()
+            self.initiate_clean_exit()
+            return
+
         self.cleanup()
         super().closeEvent(event)
 

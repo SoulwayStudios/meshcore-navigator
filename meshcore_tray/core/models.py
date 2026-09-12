@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 
 def current_iso_time() -> str:
@@ -136,10 +136,10 @@ def is_valid_coordinate(lat: Optional[Union[float, int, str]], lon: Optional[Uni
     # Check standard range
     if not (-85.0 <= flat <= 85.0 and -180.0 <= flon <= 180.0):
         return False
-    # Reject Null Island / equator ocean coordinates (within 1.0 degree of equator, or 5 degrees of 0,0)
-    if abs(flat) < 1.0:
+    # Reject Null Island and uninitialized/corrupt equatorial ocean coordinates (Gulf of Guinea)
+    if abs(flat) < 0.001:
         return False
-    if abs(flat) < 5.0 and abs(flon) < 5.0:
+    if abs(flat) < 1.0 and -10.0 <= flon <= 6.0:
         return False
     return True
 

@@ -7,7 +7,7 @@ import math
 from pathlib import Path
 import re
 import sqlite3
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 from meshcore_tray.core.models import (
     ChannelInfo, MessageEnvelope, NeighbourInfo, NodeContact, TelemetryEnvelope, PacketPathInfo, DockedCompanionInfo,
     is_valid_alias, is_valid_node_id, is_valid_coordinate, calculate_haversine_distance_km, is_plausible_rf_coordinate
@@ -412,7 +412,7 @@ class Storage:
             cursor.execute("""
                 SELECT node_id, alias, latitude, longitude FROM contacts
                 WHERE latitude IS NOT NULL AND longitude IS NOT NULL
-                  AND (abs(latitude) < 1.0 OR (abs(latitude) < 5.0 AND abs(longitude) < 5.0)
+                  AND ((abs(latitude) < 0.01 AND abs(longitude) < 0.01)
                        OR latitude < -85.0 OR latitude > 85.0 OR longitude < -180.0 OR longitude > 180.0)
             """)
             bad_coords = cursor.fetchall()
@@ -428,14 +428,14 @@ class Storage:
                     UPDATE contacts
                     SET latitude = NULL, longitude = NULL
                     WHERE latitude IS NOT NULL AND longitude IS NOT NULL
-                      AND (abs(latitude) < 1.0 OR (abs(latitude) < 5.0 AND abs(longitude) < 5.0)
+                      AND ((abs(latitude) < 0.01 AND abs(longitude) < 0.01)
                            OR latitude < -85.0 OR latitude > 85.0 OR longitude < -180.0 OR longitude > 180.0)
                 """)
                 cursor.execute("""
                     UPDATE neighbours
                     SET latitude = NULL, longitude = NULL
                     WHERE latitude IS NOT NULL
-                      AND (abs(latitude) < 1.0 OR latitude < -85.0 OR latitude > 85.0)
+                      AND ((abs(latitude) < 0.01 AND abs(longitude) < 0.01) OR latitude < -85.0 OR latitude > 85.0)
                 """)
                 report["corrupt_coords_cleared"] = len(bad_coords)
 
@@ -509,12 +509,10 @@ class Storage:
                     if r_id == c_id:
                         continue
 
-                    # Check 1: public key contains another known node's ID shifted
+                    # Check: public key contains another known node's ID shifted (framing corruption)
                     pk_shifted_match = (len(c_pk) >= 32 and r_id in c_pk[8:])
-                    # Check 2: alias is an amputated prefix of a known repeater (e.g. noc-croaghmoyl vs noc-croaghmoyle-jlo)
-                    alias_amputated_match = (len(c_alias) >= 5 and r_alias.startswith(c_alias) and r_alias != c_alias)
 
-                    if pk_shifted_match or alias_amputated_match:
+                    if pk_shifted_match:
                         cursor.execute("SELECT COUNT(*) as cnt FROM messages WHERE sender_id = ? OR recipient_id = ?", (c_id, c_id))
                         msg_cnt = cursor.fetchone()["cnt"]
                         if msg_cnt == 0:
@@ -792,7 +790,7 @@ class Storage:
         except Exception as e:
             logger.debug(f"Scope discovery hook note: {e}")
 
-    def get_messages(self, channel: Optional[str] = None, contact_id: Optional[str] = None, limit: int = 150) -> List[MessageEnvelope]:
+    def get_messages(self, channel: Optional[str] = None, contact_id: Optional[str] = None, limit: int = 150, include_dms: bool = False) -> List[MessageEnvelope]:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             if contact_id:
@@ -819,7 +817,10 @@ class Storage:
                     ORDER BY timestamp DESC LIMIT ?
                 """, (channel, clean_ch, f"#{clean_ch}", limit))
             else:
-                cursor.execute("SELECT * FROM messages ORDER BY timestamp DESC LIMIT ?", (limit,))
+                if include_dms:
+                    cursor.execute("SELECT * FROM messages ORDER BY timestamp DESC LIMIT ?", (limit,))
+                else:
+                    cursor.execute("SELECT * FROM messages WHERE is_direct_message = 0 ORDER BY timestamp DESC LIMIT ?", (limit,))
 
             rows = cursor.fetchall()
             return [self._row_to_message(r) for r in reversed(rows)]

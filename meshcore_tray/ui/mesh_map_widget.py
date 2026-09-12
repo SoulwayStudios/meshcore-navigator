@@ -1,10 +1,13 @@
 """Interactive Mesh Map & Packet Path Watcher Widget for PyQt6."""
 
 from datetime import datetime
+import html
 import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from meshcore_tray.config import AppConfig
 
 import math
 import time
@@ -3586,7 +3589,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     }),
                     zIndexOffset: 1500
                 }).addTo(neighborsOverlayLayer);
-                repHalo.bindTooltip('<b>📡 ' + (rep.alias || rep.id) + '</b><br><span style="color:#38BDF8;">Host Repeater Station</span>', {
+                repHalo.bindTooltip('<b>📡 ' + escapeHtml(rep.alias || rep.id) + '</b><br><span style="color:#38BDF8;">Host Repeater Station</span>', {
                     permanent: false,
                     direction: 'top',
                     className: 'leaflet-tooltip'
@@ -3613,7 +3616,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     iconAnchor: [19, 19]
                 });
                 var nMarker = L.marker(n.coord, { icon: pulseIcon, zIndexOffset: 1200 }).addTo(neighborsOverlayLayer);
-                nMarker.bindTooltip('<b>📡 ' + (n.alias || n.node_id) + '</b><br><span style="color:#D1D5DB;">SNR: ' + n.snr_str + ' • Seen: ' + n.time_str + '</span>', {
+                nMarker.bindTooltip('<b>📡 ' + escapeHtml(n.alias || n.node_id) + '</b><br><span style="color:#D1D5DB;">SNR: ' + escapeHtml(n.snr_str) + ' • Seen: ' + escapeHtml(n.time_str) + '</span>', {
                     permanent: false,
                     direction: 'top',
                     className: 'leaflet-tooltip'
@@ -4105,7 +4108,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
 
                 var startMarker = L.marker(startPos, { icon: startIcon, zIndexOffset: 1400 }).addTo(visualisedPathLayer);
                 visualisedHighlightMarkers.push(startMarker);
-                startMarker.bindTooltip((senderText || 'Origin') + ' (Message Origin / Start Point)', { direction: 'top', className: 'node-tooltip' });
+                startMarker.bindTooltip(escapeHtml(senderText || 'Origin') + ' (Message Origin / Start Point)', { direction: 'top', className: 'node-tooltip' });
             }
 
             // Markers on map for repeaters (skip phantom nodes)
@@ -4134,7 +4137,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
 
                     var hMarker = L.marker(repPos, { icon: repIcon, zIndexOffset: 1000 }).addTo(visualisedPathLayer);
                     visualisedHighlightMarkers.push(hMarker);
-                    hMarker.bindTooltip((rp.name || rp.alias) + ' (Hop #' + (k + 1) + ')', { direction: 'top', className: 'node-tooltip' });
+                    hMarker.bindTooltip(escapeHtml(rp.name || rp.alias) + ' (Hop #' + (k + 1) + ')', { direction: 'top', className: 'node-tooltip' });
                 }
             }
 
@@ -4161,7 +4164,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
 
                 var homeMarker = L.marker(homePos, { icon: homeIcon, zIndexOffset: 1200 }).addTo(visualisedPathLayer);
                 visualisedHighlightMarkers.push(homeMarker);
-                homeMarker.bindTooltip(homeNodeName + ' (Home Station)', { direction: 'top', className: 'node-tooltip' });
+                homeMarker.bindTooltip(escapeHtml(homeNodeName) + ' (Home Station)', { direction: 'top', className: 'node-tooltip' });
             }
 
             // Populate Floating Draggable Panel
@@ -4772,7 +4775,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     viewshedCenterCircle = L.marker([payload.center_lat, payload.center_lon], {
                         pane: 'p2pPane',
                         icon: pulseIcon
-                    }).bindTooltip('LOS Emitter: ' + (payload.observer_alias || 'Observer') + ' (' + (payload.tx_height_m || 8) + 'm AGL)', { permanent: false, className: 'node-tooltip' }).addTo(map);
+                    }).bindTooltip('LOS Emitter: ' + escapeHtml(payload.observer_alias || 'Observer') + ' (' + (payload.tx_height_m || 8) + 'm AGL)', { permanent: false, className: 'node-tooltip' }).addTo(map);
                 }
             } catch (err) {
                 console.error('Error rendering viewshed coverage overlay:', err);
@@ -4821,7 +4824,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 weight: 2,
                 fillColor: '#38BDF8',
                 fillOpacity: 1.0
-            }).bindTooltip(alias1 || 'Tx Point', { permanent: false, className: 'node-tooltip' }).addTo(map);
+            }).bindTooltip(escapeHtml(alias1 || 'Tx Point'), { permanent: false, className: 'node-tooltip' }).addTo(map);
 
             var m2 = L.circleMarker([lat2, lon2], {
                 pane: 'p2pPane',
@@ -4830,7 +4833,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 weight: 2,
                 fillColor: color,
                 fillOpacity: 1.0
-            }).bindTooltip(alias2 || 'Rx Point', { permanent: false, className: 'node-tooltip' }).addTo(map);
+            }).bindTooltip(escapeHtml(alias2 || 'Rx Point'), { permanent: false, className: 'node-tooltip' }).addTo(map);
 
             currentP2PMarkers = [m1, m2];
         }
@@ -8453,6 +8456,9 @@ class MeshMapWidget(QWidget):
 
     def cleanup(self):
         """Stops background polling timers and detaches WebEngine page cleanly."""
+        if getattr(self, "_is_cleaned_up", False):
+            return
+        self._is_cleaned_up = True
         try:
             if hasattr(self, "_refresh_timer") and self._refresh_timer.isActive():
                 self._refresh_timer.stop()
@@ -8461,10 +8467,13 @@ class MeshMapWidget(QWidget):
             if hasattr(self, "thunderstorm_service") and self.thunderstorm_service:
                 self.thunderstorm_service.set_enabled(False)
             if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self.web_view:
-                self.web_view.stop()
-                page = self.web_view.page()
-                if page:
-                    self.web_view.setPage(None)
-                    page.deleteLater()
+                try:
+                    self.web_view.stop()
+                    page = self.web_view.page()
+                    if page is not None:
+                        self.web_view.setPage(None)
+                        page.deleteLater()
+                except RuntimeError:
+                    pass
         except Exception as e:
             logger.debug(f"Map cleanup exception: {e}")

@@ -77,9 +77,13 @@ async def async_main(args, storage_holder: dict):
         config=config,
         storage=storage,
         radio_driver=radio_driver,
-        pixoo_service=pixoo_service
+        pixoo_service=pixoo_service,
+        gateway=gateway
     )
     storage_holder["main_window"] = main_window
+    storage_holder["radio_driver"] = radio_driver
+    storage_holder["pixoo_service"] = pixoo_service
+    storage_holder["gateway"] = gateway
     tray = SystemTray(main_window=main_window, config=config)
     tray.show()
 
@@ -129,18 +133,31 @@ def main():
     storage_holder = {}
 
     def _safe_quit():
+        mw = storage_holder.get("main_window")
+        if mw and getattr(mw, "_shutdown_completed", False):
+            # Clean exit already executed with database parked
+            return
+
+        gw = storage_holder.get("gateway")
+        if gw and hasattr(gw, "stop_http_bridge"):
+            try:
+                gw.stop_http_bridge()
+            except Exception as e:
+                logger.debug(f"Gateway stop note on quit: {e}")
+
         st = storage_holder.get("storage")
         if st:
             try:
                 st.backup_database(reason="app_quit")
             except Exception as e:
                 logger.warning(f"Error creating database backup on quit: {e}")
-        mw = storage_holder.get("main_window")
+
         if mw and hasattr(mw, "cleanup"):
             try:
                 mw.cleanup()
             except Exception as e:
                 logger.debug(f"Cleanup note: {e}")
+
         try:
             if loop.is_running():
                 loop.stop()

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Version bumping script for MESHCORE NAVIGATOR.
+"""Semantic Version bumping script for MESHCORE NAVIGATOR (SemVer 2.0.0).
 
 Usage:
-    python scripts/bump_version.py [--feature | --commit]
-    --commit (default): Increments patch version by 0.0.1 (e.g., 0.0.2 -> 0.0.3)
-    --feature:         Increments minor version by 0.1.0 (e.g., 0.0.2 -> 0.1.0)
+    python scripts/bump_version.py [--patch | --minor | --major | --feature]
+    --patch (default): Increments patch version by 1 (e.g., 0.3.0 -> 0.3.1)
+    --minor / --feature: Increments minor version by 1 (e.g., 0.3.0 -> 0.4.0)
+    --major:           Increments major version by 1 (e.g., 0.3.0 -> 1.0.0)
 """
 
 import sys
@@ -24,13 +25,17 @@ def get_current_version() -> str:
     return match.group(1)
 
 
-def bump(current: str, is_feature: bool) -> str:
+def bump(current: str, mode: str = "patch") -> str:
     parts = [int(p) for p in current.split(".")]
     while len(parts) < 3:
         parts.append(0)
 
     major, minor, patch = parts[0], parts[1], parts[2]
-    if is_feature:
+    if mode == "major":
+        major += 1
+        minor = 0
+        patch = 0
+    elif mode in ("minor", "feature"):
         minor += 1
         patch = 0
     else:
@@ -55,9 +60,16 @@ def update_files(new_version: str):
 
 
 def main():
-    is_feature = "--feature" in sys.argv
+    mode = "patch"
+    if "--major" in sys.argv:
+        mode = "major"
+    elif "--minor" in sys.argv or "--feature" in sys.argv:
+        mode = "minor"
+    elif "--patch" in sys.argv:
+        mode = "patch"
+
     current = get_current_version()
-    new_version = bump(current, is_feature)
+    new_version = bump(current, mode)
     update_files(new_version)
 
 

@@ -46,19 +46,42 @@ class MeshCoreDriver(BaseRadioDriver):
 
     def _dispatch_task(self, coro):
         """Dispatches an asynchronous task safely from either the main thread or a background thread."""
-        loop = None
+        target_loop = None
         try:
-            loop = asyncio.get_running_loop()
+            running_loop = asyncio.get_running_loop()
         except RuntimeError:
-            if hasattr(bus, "_loop") and bus._loop and bus._loop.is_running():
-                loop = bus._loop
-        if loop and loop.is_running():
+            running_loop = None
+
+        if hasattr(bus, "_loop") and bus._loop and bus._loop.is_running():
+            target_loop = bus._loop
+        elif running_loop and running_loop.is_running():
+            target_loop = running_loop
+
+        if target_loop and target_loop.is_running():
             try:
-                return loop.create_task(coro)
-            except RuntimeError:
-                return asyncio.run_coroutine_threadsafe(coro, loop)
-        logger.warning("No running asyncio event loop found to dispatch task")
-        return None
+                if running_loop is target_loop:
+                    return target_loop.create_task(coro)
+                else:
+                    return asyncio.run_coroutine_threadsafe(coro, target_loop)
+            except Exception as e:
+                logger.warning(f"Failed to dispatch coroutine to event loop: {e}")
+                try:
+                    coro.close()
+                except Exception:
+                    pass
+                return None
+
+        # No running loop available (e.g. during synchronous test execution or offline setup)
+        try:
+            asyncio.run(coro)
+            return True
+        except Exception as e:
+            logger.debug(f"No running loop and asyncio.run was unable to execute task: {e}")
+            try:
+                coro.close()
+            except Exception:
+                pass
+            return None
 
 
     def _record_outgoing_message(self, msg_id: str, channel: str, text: str):
@@ -1791,12 +1814,23 @@ class MeshCoreDriver(BaseRadioDriver):
         msg_id = f"out-{int(datetime.now().timestamp()*1000)}"
         channel_clean = channel.lstrip("#")
         channel_idx = 0
+        found_channel = False
         if self.storage:
             channels = self.storage.get_channels()
             for ch in channels:
                 if ch.name.lower() == channel.lower() or ch.name.lstrip("#").lower() == channel_clean.lower():
                     channel_idx = ch.channel_id
+                    found_channel = True
                     break
+
+        if not found_channel and channel_clean.lower() in ("public", ""):
+            channel_idx = 0
+            found_channel = True
+
+        if not found_channel:
+            err_msg = f"Cannot send message: channel '{channel}' is not configured on this radio."
+            logger.warning(err_msg)
+            return {"status": "error", "message": err_msg}
 
         msg = MessageEnvelope(
             id=msg_id,
@@ -1921,20 +1955,17 @@ class MeshCoreDriver(BaseRadioDriver):
                 if pub and len(pub) >= 64:
                     dst_pubkey = pub
 
-        # Log and dispatch via asyncio task
+        # Dispatch via thread-safe _dispatch_task
         if self.client and self.is_connected():
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(self._async_send_repeater_cmd(dst_pubkey, cmd, repeater_id))
-            except RuntimeError:
-                asyncio.create_task(self._async_send_repeater_cmd(dst_pubkey, cmd, repeater_id))
+            self._dispatch_task(self._async_send_repeater_cmd(dst_pubkey, cmd, repeater_id))
 
         return {"status": "ok", "message_id": msg_id}
 
     async def _async_send_repeater_cmd(self, dst_pubkey: str, command: str, repeater_id: str = ""):
         try:
             target_id = repeater_id or dst_pubkey[:12]
-            logger.info(f"Processing repeater command for {target_id}: {command}")
+            safe_log_cmd = "!login [REDACTED]" if command.strip().lower().startswith("!login") else command
+            logger.info(f"Processing repeater command for {target_id}: {safe_log_cmd}")
             if not self.client or not hasattr(self.client, "commands"):
                 return
 
@@ -2237,7 +2268,10 @@ class MeshCoreDriver(BaseRadioDriver):
                         slot = i
                         break
                 if slot is None:
-                    slot = 1
+                    return {
+                        "status": "error",
+                        "message": "Maximum channel capacity reached (slots 1–7 are full). Please remove or reassign a channel before adding a new one."
+                    }
 
         existing = self.storage.get_channel(clean_name) if self.storage else None
         is_fav = bool(self.config and self.config.is_channel_favorite(clean_name))
@@ -2514,21 +2548,8 @@ class MeshCoreDriver(BaseRadioDriver):
         if not self.client or not self.is_connected():
             logger.warning("Cannot send advert: radio hardware is not connected")
             return False
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(self._async_send_advert(flood))
-            return True
-        except RuntimeError:
-            try:
-                asyncio.create_task(self._async_send_advert(flood))
-                return True
-            except RuntimeError:
-                try:
-                    asyncio.run(self._async_send_advert(flood))
-                    return True
-                except Exception as e:
-                    logger.error("Failed executing advert task: %s", e)
-                    return False
+        task = self._dispatch_task(self._async_send_advert(flood))
+        return task is not None
 
     async def _async_send_advert(self, flood: bool = False):
         try:

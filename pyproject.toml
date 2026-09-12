@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "meshcore-navigator"
-version = "0.2.8"
+version = "0.3.0"
 description = "MESHCORE NAVIGATOR - MeshCore Desktop Station, Live Map & Matrix Integration"
 readme = "README.md"
 license = { text = "GPL-3.0-or-later" }
@@ -34,6 +34,12 @@ meshcore-tray = "meshcore_tray.main:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["meshcore_tray*"]
+
+[tool.setuptools.package-data]
+meshcore_tray = [
+    "ui/static/*",
+    "ui/static/**/*",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

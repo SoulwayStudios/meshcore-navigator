@@ -394,7 +394,12 @@ class ElevationProfileWorker(QThread):
                 })
 
             # Determine overall LOS status
-            if min_optical_clearance < 0.0:
+            has_dem = any(e is not None for e in known_elev_vals)
+            if not has_dem:
+                status = "UNKNOWN"
+                status_label = "Elevation Data Unavailable"
+                status_color = "#9CA3AF"
+            elif min_optical_clearance < 0.0:
                 status = "OBSTRUCTED"
                 status_label = "Line of Sight Blocked"
                 status_color = "#EF4444"
