@@ -32,6 +32,7 @@
 - [🎨 Themes & UI Color Customization](#-themes--ui-color-customization)
 - [🖼️ Divoom Pixoo 64 Integration](#️-divoom-pixoo-64-integration)
 - [🌐 Local REST API & SDR Bridge](#-local-rest-api--sdr-bridge)
+- [🤝 Contributing](#-contributing)
 - [☕ Support the Developer](#-support-the-developer)
 
 ---
@@ -186,6 +187,12 @@ MESHCORE NAVIGATOR features an integrated HTTP JSON REST bridge listening on `ht
 ## 📄 License
 
 MESHCORE NAVIGATOR is free and open-source software licensed under the **[GNU General Public License v3.0 (GPL-3.0-or-later)](LICENSE)**.
+
+---
+
+## 🤝 Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for a beginner-friendly guide to forks, branches, pull requests, and review.
 
 ---
 
