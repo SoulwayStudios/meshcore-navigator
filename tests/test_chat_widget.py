@@ -267,7 +267,9 @@ def test_message_body_label_wrapping_and_sizing(qapp):
     assert min_hint.width() <= 60
 
     # Test that height increases as available width shrinks (proper word wrapping)
-    h_wide = lbl.heightForWidth(600)
+    # A fixed 600px width can still wrap with wider font substitutions.
+    wide_width = lbl.fontMetrics().horizontalAdvance(lbl.text()) + 2 * lbl.fontMetrics().height()
+    h_wide = lbl.heightForWidth(wide_width)
     h_narrow = lbl.heightForWidth(300)
     assert h_narrow > h_wide, f"Narrow height ({h_narrow}) should be greater than wide height ({h_wide})"
 
@@ -311,9 +313,16 @@ def test_chat_bubble_long_string_wrapping_in_chat_widget(qapp, tmp_path):
     bubble = chat._bubbles["arrow_msg_2"]
     assert bubble.minimumSizeHint().width() <= 80
 
-    # Body label inside bubble must be multi-line wrapped at 350px width
+    # Compare against a measured single-line width. Both 350px and 600px
+    # legitimately occupy two lines with wider fonts such as DejaVu Sans.
     body_lbl = bubble.body_lbl
-    assert body_lbl.heightForWidth(350) > body_lbl.heightForWidth(600)
+    wide_width = body_lbl.fontMetrics().horizontalAdvance(body_lbl.text()) + 2 * body_lbl.fontMetrics().height()
+    narrow_height = body_lbl.heightForWidth(350)
+    wide_height = body_lbl.heightForWidth(wide_width)
+    assert narrow_height > wide_height, (
+        f"Expected wrapping at 350px: {narrow_height=}, {wide_height=}, {wide_width=}"
+    )
+    chat.close()
 
 
 def test_message_body_label_copy_sanitizes_zwsp(qapp):
