@@ -53,6 +53,7 @@ from meshcore_tray.core.adsb_service import ADSBService
 from meshcore_tray.core.thunderstorm_service import ThunderstormService
 from meshcore_tray.core.elevation_service import ElevationService
 from meshcore_tray.core.viewshed_service import ViewshedService
+from meshcore_tray.core.space_weather_service import SpaceWeatherService
 from meshcore_tray.ui.elevation_profile_widget import ElevationProfileWidget
 
 STATIC_VENDOR_DIR = Path(__file__).parent / "static" / "vendor"
@@ -1167,6 +1168,125 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             color: #FFFFFF;
         }
 
+        /* Floating Space Weather & Aurora Panel */
+        .aurora-legend-panel {
+            position: absolute;
+            top: 70px;
+            left: 55px;
+            z-index: 1000;
+            background: rgba(15, 23, 42, 0.94);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(168, 85, 247, 0.45);
+            border-radius: 10px;
+            padding: 10px 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7), 0 0 15px rgba(168, 85, 247, 0.2);
+            user-select: none;
+            width: 275px;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            color: #E2E8F0;
+        }
+        .aurora-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid rgba(168, 85, 247, 0.3);
+            padding-bottom: 6px;
+        }
+        .aurora-title {
+            font-size: 11px;
+            font-weight: 700;
+            color: #C084FC;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            letter-spacing: 0.5px;
+        }
+        .aurora-refresh-btn, .aurora-close-btn {
+            background: transparent;
+            border: none;
+            color: #94A3B8;
+            font-size: 13px;
+            font-weight: bold;
+            cursor: pointer;
+            padding: 2px 4px;
+            border-radius: 4px;
+            line-height: 1;
+        }
+        .aurora-refresh-btn:hover {
+            color: #C084FC;
+            background: rgba(168, 85, 247, 0.2);
+        }
+        .aurora-close-btn:hover {
+            color: #FFFFFF;
+            background: rgba(239, 68, 68, 0.2);
+        }
+        .aurora-kpi-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 6px;
+        }
+        .aurora-kpi-card {
+            background: rgba(30, 41, 59, 0.85);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 6px;
+            padding: 5px 6px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+        }
+        .aurora-kpi-label {
+            font-size: 8px;
+            font-weight: 600;
+            color: #94A3B8;
+            margin-bottom: 2px;
+            letter-spacing: 0.3px;
+        }
+        .aurora-kpi-val {
+            font-size: 11.5px;
+            font-weight: 700;
+            color: #F8FAFC;
+        }
+        .aurora-kpi-sub {
+            font-size: 8.5px;
+            color: #CBD5E1;
+            margin-top: 1px;
+            white-space: nowrap;
+        }
+        .aurora-scale-section {
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+        }
+        .aurora-scale-bar {
+            display: flex;
+            width: 100%;
+            height: 14px;
+            border-radius: 3px;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .aurora-scale-bar span {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 8.5px;
+            font-weight: 600;
+            color: #FFFFFF;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+        }
+        .aurora-footer {
+            display: flex;
+            flex-direction: column;
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+            padding-top: 6px;
+        }
+
         /* Animated Lightning Strike Markers */
         .lightning-marker-wrap {
             display: flex;
@@ -1795,6 +1915,59 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             <span>📡 RainViewer Radar • ⚡ Blitzortung Live Feed</span>
         </div>
     </div>
+    <!-- Floating Space Weather & Aurora Panel -->
+    <div id="aurora-legend-panel" class="aurora-legend-panel" style="display: none;">
+        <div class="aurora-header">
+            <div class="aurora-title">
+                <span>🌌</span>
+                <span>SPACE WEATHER & AURORA</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 4px;">
+                <button class="aurora-refresh-btn" onclick="if (window.pyBridge && window.pyBridge.on_space_weather_refresh) window.pyBridge.on_space_weather_refresh()" title="Refresh NOAA Feeds">↺</button>
+                <button class="aurora-close-btn" onclick="if (window.pyBridge && window.pyBridge.on_space_weather_toggled) window.pyBridge.on_space_weather_toggled(false)" title="Close Layer">×</button>
+            </div>
+        </div>
+        <div class="aurora-kpi-grid">
+            <div class="aurora-kpi-card" id="aurora-kp-card">
+                <div class="aurora-kpi-label">GEOMAGNETIC</div>
+                <div class="aurora-kpi-val" id="aurora-kp-val">--</div>
+                <div class="aurora-kpi-sub" id="aurora-kp-sub">--</div>
+            </div>
+            <div class="aurora-kpi-card">
+                <div class="aurora-kpi-label">SOLAR WIND</div>
+                <div class="aurora-kpi-val" id="aurora-wind-val">-- km/s</div>
+                <div class="aurora-kpi-sub" id="aurora-bz-sub">Bz: -- nT</div>
+            </div>
+            <div class="aurora-kpi-card">
+                <div class="aurora-kpi-label">SOLAR FLUX</div>
+                <div class="aurora-kpi-val" id="aurora-sfi-val">-- sfu</div>
+                <div class="aurora-kpi-sub" id="aurora-scales-sub">R0 S0 G0</div>
+            </div>
+        </div>
+        <div class="aurora-scale-section">
+            <div style="display: flex; justify-content: space-between; font-size: 9px; color: #94A3B8; margin-bottom: 2px;">
+                <span>OVATION Aurora Probability</span>
+                <span id="aurora-max-prob">Peak: --%</span>
+            </div>
+            <div class="aurora-scale-bar">
+                <span style="background: rgba(34, 197, 94, 0.4);" title="5-15% Faint">5%</span>
+                <span style="background: rgba(74, 222, 128, 0.6);" title="15-30% Visible">15%</span>
+                <span style="background: rgba(56, 189, 248, 0.7);" title="30-50% Moderate">30%</span>
+                <span style="background: rgba(192, 132, 252, 0.8);" title="50-75% Strong">50%</span>
+                <span style="background: rgba(244, 63, 94, 0.9);" title="75%+ Overhead">75%</span>
+            </div>
+        </div>
+        <div class="aurora-footer">
+            <div style="display: flex; align-items: center; justify-content: space-between; width: 100%; font-size: 9.5px; color: #94A3B8;">
+                <span>Layer Opacity</span>
+                <input type="range" id="aurora-opacity-range" min="10" max="100" value="60" style="width: 105px; height: 4px; accent-color: #A855F7; cursor: pointer;" oninput="updateAuroraOpacity(this.value)">
+                <span id="aurora-opacity-label">60%</span>
+            </div>
+            <div id="aurora-time-label" style="font-size: 8.5px; color: #64748B; text-align: right; width: 100%; margin-top: 4px;">
+                NOAA SWPC
+            </div>
+        </div>
+    </div>
     <script>
         window.addEventListener('error', function(e) {
             console.error('[Leaflet Window Error] ' + (e.message || e) + ' at ' + (e.filename || '') + ':' + (e.lineno || ''));
@@ -1957,6 +2130,11 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
         map.createPane('lightningPane');
         map.getPane('lightningPane').style.zIndex = 580;
         map.getPane('lightningPane').style.pointerEvents = 'none';
+
+        // Dedicated pane for Aurora Borealis / Australis at zIndex 355 (above tropo at 350, below radar at 360)
+        map.createPane('auroraPane');
+        map.getPane('auroraPane').style.zIndex = 355;
+        map.getPane('auroraPane').style.pointerEvents = 'none';
 
         // Dedicated pane for LOS / Viewshed Coverage Overlay at zIndex 370 (above tropo/radar, below routes at 400)
         map.createPane('losPane');
@@ -4436,6 +4614,179 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
         }
         window.addLightningStrike = addLightningStrike;
 
+        var currentAuroraLayer = null;
+        var currentAuroraOpacity = 0.60;
+        var auroraActive = false;
+
+        function clearSpaceWeatherLayer() {
+            if (currentAuroraLayer !== null) {
+                map.removeLayer(currentAuroraLayer);
+                currentAuroraLayer = null;
+            }
+            auroraActive = false;
+            var panel = document.getElementById('aurora-legend-panel');
+            if (panel) panel.style.display = 'none';
+        }
+        window.clearSpaceWeatherLayer = clearSpaceWeatherLayer;
+
+        function updateAuroraOpacity(val) {
+            currentAuroraOpacity = val / 100.0;
+            var lbl = document.getElementById('aurora-opacity-label');
+            if (lbl) lbl.textContent = val + '%';
+            if (currentAuroraLayer) {
+                currentAuroraLayer.eachLayer(function(layer) {
+                    if (layer._baseFillOpacity !== undefined) {
+                        layer.setStyle({ fillOpacity: layer._baseFillOpacity * currentAuroraOpacity });
+                    }
+                });
+            }
+            if (window.pyBridge && window.pyBridge.on_space_weather_opacity) {
+                window.pyBridge.on_space_weather_opacity(currentAuroraOpacity);
+            }
+        }
+        window.updateAuroraOpacity = updateAuroraOpacity;
+
+        window.onSpaceWeatherReady = function(payload) {
+            if (!payload) return;
+            auroraActive = true;
+            var panel = document.getElementById('aurora-legend-panel');
+            if (panel) panel.style.display = 'flex';
+
+            var kpValEl = document.getElementById('aurora-kp-val');
+            var kpSubEl = document.getElementById('aurora-kp-sub');
+            var kpCard = document.getElementById('aurora-kp-card');
+            if (kpValEl && payload.kp !== undefined) {
+                kpValEl.textContent = 'Kp ' + payload.kp.toFixed(1);
+                kpValEl.style.color = payload.kp_color || '#10B981';
+            }
+            if (kpSubEl && payload.kp_status) {
+                kpSubEl.textContent = (payload.g_scale && payload.g_scale !== 'G0' ? payload.g_scale + ' • ' : '') + payload.kp_status;
+            }
+            if (kpCard && payload.kp_color) {
+                kpCard.style.borderColor = payload.kp_color;
+            }
+
+            var windValEl = document.getElementById('aurora-wind-val');
+            var bzSubEl = document.getElementById('aurora-bz-sub');
+            if (windValEl) {
+                windValEl.textContent = payload.solar_wind_speed ? payload.solar_wind_speed + ' km/s' : '-- km/s';
+            }
+            if (bzSubEl) {
+                if (payload.solar_wind_bz !== null && payload.solar_wind_bz !== undefined) {
+                    var isSouth = payload.solar_wind_bz < 0;
+                    bzSubEl.innerHTML = 'Bz: <span style=\"color:' + (isSouth ? '#4ADE80' : '#94A3B8') + '\">' + payload.solar_wind_bz + ' nT ' + (isSouth ? '▼' : '▲') + '</span>';
+                } else {
+                    bzSubEl.textContent = 'Bz: -- nT';
+                }
+            }
+
+            var sfiValEl = document.getElementById('aurora-sfi-val');
+            var scalesSubEl = document.getElementById('aurora-scales-sub');
+            if (sfiValEl) {
+                sfiValEl.textContent = payload.solar_flux ? payload.solar_flux + ' sfu' : '-- sfu';
+            }
+            if (scalesSubEl && payload.scales) {
+                scalesSubEl.textContent = 'R' + (payload.scales.R || '0') + ' S' + (payload.scales.S || '0') + ' G' + (payload.scales.G || '0');
+            }
+
+            var maxProbEl = document.getElementById('aurora-max-prob');
+            if (maxProbEl && payload.max_prob !== undefined) {
+                maxProbEl.textContent = 'Peak: ' + payload.max_prob + '%';
+            }
+
+            var timeLabel = document.getElementById('aurora-time-label');
+            if (timeLabel) {
+                var tStr = payload.forecast_time || payload.updated_at || '';
+                if (tStr) {
+                    try {
+                        var dt = new Date(tStr);
+                        timeLabel.textContent = 'NOAA SWPC • ' + dt.toUTCString().replace('GMT', 'UTC');
+                    } catch(e) {
+                        timeLabel.textContent = 'NOAA SWPC • ' + tStr;
+                    }
+                }
+            }
+
+            if (payload.grid && payload.grid.b64_grid) {
+                try {
+                    var grid = payload.grid;
+                    var w = grid.w || 360;
+                    var h = grid.h || 181;
+                    var binStr = atob(grid.b64_grid);
+                    var len = binStr.length;
+                    var bytes = new Uint8Array(len);
+                    for (var i = 0; i < len; i++) {
+                        bytes[i] = binStr.charCodeAt(i);
+                    }
+
+                    var thresholds = [5, 15, 30, 50, 75];
+                    var colorStyles = {
+                        5:  { fill: '#22c55e', baseFillOpacity: 0.25, stroke: '#16a34a', weight: 1.0 },
+                        15: { fill: '#4ade80', baseFillOpacity: 0.40, stroke: '#22c55e', weight: 1.2 },
+                        30: { fill: '#38bdf8', baseFillOpacity: 0.55, stroke: '#0284c7', weight: 1.5 },
+                        50: { fill: '#c084fc', baseFillOpacity: 0.70, stroke: '#9333ea', weight: 1.8 },
+                        75: { fill: '#f43f5e', baseFillOpacity: 0.85, stroke: '#e11d48', weight: 2.0 }
+                    };
+
+                    var rawContours = d3.contours().size([w, h]).thresholds(thresholds)(bytes);
+                    var features = [];
+
+                    for (var cIdx = 0; cIdx < rawContours.length; cIdx++) {
+                        var c = rawContours[cIdx];
+                        if (!c.coordinates || c.coordinates.length === 0) continue;
+                        var thVal = c.value;
+                        var newCoords = c.coordinates.map(function(ringList) {
+                            return ringList.map(function(ring) {
+                                return ring.map(function(pt) {
+                                    var lon = pt[0] - 180;
+                                    var lat = pt[1] - 90;
+                                    return [Number(lon.toFixed(2)), Number(lat.toFixed(2))];
+                                });
+                            });
+                        });
+                        features.push({
+                            type: "Feature",
+                            properties: { threshold: thVal },
+                            geometry: {
+                                type: "MultiPolygon",
+                                coordinates: newCoords
+                            }
+                        });
+                    }
+
+                    if (currentAuroraLayer !== null) {
+                        map.removeLayer(currentAuroraLayer);
+                        currentAuroraLayer = null;
+                    }
+
+                    var geoJsonData = { type: "FeatureCollection", features: features };
+                    currentAuroraLayer = L.geoJSON(geoJsonData, {
+                        pane: 'auroraPane',
+                        style: function(feat) {
+                            var th = feat.properties.threshold || 5;
+                            var cs = colorStyles[th] || colorStyles[5];
+                            return {
+                                fillColor: cs.fill,
+                                fillOpacity: cs.baseFillOpacity * currentAuroraOpacity,
+                                color: cs.stroke,
+                                weight: cs.weight,
+                                opacity: 0.9,
+                                interactive: false
+                            };
+                        },
+                        onEachFeature: function(feat, layer) {
+                            var th = feat.properties.threshold || 5;
+                            var cs = colorStyles[th] || colorStyles[5];
+                            layer._baseFillOpacity = cs.baseFillOpacity;
+                        }
+                    }).addTo(map);
+
+                } catch(err) {
+                    console.error("Failed to contour aurora grid:", err);
+                }
+            }
+        };
+
         function previewPacketPath(coords, meta) {
             clearPreviewPacketPath();
             if (!coords || coords.length < 2) return;
@@ -5942,6 +6293,22 @@ class WebBridge(QObject):
     def on_thunderstorm_toggled(self, enabled: bool):
         self.thunderstorm_toggled_signal.emit(enabled)
 
+    space_weather_toggled_signal = pyqtSignal(bool)
+    space_weather_refresh_signal = pyqtSignal()
+    space_weather_opacity_signal = pyqtSignal(float)
+
+    @pyqtSlot(bool)
+    def on_space_weather_toggled(self, enabled: bool):
+        self.space_weather_toggled_signal.emit(enabled)
+
+    @pyqtSlot()
+    def on_space_weather_refresh(self):
+        self.space_weather_refresh_signal.emit()
+
+    @pyqtSlot(float)
+    def on_space_weather_opacity(self, opacity: float):
+        self.space_weather_opacity_signal.emit(opacity)
+
     adsb_color_mode_changed_signal = pyqtSignal(str)
     request_aircraft_photo_signal = pyqtSignal(str)
 
@@ -6017,6 +6384,12 @@ class MeshMapWidget(QWidget):
         self.show_thunderstorm = getattr(self.config.meshcore, "map_show_thunderstorm", False) if self.config else False
         self.thunderstorm_service = ThunderstormService(parent=self)
         self.thunderstorm_service.radar_updated.connect(self._on_thunderstorm_radar_updated)
+
+        self.show_space_weather = getattr(self.config.meshcore, "map_show_space_weather", False) if self.config else False
+        self.space_weather_service = SpaceWeatherService(parent=self)
+        self.space_weather_service.weather_updated.connect(self._on_space_weather_updated)
+        self.space_weather_service.weather_loading.connect(self._on_space_weather_loading)
+        self.space_weather_service.weather_error.connect(self._on_space_weather_error)
 
         self.elevation_service = ElevationService(parent=self)
         self.elevation_service.profile_ready.connect(self._on_elevation_profile_ready)
@@ -6114,6 +6487,9 @@ class MeshMapWidget(QWidget):
             self.bridge.activity_timeframe_changed_signal.connect(self._on_bridge_activity_timeframe_changed)
             self.bridge.activity_heatmap_toggled_signal.connect(self._on_bridge_activity_heatmap_toggled)
             self.bridge.thunderstorm_toggled_signal.connect(self._on_bridge_thunderstorm_toggled)
+            self.bridge.space_weather_toggled_signal.connect(self.set_space_weather)
+            self.bridge.space_weather_refresh_signal.connect(lambda: self.space_weather_service.fetch_weather(force=True))
+            self.bridge.space_weather_opacity_signal.connect(self._on_space_weather_opacity_changed)
             self.bridge.map_context_menu_signal.connect(
                 lambda lat, lon, x, y: QTimer.singleShot(0, lambda: self._show_map_context_menu(lat, lon, x, y))
             )
@@ -6614,6 +6990,8 @@ class MeshMapWidget(QWidget):
             self.web_view.page().runJavaScript("if (window.setBaseMapLayer) window.setBaseMapLayer('topo');")
         self.apply_colors()
         self.refresh_map_data()
+        if getattr(self, "show_space_weather", False):
+            self.set_space_weather(True)
         self.map_ready.emit()
 
     def _on_path_modes_toggle(self):
@@ -7419,6 +7797,59 @@ class MeshMapWidget(QWidget):
 
     def _on_bridge_thunderstorm_toggled(self, enabled: bool):
         self.set_thunderstorm(enabled)
+
+    def set_space_weather(self, enabled: bool):
+        """Toggles real-time NOAA space weather telemetry and aurora forecast overlay."""
+        self.show_space_weather = bool(enabled)
+        if self.config and hasattr(self.config, "meshcore"):
+            self.config.meshcore.map_show_space_weather = self.show_space_weather
+            try:
+                self.config.save()
+            except Exception:
+                pass
+
+        p = self.window()
+        if p and hasattr(p, "nav_dock") and hasattr(p.nav_dock, "btn_space_weather"):
+            p.nav_dock.btn_space_weather.blockSignals(True)
+            p.nav_dock.btn_space_weather.setChecked(self.show_space_weather)
+            p.nav_dock.btn_space_weather.blockSignals(False)
+
+        if self.show_space_weather:
+            if hasattr(self, "watcher_status"):
+                self.watcher_status.setText("🌌 <b>Space Weather:</b> Connecting to NOAA SWPC...")
+            poll_int = getattr(self.config.meshcore, "space_weather_poll_interval_min", 15) if self.config else 15
+            self.space_weather_service.start_polling(interval_min=poll_int)
+        else:
+            self.space_weather_service.stop_polling()
+            if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
+                self.web_view.page().runJavaScript("clearSpaceWeatherLayer();")
+
+    def _on_space_weather_updated(self, payload: dict):
+        if not getattr(self, "show_space_weather", False):
+            return
+        kp = payload.get("kp", 0.0)
+        kp_status = payload.get("kp_status", "")
+        if hasattr(self, "watcher_status"):
+            self.watcher_status.setText(f"🌌 <b>Space Weather:</b> Kp {kp:.1f} ({kp_status})")
+        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
+            payload_json = json.dumps(payload)
+            self.web_view.page().runJavaScript(f"window.onSpaceWeatherReady({payload_json});")
+
+    def _on_space_weather_loading(self, msg: str):
+        if getattr(self, "show_space_weather", False) and hasattr(self, "watcher_status"):
+            self.watcher_status.setText(f"🌌 <b>Space Weather:</b> {msg}")
+
+    def _on_space_weather_error(self, err: str):
+        if getattr(self, "show_space_weather", False) and hasattr(self, "watcher_status"):
+            self.watcher_status.setText(f"⚠️ <b>Space Weather Error:</b> {err}")
+
+    def _on_space_weather_opacity_changed(self, opacity: float):
+        if self.config and hasattr(self.config, "meshcore"):
+            self.config.meshcore.space_weather_opacity = opacity
+            try:
+                self.config.save()
+            except Exception:
+                pass
 
     def preview_packet_path(self, path: PacketPathInfo):
         """Temporarily highlights a multi-hop flood trajectory on hover from the floods view."""
@@ -8466,6 +8897,8 @@ class MeshMapWidget(QWidget):
                 self.adsb_service.set_enabled(False)
             if hasattr(self, "thunderstorm_service") and self.thunderstorm_service:
                 self.thunderstorm_service.set_enabled(False)
+            if hasattr(self, "space_weather_service") and self.space_weather_service:
+                self.space_weather_service.stop_polling()
             if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self.web_view:
                 try:
                     self.web_view.stop()

@@ -301,6 +301,13 @@ class NavDockWidget(QWidget):
         self.btn_rf_los.toggled.connect(lambda ch: self.layer_toggled.emit("rf_los", ch))
         layout.addWidget(self.btn_rf_los)
 
+        # 11. Space Weather & Aurora View
+        show_space_weather = getattr(self.config.meshcore, "map_show_space_weather", False) if self.config else False
+        self.btn_space_weather = LayerButton("🌌", "Space Weather & Aurora View")
+        self.btn_space_weather.setChecked(show_space_weather)
+        self.btn_space_weather.toggled.connect(lambda ch: self.layer_toggled.emit("space_weather", ch))
+        layout.addWidget(self.btn_space_weather)
+
         layout.addStretch()
 
         # Set default active button
@@ -394,6 +401,10 @@ class NavDockWidget(QWidget):
             btn = self.btn_heatmap
         elif layer_key == "thunderstorm":
             btn = self.btn_thunderstorm
+        elif layer_key == "rf_los":
+            btn = self.btn_rf_los
+        elif layer_key == "space_weather":
+            btn = self.btn_space_weather
 
         if btn:
             btn.blockSignals(True)

@@ -303,6 +303,8 @@ class MainWindow(QMainWindow):
             self.mesh_map.set_thunderstorm(is_active)
         elif layer_key == "rf_los":
             self.mesh_map.set_los_view_active(is_active)
+        elif layer_key == "space_weather":
+            self.mesh_map.set_space_weather(is_active)
         elif layer_key == "age_fade":
             if self.config and hasattr(self.config, "meshcore"):
                 self.config.meshcore.node_freshness_fading = is_active

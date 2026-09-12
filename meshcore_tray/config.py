@@ -49,6 +49,9 @@ class MeshcoreConfig:
     map_show_scopes: bool = False
     map_show_adsb: bool = False
     map_show_rf_los: bool = False
+    map_show_space_weather: bool = False
+    space_weather_opacity: float = 0.60
+    space_weather_poll_interval_min: int = 15
     map_base_layer: str = "canvas"  # "canvas" or "topo"
     adsb_radius_nm: int = 50
     adsb_target_node_id: str = ""
