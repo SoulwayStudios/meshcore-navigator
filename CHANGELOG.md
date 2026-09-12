@@ -7,6 +7,28 @@ and this project follows semantic versioning with automated build increments:
 - **Patch (+0.0.1)**: Routine bug fixes, UI adjustments, maintenance, and regular GitHub commits.
 - **Minor (+0.1.0)**: Substantial new features and architectural additions.
 
+## [0.3.0] - 2026-09-12
+
+### Added
+- **NOAA Space Weather & Aurora Oval Forecast Layer**:
+  - Implemented `SpaceWeatherService` ingesting live NOAA SWPC feeds: OVATION aurora nowcast model, Planetary Kp index, solar wind speed, IMF Bz, 10.7cm solar flux (SFI), and NOAA storm scales (R, S, G).
+  - Added d3.contours vector rendering on Leaflet `auroraPane` with dynamic multi-spectral auroral styling.
+  - Added glassmorphic HUD panel with live telemetry metrics, probability scale bar, and layer opacity slider.
+  - Added Space Weather & Aurora layer toggle to navigation dock.
+
+### Fixed & Hardened
+- **Wayland / NVIDIA Vulkan Compositor Support**:
+  - Restored Chromium WebEngine Vulkan fallback in `run.sh` and `main.py`, resolving `dma_buf acquisition failure` / `null texture` crashes on Wayland with NVIDIA drivers.
+  - Guarded renderer watchdog against false positives when the map widget is in a hidden background tab.
+  - Consolidated duplicate resize and geometry handlers into debounced timers to prevent render process stalls during window maximize and resize.
+- **RF Coordinate Sanitization & Database Self-Repair**:
+  - Radio driver automatically detects and rejects corrupted or shifted RF coordinates (>2,000 km from station).
+  - Added startup database self-repair routine to clear legacy corrupt coordinates, purge shifted duplicate phantom repeaters, and fix forward timestamp skews.
+- **Orderly Shutdown & Asyncio Lifecycle**:
+  - Added graceful quit sequence from the system tray menu: cleanly awaits driver and pixoo shutdown, checkpoints database to backup, and unmounts WebEngine cleanly.
+  - Cleaned up pending asyncio background tasks on event loop teardown to prevent unhandled loop exceptions.
+  - Hardened chat message bubble wrapping across varied Linux font metrics.
+
 ## [0.2.6] - 2026-09-11
 
 ### Fixed & Enhanced

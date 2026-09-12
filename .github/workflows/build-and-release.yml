@@ -84,7 +84,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: meshcore-navigator-linux
-          path: dist/meshcore-navigator-linux-*.tar.gz
+          path: dist/meshcore-navigator-*.tar.gz
 
   build-windows:
     name: Build Standalone Windows Exe

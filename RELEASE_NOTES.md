@@ -1,57 +1,39 @@
 > [!WARNING]
-> **Early Development Notice**: There WILL be bugs and issues with ADS-B air traffic tracking as this is an experimental new feature under active development. Community feedback, logs, and edge-case reports are very welcome!
+> **Early Development Notice**: MESHCORE NAVIGATOR is under active community development. Bug reports, diagnostic logs, and feature requests are very welcome!
 > If you find MESHCORE NAVIGATOR useful, consider supporting development on [Buy Me a Coffee](https://buymeacoffee.com/soulwaystudios).
 
 ---
 
-## 🛠️ Arch Linux / CachyOS Installer Fix (v0.2.6)
-- **Vendored Package Resolution**: Fixed `install.sh` to install local vendored packages (`vendor/pixoo` and `vendor/meshcore_py`) prior to installing the main project. This prevents pip from pulling unpatched `pixoo` from PyPI, which locked `pillow~=10.4.0` and failed to build C-extension wheels on modern Python versions (3.13 / 3.14).
-- **Dependency Completeness**: Added `PyQt6-WebEngine>=6.5.0` to `pyproject.toml`.
-- **System Site Packages**: Added `--system-site-packages` fallback to virtual environment setup to allow fast reuse of distro-installed Qt6 and Pillow libraries.
+## 🌟 What's New in v0.3.0
 
+### 🌌 NOAA Space Weather Telemetry & Aurora Forecast Layer
+- **Real-Time SWPC Ingestion**: Integrated live space weather telemetry from NOAA Space Weather Prediction Center (SWPC) models.
+- **Planetary K-Index & Solar Telemetry**: Live tracking of Planetary Kp index, solar wind speed, IMF Bz magnetic vector, 10.7cm Solar Flux Index (SFI), and NOAA geomagnetic storm scale warnings (G1–G5).
+- **OVATION Aurora Forecast Model**: Real-time auroral precipitation oval visualized directly on the map with smooth contour rendering, adjustable opacity, and dynamic HUD status badges.
 
-## ✈️ Real-Time ADS-B Air Traffic Radar (Experimental)
-- **Live Flight Radar Overlay**: Tracks civilian, commercial, and military aircraft in real time around your station home or any arbitrary map coordinate.
-- **Dynamic Color Schemes**:
-  - **Altitude Scheme**: Smooth gradient from low-level magenta (<2,000 ft) to red, yellow, blue, and white (>25,000 ft cruise).
-  - **Aircraft Type Scheme**: Category-based identification for Airliners (White), Light Aircraft (Blue), Military (Green), Helicopters (Yellow), and Gliders (Magenta).
-  - **Distance to Station Scheme**: Proximity heatmap showing distance from your monitoring station.
-- **Custom Color Palette Editor**: Customize all 13 aircraft colors directly inside the **Settings → App UI Colors** panel.
-- **Emergency Distress Beacon Detection**:
-  - Automatically identifies international emergency squawk codes (`7700` Emergency, `7600` Radio Failure, `7500` Hijack Alert).
-  - Radiates animated dual radar echo pulses and displays red beacon tags on the map and tooltip header.
-- **Aircraft Photos & Spotter Data**:
-  - Integrated high-res aircraft photo thumbnails from Planespotters.net with fallback to Airport-Data.com (great for UK general aviation, light aircraft, and gliders).
-- **Interactive Tooltips & Stacked Pill Bars**:
-  - Left-click to pin aircraft tooltips so they follow the aircraft in real-time across the radar sweep.
-  - Interactive stacked flight selector pills (`[FLIGHT 1] [FLIGHT 2]...`) to inspect overlapping aircraft at airports or in formation.
+### 🛡️ Hardware Acceleration & Linux Wayland / NVIDIA Stability
+- **Vulkan Compositor Fallback**: Restored Vulkan compositor fallback in Chromium WebEngine, resolving `dma_buf acquisition failure` / `null texture` crashes on Wayland sessions using NVIDIA proprietary drivers.
+- **Renderer Watchdog & Multi-Monitor Protection**: Guarded the Chromium renderer watchdog against false-positive timeout triggers when the map tab is hidden in the background.
+- **Debounced Window Geometry Events**: Consolidated viewport and geometry recalculation into debounced timers to prevent renderer deadlocks during window maximizing and cross-monitor dragging.
 
----
+### 📍 Coordinate Sanitization & Implausible RF Rejection
+- **Corrupt Coordinate Filtering**: Radio driver automatically sanitizes and rejects corrupted or shifted RF coordinates located greater than 2,000 km from the station.
+- **Database Self-Repair**: Automated startup database verification and sanitization routine repairs corrupted coordinates, cleans duplicate/phantom repeaters, and corrects forward timestamp skew.
 
-## 🏔️ Topographic RF Elevation Profile & 1st Fresnel Zone Analysis
-- **Split-Screen RF Link Profile**: Draggable terrain cross-section dock dividing the map view into map area and elevation graph.
-- **Copernicus 30m Satellite Radar DEM**: High-precision topographic sampling powered by AWS Terrarium DEM tiles with local offline caching.
-- **4/3 Earth Curvature & RF Physics**: Incorporates true Earth bulge ($k = 1.333$) for tropospheric RF bending.
-- **1st Fresnel Zone Ellipsoid**: Live 868 MHz / 915 MHz clearance calculation with instant status badges (`Clear`, `Fresnel Incursion`, or `Line of Sight Blocked`).
-- **Interactive Scrubbing & Antenna Controls**: Dual height spinboxes (`Tx Ant` and `Rx Ant`) with synchronized map reticle tracking as you scrub across the terrain profile.
+### 📡 Repeater Neighbours Hardening
+- **Safe HTML Escaping & Bounds Clamping**: Sanitized all node identifiers, SNR strings, and last-heard timestamps to ensure error-free rendering of repeater neighbour graphs.
+- **Graceful WebEngine Recovery**: Implemented soft page recovery on renderer process termination without destructive DOM cascades.
+
+### 🛑 Orderly Application Shutdown & Resource Lifecycle
+- **Clean Tray Exit**: Coordinated graceful shutdown sequence from the system tray menu: awaits serial radio driver and Pixoo display thread park, cleans up WebEngine surfaces, and writes an atomic SQLite parking backup.
+- **Asyncio Task Teardown**: Properly cancels and gathers pending background asyncio workers on event loop termination, eliminating unhandled loop exceptions on exit.
+- **Font-Independent Chat Wrapping**: Hardened chat message bubble text wrapping across varied Linux desktop font rendering engines.
 
 ---
 
-## 🟢 2D Line-of-Sight (LOS) Terrain Viewshed Coverage
-- **Organic Coverage Heatmap**: Replaced coarse pie-slice beams with a smooth 2D surface raster highlighting exact ground and rooftop terrain visible from your node.
-- **High-Definition DEM Engine**: Samples over 580,000 elevation points (~80m spacing) to realistically cast radio shadows behind hills, ridges, and river valleys.
-- **Dedicated Left Dock Button (`🏔️`) & Presets**: Keep the map completely clean and uncluttered by default, with quick-select toolbar presets for Ground (2m), Rooftop (8m), and Mast (15m) up to 50 km.
+## 📦 Previous Highlights (v0.2.x)
 
----
-
-## 🗺️ Monochromatic Dark Topographic Map & Context Menu
-- **Pure Dark Relief Base Map**: Minimalist charcoal & black shaded relief with glowing white mountain ridges, switchable via the `[ 🏔️ Topo / 🗺️ Canvas ]` toggle button.
-- **Custom Map Context Menu**: Right-click anywhere on the map or nodes for quick coordinates, Maidenhead QTH grid locator, station distance/bearing, waypoint pins, and instant path profiling.
-
----
-
-## ⚡ Performance, Multi-Monitor & Stability Fixes
-- **Instant Map Startup**: Locally vendored Leaflet libraries inside the app, eliminating remote unpkg.com network fetches on launch.
-- **Window Maximization Persistence**: The application remembers its maximized state and dimensions between sessions without compositor stalls.
-- **Renderer Watchdog & Memory Optimizations**: Replaced thousands of transient polyline SVG elements with single persistent paths, preventing Chromium GPU buffer leaks.
-- **In-Map Loading HUD**: Animated floating badge providing real-time feedback during viewshed generation and terrain profiling.
+- **Real-Time ADS-B Air Traffic Radar**: Live civilian, commercial, and military flight tracking with emergency distress beacon detection and aircraft spotter photos.
+- **Topographic RF Elevation Profile & 1st Fresnel Zone**: 30m satellite radar DEM terrain profiling with 4/3 Earth curvature refraction and antenna height tuning.
+- **2D Line-of-Sight (LOS) Viewshed Coverage**: High-density 2D terrain coverage rasters displaying true radio line-of-sight and topographical shadow zones.
+- **Monochromatic Dark Topographic Map**: Minimalist dark shaded relief base map with instant offline caching and rich context menu tools.
