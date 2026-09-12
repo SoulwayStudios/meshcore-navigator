@@ -3828,8 +3828,8 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     var midLon = (rep.coord[1] + n.coord[1]) / 2.0;
 
                     var badgeHtml = '<div style="background:#1C1C1C; border:1.5px solid #FFFFFF; border-radius:6px; padding:3px 8px; color:#FFFFFF; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:11px; font-weight:bold; white-space:nowrap; box-shadow:0 2px 10px rgba(0,0,0,0.85); text-align:center; display:flex; flex-direction:column; gap:2px; pointer-events:auto;">' +
-                        '<div><span style="color:#38BDF8;">SNR:</span> ' + n.snr_str + '</div>' +
-                        '<div style="font-size:10px; color:#9CA3AF; font-weight:normal;">' + n.time_str + '</div>' +
+                        '<div><span style="color:#38BDF8;">SNR:</span> ' + escapeHtml(n.snr_str) + '</div>' +
+                        '<div style="font-size:10px; color:#9CA3AF; font-weight:normal;">' + escapeHtml(n.time_str) + '</div>' +
                         '</div>';
                     var badgeIcon = L.divIcon({
                         className: 'neighbor-mid-badge-wrap',
@@ -3841,16 +3841,57 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 }
             }
 
-            // 3. Fit bounds so all neighbours and repeater are visible
-            if (allBounds.length > 0) {
-                map.fitBounds(allBounds, { padding: [60, 60], maxZoom: 13 });
+            // 3. Fit bounds safely so all neighbours and repeater are visible
+            function applyBounds() {
+                if (!map || allBounds.length === 0) return;
+                try {
+                    map.invalidateSize(false);
+                } catch(e) {}
+
+                if (allBounds.length === 1) {
+                    var singleTarget = allBounds[0];
+                    if (singleTarget && isFinite(singleTarget[0]) && isFinite(singleTarget[1])) {
+                        try {
+                            map.setView(singleTarget, Math.min(map.getZoom() || 12, 13));
+                        } catch(e) {}
+                    }
+                    return;
+                }
+
+                var validBounds = allBounds.filter(function(c) {
+                    return Array.isArray(c) && c.length >= 2 && isFinite(c[0]) && isFinite(c[1]);
+                });
+                if (validBounds.length === 0) return;
+                if (validBounds.length === 1) {
+                    try { map.setView(validBounds[0], Math.min(map.getZoom() || 12, 13)); } catch(e) {}
+                    return;
+                }
+
+                var sz = map.getSize();
+                if (sz && sz.x > 140 && sz.y > 140) {
+                    try {
+                        map.fitBounds(validBounds, { padding: [50, 50], maxZoom: 13 });
+                    } catch(e) {
+                        try { map.setView(validBounds[0], 12); } catch(e2) {}
+                    }
+                } else {
+                    setTimeout(function() {
+                        try {
+                            map.invalidateSize(false);
+                            map.fitBounds(validBounds, { padding: [50, 50], maxZoom: 13 });
+                        } catch(e) {
+                            try { map.setView(validBounds[0], 12); } catch(e2) {}
+                        }
+                    }, 120);
+                }
             }
+            applyBounds();
 
             // 4. Floating Banner
             var banner = document.getElementById('neighbors-overlay-banner');
             if (banner) banner.remove();
 
-            var repTitle = rep ? (rep.alias || rep.id) : 'Repeater';
+            var repTitle = escapeHtml(rep ? (rep.alias || rep.id) : 'Repeater');
             var bannerHtml = '<div id="neighbors-overlay-banner" style="position:absolute; top:48px; left:12px; z-index:1000; background:#222327; border:1px solid #414143; border-radius:6px; padding:6px 12px; color:#E5E7EB; font-size:12px; font-weight:bold; display:flex; align-items:center; gap:10px; box-shadow:0 4px 12px rgba(0,0,0,0.6);">' +
                 '<span>🌐 Neighbours: <span style="color:#38BDF8;">@' + repTitle + '</span> (' + plottedCount + ' mapped with GPS)</span>' +
                 '<button onclick="clearRepeaterNeighbors()" style="background:#2B2F38; color:#EF4444; border:1px solid #414143; border-radius:4px; padding:2px 8px; font-size:11px; cursor:pointer; font-weight:bold;">✖ Clear</button>' +
@@ -6843,6 +6884,10 @@ class MeshMapWidget(QWidget):
     def _check_renderer_watchdog(self):
         if not (WEBENGINE_AVAILABLE and hasattr(self, "web_view") and getattr(self, "_page_ready", False)):
             return
+        # If the map widget or window is hidden / in background tab, Chromium intentionally throttles JS execution
+        if not self.isVisible():
+            self._watchdog_unanswered = 0
+            return
         now = time.time()
         if now < getattr(self, "_watchdog_grace_until", 0.0):
             # Window or screen was recently moved; allow compositor buffer synchronization
@@ -6878,6 +6923,16 @@ class MeshMapWidget(QWidget):
         try:
             if hasattr(self, "web_view"):
                 logger.info("Reloading Leaflet map HTML after WebEngine render process recovery...")
+                page = self.web_view.page()
+                if page:
+                    try:
+                        self.channel = QWebChannel()
+                        self.channel.registerObject("pyBridge", self.bridge)
+                        page.setWebChannel(self.channel)
+                        self.web_view.setHtml(get_leaflet_html(), QUrl("http://localhost"))
+                        return
+                    except Exception as e:
+                        logger.warning(f"Could not perform soft recovery on existing page: {e}")
                 try:
                     self.web_page = LoggingWebEnginePage(self.web_view)
                     self.web_view.setPage(self.web_page)
@@ -6992,6 +7047,14 @@ class MeshMapWidget(QWidget):
         self.refresh_map_data()
         if getattr(self, "show_space_weather", False):
             self.set_space_weather(True)
+        if getattr(self, "_pending_neighbors_payload", None):
+            try:
+                p = self._pending_neighbors_payload
+                self._pending_neighbors_payload = None
+                js_payload = json.dumps(p)
+                self.web_view.page().runJavaScript(f"drawRepeaterNeighbors({js_payload});")
+            except Exception as e:
+                logger.warning(f"Error drawing pending repeater neighbors on map load: {e}")
         self.map_ready.emit()
 
     def _on_path_modes_toggle(self):
@@ -8508,10 +8571,16 @@ class MeshMapWidget(QWidget):
             return
 
         # 1. Resolve host repeater coordinates
-        rep_lat = getattr(repeater_contact, "latitude", None)
-        rep_lon = getattr(repeater_contact, "longitude", None)
-        rep_id = getattr(repeater_contact, "node_id", "")
-        rep_alias = getattr(repeater_contact, "alias", "") or rep_id
+        if isinstance(repeater_contact, dict):
+            rep_lat = repeater_contact.get("latitude") or (repeater_contact.get("coord", [None, None])[0] if repeater_contact.get("coord") else None)
+            rep_lon = repeater_contact.get("longitude") or (repeater_contact.get("coord", [None, None])[1] if repeater_contact.get("coord") else None)
+            rep_id = repeater_contact.get("node_id") or repeater_contact.get("id", "")
+            rep_alias = repeater_contact.get("alias", "") or rep_id
+        else:
+            rep_lat = getattr(repeater_contact, "latitude", None)
+            rep_lon = getattr(repeater_contact, "longitude", None)
+            rep_id = getattr(repeater_contact, "node_id", "")
+            rep_alias = getattr(repeater_contact, "alias", "") or rep_id
 
         if (rep_lat is None or rep_lon is None) and self.storage:
             found = self.storage.get_contact(rep_id) or self.storage.get_contact(f"!{rep_id}")

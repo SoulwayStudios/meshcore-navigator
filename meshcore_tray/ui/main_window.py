@@ -4,7 +4,7 @@ import asyncio
 import logging
 from pathlib import Path
 from typing import Optional
-from PyQt6.QtCore import Qt, QPoint
+from PyQt6.QtCore import Qt, QPoint, QTimer
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QSplitter,
@@ -713,7 +713,8 @@ class MainWindow(QMainWindow):
             self.btn_toggle_map.setChecked(True)
             self._on_toggle_map()
         if hasattr(self, "mesh_map") and self.mesh_map:
-            self.mesh_map.display_repeater_neighbors(repeater_contact, neighbors_data)
+            # Allow Qt & Wayland layout/geometry pass to complete before rendering map layers
+            QTimer.singleShot(150, lambda: self.mesh_map.display_repeater_neighbors(repeater_contact, neighbors_data) if (hasattr(self, "mesh_map") and self.mesh_map) else None)
 
     def _save_window_state(self):
         """Persists window geometry and active channel cleanly."""

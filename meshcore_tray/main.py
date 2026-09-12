@@ -113,7 +113,9 @@ def main():
 
     import os
     if "QTWEBENGINE_CHROMIUM_FLAGS" not in os.environ:
-        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--no-sandbox"
+        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--no-sandbox --disable-features=Vulkan"
+    elif "--disable-features=Vulkan" not in os.environ["QTWEBENGINE_CHROMIUM_FLAGS"]:
+        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] += " --disable-features=Vulkan"
 
     from PyQt6.QtCore import Qt, QCoreApplication
     QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
