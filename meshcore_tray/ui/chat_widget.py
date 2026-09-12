@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
 )
 from meshcore_tray.core.models import MessageEnvelope, NodeContact
 from meshcore_tray.core.event_bus import bus, EventType
+from meshcore_tray.ui.avatar_generator import get_contact_avatar_icon
 
 logger = logging.getLogger("meshcore_tray.chat_widget")
 
@@ -241,9 +242,14 @@ class MessageBubble(QFrame):
         return QSize(min(sh.width(), 80), sh.height())
 
     def _init_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(4)
+        bubble_layout = QHBoxLayout(self)
+        bubble_layout.setContentsMargins(10, 10, 10, 10)
+        bubble_layout.setSpacing(10)
+
+        # Content column for header + alerts + body
+        content_box = QVBoxLayout()
+        content_box.setContentsMargins(0, 0, 0, 0)
+        content_box.setSpacing(4)
 
         # Header Row: Sender, Star, Channel Tag, Time
         header = QHBoxLayout()
@@ -276,6 +282,7 @@ class MessageBubble(QFrame):
         # Repeats heard indicator for outgoing messages
         if self.msg.is_outgoing:
             self.repeats_badge = QLabel()
+            self.repeats_badge.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
             self.set_repeats_heard(getattr(self.msg, "repeats_heard", 0))
             header.addWidget(self.repeats_badge)
 
@@ -290,23 +297,70 @@ class MessageBubble(QFrame):
             header.addWidget(telem_lbl)
 
         header.addWidget(time_lbl)
-        layout.addLayout(header)
+        content_box.addLayout(header)
 
         # Watched keyword / Mention warning badge
         if self.msg.is_mention or self.msg.matched_keywords:
             kw_str = ", ".join(self.msg.matched_keywords) if self.msg.matched_keywords else "Mention"
             alert_badge = QLabel(f"🚨 ALERT: {html.escape(kw_str)}")
+            alert_badge.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
             alert_badge.setStyleSheet(
                 "background-color: #5C1D24; color: #FF7B72; border: 1px solid #F85149; "
                 "border-radius: 4px; padding: 2px 6px; font-size: 11px; font-weight: bold;"
             )
-            layout.addWidget(alert_badge)
+            content_box.addWidget(alert_badge)
 
         # Message Body
         clean_text = html.unescape(self.msg.text)
         self.body_lbl = MessageBodyLabel(clean_text)
+        self.body_lbl.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.body_lbl.setStyleSheet("background: transparent; border: none; color: #F3F4F6; font-size: 13px; line-height: 1.4;")
-        layout.addWidget(self.body_lbl)
+        content_box.addWidget(self.body_lbl)
+
+        # Avatar inside the bubble: 38x38px fills the vertical height of Line 1 (heading) + Line 2 (body)
+        show_avatars = getattr(self.config, "show_chat_avatars", True) if self.config else True
+        if show_avatars:
+            sender_id = getattr(self.msg, "sender_id", "") or ""
+            sender_name = getattr(self.msg, "sender_name", "") or ""
+            is_rep = False
+            if self.storage and sender_id:
+                try:
+                    c = self.storage.get_contact(sender_id)
+                    if c:
+                        is_rep = bool(
+                            getattr(c, "is_repeater", False)
+                            or any(kw in (c.alias or "").upper() for kw in ("[REP]", "[REPEATER]", "[ROUTER]", "[RTR]", "[GW]", "REPEATER", "ROUTER"))
+                            or any(kw in (getattr(c, "role", "") or "").upper() for kw in ("REPEATER", "ROUTER"))
+                        )
+                except Exception:
+                    pass
+            if not is_rep:
+                is_rep = any(kw in sender_name.upper() for kw in ("[REP]", "[REPEATER]", "[ROUTER]", "[RTR]", "[GW]", "REPEATER", "ROUTER"))
+
+            avatar_icon = get_contact_avatar_icon(sender_id, sender_name, is_repeater=is_rep, size=38)
+            if avatar_icon and not avatar_icon.isNull():
+                self.avatar_lbl = QLabel()
+                self.avatar_lbl.setFixedSize(38, 38)
+                self.avatar_lbl.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+                self.avatar_lbl.setAutoFillBackground(False)
+                self.avatar_lbl.setPixmap(avatar_icon.pixmap(38, 38))
+                self.avatar_lbl.setStyleSheet("background: transparent; border: none;")
+                role_text = "Repeater" if is_rep else "User"
+                self.avatar_lbl.setToolTip(f"👤 {sender_name}\n🔑 ID: {sender_id}\n🏷️ {role_text}\n💬 Click to open Direct Message")
+                self.avatar_lbl.setCursor(Qt.CursorShape.PointingHandCursor)
+                self.avatar_lbl.mousePressEvent = lambda e: self.dm_requested.emit(self.msg.sender_id)
+
+        # Inside the bubble layout:
+        # Outgoing: Content on left, Avatar on right
+        # Incoming: Avatar on left, Content on right
+        if self.msg.is_outgoing:
+            bubble_layout.addLayout(content_box, 1)
+            if hasattr(self, "avatar_lbl"):
+                bubble_layout.addWidget(self.avatar_lbl, 0, Qt.AlignmentFlag.AlignTop)
+        else:
+            if hasattr(self, "avatar_lbl"):
+                bubble_layout.addWidget(self.avatar_lbl, 0, Qt.AlignmentFlag.AlignTop)
+            bubble_layout.addLayout(content_box, 1)
 
         # Styling depending on Outgoing vs Incoming
         if self.msg.is_outgoing:
@@ -315,7 +369,7 @@ class MessageBubble(QFrame):
                     background-color: #2D333F;
                     border: 1px solid #4B5363;
                     border-radius: 8px;
-                    margin-left: 40px;
+                    margin-left: 60px;
                 }
                 MessageBubble QLabel {
                     background: transparent;
@@ -329,7 +383,7 @@ class MessageBubble(QFrame):
                     background-color: #222327;
                     border: 1px solid #414143;
                     border-radius: 8px;
-                    margin-right: 40px;
+                    margin-right: 60px;
                 }
                 MessageBubble QLabel {
                     background: transparent;
@@ -451,7 +505,12 @@ class ChatWidget(QWidget):
         self._last_target_widget: Optional[QWidget] = None
         self._mark_read_timer: Optional[QTimer] = None
         self._bubbles: dict[str, MessageBubble] = {}
+        bus.subscribe(EventType.SETTINGS_UPDATED, self._on_settings_updated)
         self._init_ui()
+
+    def _on_settings_updated(self, config):
+        self.config = config
+        self.reload_messages()
 
     def _init_ui(self):
         main_layout = QVBoxLayout(self)

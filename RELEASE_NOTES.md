@@ -4,36 +4,39 @@
 
 ---
 
-## 🌟 What's New in v0.3.0
+## 🌟 What's New in v0.4.0
 
-### 🌌 NOAA Space Weather Telemetry & Aurora Forecast Layer
-- **Real-Time SWPC Ingestion**: Integrated live space weather telemetry from NOAA Space Weather Prediction Center (SWPC) models.
-- **Planetary K-Index & Solar Telemetry**: Live tracking of Planetary Kp index, solar wind speed, IMF Bz magnetic vector, 10.7cm Solar Flux Index (SFI), and NOAA geomagnetic storm scale warnings (G1–G5).
-- **OVATION Aurora Forecast Model**: Real-time auroral precipitation oval visualized directly on the map with smooth contour rendering, adjustable opacity, and dynamic HUD status badges.
+### 🤖 Procedural User Avatars & Style Switcher
+- **Unique Deterministic Identities**: Never confuse users with identical initials again! Avatars are procedurally generated from each contact's node ID and name across 10 cyberpunk neon palettes.
+- **Style C: Cyberpunk Radio Droid (Robots)**: Over 180,000 distinct combinations of retro radio droid faces, complete with antennas, chassis variations, audio grilles, and optic visors with independent eye hues and heterochromia.
+- **Style A: Cyber Initials (Decorated Circuit Frame)**: For users who prefer classic letters, bold 2-letter uppercase initials are framed by procedural bilateral circuit brackets, solder pads, and reticle ticks.
+- **Switchable in Settings**: Choose your preferred user avatar style in `Settings` → `💬 Chat Settings` → `👤 User Contact Avatar Style` (`🤖 Cyberpunk Radio Droids` or `🔤 Cyber Initials`).
+- **Chat Stream Avatars**: Message bubbles in the chat stream display sender avatars (2 lines high, inside the bubble card) with incoming avatars on the left and outgoing on the right. Can be toggled on/off in Settings.
 
-### 🛡️ Hardware Acceleration & Linux Wayland / NVIDIA Stability
-- **Vulkan Compositor Fallback**: Restored Vulkan compositor fallback in Chromium WebEngine, resolving `dma_buf acquisition failure` / `null texture` crashes on Wayland sessions using NVIDIA proprietary drivers.
-- **Renderer Watchdog & Multi-Monitor Protection**: Guarded the Chromium renderer watchdog against false-positive timeout triggers when the map tab is hidden in the background.
-- **Debounced Window Geometry Events**: Consolidated viewport and geometry recalculation into debounced timers to prevent renderer deadlocks during window maximizing and cross-monitor dragging.
+### 📡 Tactical Radar Repeaters
+- **Infrastructure Identity**: Repeater nodes automatically receive a dedicated **Tactical Radar Constellation** avatar featuring concentric range rings, deterministic orbital satellite blips, and unique beacon tower colors.
+- **Enlarged Repeater Console Header**: The repeater inspector header now features an enlarged 54×54px radar badge spanning the full header height.
 
-### 📍 Coordinate Sanitization & Implausible RF Rejection
-- **Corrupt Coordinate Filtering**: Radio driver automatically sanitizes and rejects corrupted or shifted RF coordinates located greater than 2,000 km from the station.
-- **Database Self-Repair**: Automated startup database verification and sanitization routine repairs corrupted coordinates, cleans duplicate/phantom repeaters, and corrects forward timestamp skew.
+### 🗺️ Map Loading HUD & Startup Controls
+- **Centered Map Loading Screen**: Redesigned map loading HUD with an enlarged 36px emerald braille spinner centered above the initialization title, preventing text clipping.
+- **Staggered Initialization Bar**: Visual stage indicators (`1 ENGINE`, `2 VIEWPORT`, `3 NODES`, `4 RADIO`) with percentage progress.
+- **Splash Screen Setting**: Added a toggle in `Settings` → `🖥️ Application Startup & Behavior` to disable the full-screen splash cover on startup, letting you watch the map and its loading progress directly.
 
-### 📡 Repeater Neighbours Hardening
-- **Safe HTML Escaping & Bounds Clamping**: Sanitized all node identifiers, SNR strings, and last-heard timestamps to ensure error-free rendering of repeater neighbour graphs.
-- **Graceful WebEngine Recovery**: Implemented soft page recovery on renderer process termination without destructive DOM cascades.
-
-### 🛑 Orderly Application Shutdown & Resource Lifecycle
-- **Clean Tray Exit**: Coordinated graceful shutdown sequence from the system tray menu: awaits serial radio driver and Pixoo display thread park, cleans up WebEngine surfaces, and writes an atomic SQLite parking backup.
-- **Asyncio Task Teardown**: Properly cancels and gathers pending background asyncio workers on event loop termination, eliminating unhandled loop exceptions on exit.
-- **Font-Independent Chat Wrapping**: Hardened chat message bubble text wrapping across varied Linux desktop font rendering engines.
+### 🎨 Sleek Vector Line Navigation & Toolbar Icons
+- **Crisp White Line Icons**: Primary action dock and secondary map overlay toolbar upgraded to matching vector line art that illuminates with emerald neon when active:
+  - 👁️ **Observer / Watcher Traffic**: Clean vector eye icon (now defaulted to ON on startup).
+  - 🔥 **Node Activity Heatmap**: White vector flame icon.
+  - ⛈️ **Thunderstorms**: Vector cloud with lightning bolt.
+  - ✈️ **ADS-B Air Traffic**: Symmetrical top-down airplane vector.
+  - 🌌 **Space Weather**: Vertical wavy aurora borealis ribbons.
+- **Rich Contact Tooltips**: Hovering over favorited user icons in the left navigation dock now displays full alias, node ID, status, signal metrics, hop distance, and coordinates.
 
 ---
 
-## 📦 Previous Highlights (v0.2.x)
+## 📦 Previous Highlights (v0.3.x)
 
-- **Real-Time ADS-B Air Traffic Radar**: Live civilian, commercial, and military flight tracking with emergency distress beacon detection and aircraft spotter photos.
-- **Topographic RF Elevation Profile & 1st Fresnel Zone**: 30m satellite radar DEM terrain profiling with 4/3 Earth curvature refraction and antenna height tuning.
-- **2D Line-of-Sight (LOS) Viewshed Coverage**: High-density 2D terrain coverage rasters displaying true radio line-of-sight and topographical shadow zones.
-- **Monochromatic Dark Topographic Map**: Minimalist dark shaded relief base map with instant offline caching and rich context menu tools.
+- **NOAA Space Weather & OVATION Aurora Forecast**: Live SWPC planetary Kp-index, solar flux, magnetic vectors, and real-time auroral precipitation oval map layer.
+- **Linux Wayland & Multi-Monitor Hardening**: Vulkan compositor fallback, renderer watchdog protection, and debounced window geometry transitions.
+- **Coordinate Sanitization**: Automatic rejection of corrupted RF coordinates and automated database startup self-repair.
+- **Clean Tray Exit**: Orderly shutdown lifecycle ensuring serial radio driver and Pixoo display thread parking with atomic SQLite backups.
+

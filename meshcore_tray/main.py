@@ -113,7 +113,12 @@ def main():
 
     import os
     if "QTWEBENGINE_CHROMIUM_FLAGS" not in os.environ:
-        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--no-sandbox"
+        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
+            "--no-sandbox "
+            "--ozone-platform-hint=auto "
+            "--enable-features=UseOzonePlatform,WaylandWindowDecorations "
+            "--disable-gpu-watchdog"
+        )
 
     from PyQt6.QtCore import Qt, QCoreApplication
     QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)

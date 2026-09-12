@@ -203,6 +203,9 @@ class AppConfig:
     window_maximized: bool = False
     window_width: int = 1380
     window_height: int = 800
+    show_splash_screen: bool = True
+    show_chat_avatars: bool = True
+    user_avatar_style: str = "droid"  # "droid" (Cyberpunk Radio Droid) or "letters" (Decorated 2-letter Initials)
 
     def is_channel_favorite(self, channel_name: str) -> bool:
         if not channel_name:
@@ -375,6 +378,12 @@ class AppConfig:
             config.window_height = int(data["window_height"])
         if "last_active_channel" in data:
             config.last_active_channel = str(data["last_active_channel"])
+        if "show_splash_screen" in data:
+            config.show_splash_screen = bool(data["show_splash_screen"])
+        if "show_chat_avatars" in data:
+            config.show_chat_avatars = bool(data["show_chat_avatars"])
+        if "user_avatar_style" in data:
+            config.user_avatar_style = str(data["user_avatar_style"])
         return config
 
     def save(self, filepath: Optional[Path] = None):

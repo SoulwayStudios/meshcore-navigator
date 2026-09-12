@@ -6,7 +6,7 @@ import pytest
 from PyQt6.QtWidgets import QApplication
 from meshcore_tray.config import AppConfig
 from meshcore_tray.storage import Storage
-from meshcore_tray.ui.settings_widget import SettingsDialog
+from meshcore_tray.ui.settings_widget import SettingsDialog, SettingsWidget
 from meshcore_tray.drivers.mock_driver import MockRadioDriver
 
 
@@ -346,5 +346,47 @@ def test_embedded_settings_view_in_main_window(qapp, tmp_path, monkeypatch):
     assert win.main_stack.currentIndex() == 1
 
     win.cleanup()
+
+
+def test_splash_and_chat_avatar_settings_persistence(qapp, tmp_path):
+    """Verifies that Chat Settings card exists and show_splash_screen / show_chat_avatars / user_avatar_style persist correctly."""
+    cfg_file = tmp_path / "test_splash_chat.json"
+    config = AppConfig()
+    config.show_splash_screen = True
+    config.show_chat_avatars = True
+    config.user_avatar_style = "droid"
+    config.save(cfg_file)
+
+    storage = Storage(tmp_path / "test_splash_chat.db")
+    widget = SettingsWidget(config=config, storage=storage)
+
+    # Check that Chat Settings card, checkbox, and avatar style combo exist
+    assert hasattr(widget, "chk_show_splash")
+    assert hasattr(widget, "chk_show_chat_avatars")
+    assert hasattr(widget, "combo_avatar_style")
+    assert widget.chk_show_splash.isChecked() is True
+    assert widget.chk_show_chat_avatars.isChecked() is True
+    assert widget.combo_avatar_style.currentData() == "droid"
+
+    # Toggle off and change avatar style to letters
+    widget.chk_show_splash.setChecked(False)
+    widget.chk_show_chat_avatars.setChecked(False)
+    letters_idx = widget.combo_avatar_style.findData("letters")
+    assert letters_idx >= 0
+    widget.combo_avatar_style.setCurrentIndex(letters_idx)
+    widget._save_and_close()
+
+    # Verify config in-memory
+    assert config.show_splash_screen is False
+    assert config.show_chat_avatars is False
+    assert config.user_avatar_style == "letters"
+
+    # Save to custom file and reload from disk to verify from_dict restoration
+    config.save(cfg_file)
+    reloaded = AppConfig.load(cfg_file)
+    assert reloaded.show_splash_screen is False
+    assert reloaded.show_chat_avatars is False
+    assert reloaded.user_avatar_style == "letters"
+
 
 

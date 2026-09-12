@@ -211,8 +211,8 @@ def test_contact_quoted_name_and_avatar(app, tmp_path):
     contact = NodeContact(node_id="bgt1", alias='&quot;BGT&quot;')
     widget = ContactItemWidget(contact=contact, is_favorite=False)
     assert widget.name_lbl.text() == '"BGT"'
-    assert "&quot;" not in widget.name_lbl.text()
-    assert widget.badge.text() == "B"
+    assert widget.badge.property("letter") == "B" or widget.badge.text() == "B"
+    assert widget.badge.pixmap() is not None
     assert widget.star_lbl.isHidden()
 
 

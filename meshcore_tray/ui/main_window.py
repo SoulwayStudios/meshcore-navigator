@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
     QLabel, QPushButton, QFrame, QStackedWidget, QMenu, QApplication
 )
 
+from meshcore_tray import __app_name__, __version__
 from meshcore_tray.config import AppConfig
 from meshcore_tray.core.event_bus import bus, EventType
 from meshcore_tray.core.models import MessageEnvelope, ChannelInfo
@@ -26,6 +27,7 @@ from meshcore_tray.ui.dms_view import DMsViewWidget
 from meshcore_tray.ui.repeaters_view import RepeatersViewWidget
 from meshcore_tray.ui.heard_floods_view import HeardFloodsWidget
 from meshcore_tray.ui.splash_overlay import SplashOverlay
+from meshcore_tray.ui.avatar_generator import set_global_avatar_style
 
 logger = logging.getLogger("meshcore_tray.main_window")
 
@@ -42,6 +44,7 @@ class MainWindow(QMainWindow):
         self.gateway = gateway
         self._tray_icon = None
         self._is_shutting_down = False
+        set_global_avatar_style(getattr(self.config, "user_avatar_style", "droid"))
         self._shutdown_completed = False
         self._is_cleaned_up = False
         self._force_close = False
@@ -58,7 +61,7 @@ class MainWindow(QMainWindow):
         self.current_dm: Optional[str] = None
         self._previous_view_index = 0
 
-        self.setWindowTitle("MESHCORE NAVIGATOR")
+        self.setWindowTitle(f"{__app_name__} v{__version__}")
         icon_path = Path(__file__).parent / "static" / "icon.png"
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
@@ -89,6 +92,7 @@ class MainWindow(QMainWindow):
         self.nav_dock.broadcast_advert_requested.connect(self._trigger_node_broadcast)
         self.nav_dock.layer_toggled.connect(self._on_dock_layer_toggled)
         self.nav_dock.radio_connect_requested.connect(self._on_radio_connect_requested)
+        self.nav_dock.contact_selected.connect(self._on_contact_selected)
         main_layout.addWidget(self.nav_dock)
 
         # Compatibility handles for companion node and state
@@ -181,11 +185,16 @@ class MainWindow(QMainWindow):
         self.main_splitter.addWidget(self.center_stack)
 
         # 1c. Mesh Map (Prominent, goes flush to top edge) - Pane 2
+        self.map_layer_dock = self.nav_dock.map_layers
         self.mesh_map = MeshMapWidget(storage=self.storage, config=self.config, driver=self.radio_driver)
+        self.mesh_map.attach_layer_dock(self.map_layer_dock)
+        if hasattr(self.map_layer_dock, "btn_rf_links") and self.map_layer_dock.btn_rf_links.isChecked():
+            self.mesh_map.set_rf_links(True)
         self.mesh_map.setMinimumWidth(280)
         self.mesh_map.node_selected.connect(self._on_contact_selected)
         self.nav_dock.node_filter_changed.connect(self.mesh_map.set_node_filter_mode)
         self.main_splitter.addWidget(self.mesh_map)
+        self.main_splitter.splitterMoved.connect(lambda pos, idx: self.mesh_map.pause_geometry_motion())
 
         # Wire Heard Floods interactive signals to Mesh Map
         self.heard_floods_view.flood_hovered.connect(self.mesh_map.preview_packet_path)
@@ -232,14 +241,18 @@ class MainWindow(QMainWindow):
 
         main_layout.addWidget(self.main_stack, 1)
         self._update_freshness_btn_state()
+        self._update_dock_favorites()
 
         # Splash / Loading Mask Overlay
-        self.splash_overlay = SplashOverlay(config=self.config, parent=self)
-        self.splash_overlay.dismissed.connect(self._on_splash_dismissed)
-        self.splash_overlay.setGeometry(self.rect())
-        self.splash_overlay.show()
-        if hasattr(self, "mesh_map"):
-            self.mesh_map.map_ready.connect(self.splash_overlay.on_map_ready)
+        if getattr(self.config, "show_splash_screen", True):
+            self.splash_overlay = SplashOverlay(config=self.config, parent=self)
+            self.splash_overlay.dismissed.connect(self._on_splash_dismissed)
+            self.splash_overlay.setGeometry(self.rect())
+            self.splash_overlay.show()
+            if hasattr(self, "mesh_map"):
+                self.mesh_map.map_ready.connect(self.splash_overlay.on_map_ready)
+        else:
+            self.splash_overlay = None
 
     def _on_splash_dismissed(self):
         self.splash_overlay = None
@@ -255,8 +268,25 @@ class MainWindow(QMainWindow):
             self.sidebar.reload(),
             self.dms_view.reload_contacts(),
             self.repeaters_view.reload_repeaters(),
-            self.chat_widget.set_target(self.chat_widget.current_channel, self.chat_widget.current_dm)
+            self.chat_widget.set_target(self.chat_widget.current_channel, self.chat_widget.current_dm),
+            self._update_dock_favorites()
         ))
+        bus.subscribe(EventType.NODE_DISCOVERED, lambda _: self._update_dock_favorites())
+
+    def _update_dock_favorites(self):
+        if not hasattr(self, "nav_dock") or not self.storage:
+            return
+        try:
+            contacts = self.storage.get_contacts()
+            fav_users = getattr(self.config, "favorite_users", []) if self.config else []
+            favorites = []
+            for c in contacts:
+                is_fav = bool(c.is_favorite or (c.node_id in fav_users) or (c.alias and c.alias in fav_users))
+                if is_fav:
+                    favorites.append(c)
+            self.nav_dock.update_favorite_contacts(favorites)
+        except Exception as e:
+            logger.warning(f"Error updating dock favorite contacts: {e}")
 
     def _on_nav_view_changed(self, view_name: str):
         if view_name == "main":
@@ -594,8 +624,10 @@ class MainWindow(QMainWindow):
 
     def _on_settings_updated(self, config: AppConfig):
         self.config = config
+        set_global_avatar_style(getattr(config, "user_avatar_style", "droid"))
         self._update_companion_node_display()
         self._update_freshness_btn_state()
+        self._update_dock_favorites()
         if hasattr(self, "composer") and hasattr(config, "app_colors"):
             self.composer.apply_theme(
                 config.app_colors.send_button_color,

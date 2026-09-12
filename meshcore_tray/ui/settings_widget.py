@@ -921,6 +921,32 @@ class SettingsWidget(QWidget):
         theme_card.add_widget(self.theme_status_lbl)
         layout.addWidget(theme_card)
 
+        # Application Startup & Behavior Card
+        startup_card = SettingsCard("🖥️ Application Startup & Behavior")
+        self.chk_show_splash = QCheckBox("Show application splash screen on launch")
+        self.chk_show_splash.setChecked(getattr(self.config, "show_splash_screen", True))
+        self.chk_show_splash.setToolTip("When unchecked, the app launches directly to the map view without the full-screen splash cover.")
+        startup_card.add_widget(self.chk_show_splash)
+        layout.addWidget(startup_card)
+
+        # Chat & Avatar Settings Card
+        chat_card = SettingsCard("💬 Chat Settings")
+        self.chk_show_chat_avatars = QCheckBox("Show user and repeater avatar icons next to chat messages")
+        self.chk_show_chat_avatars.setChecked(getattr(self.config, "show_chat_avatars", True))
+        self.chk_show_chat_avatars.setToolTip("When enabled, message bubbles in the chat stream display avatar icons.")
+        chat_card.add_widget(self.chk_show_chat_avatars)
+
+        self.combo_avatar_style = QComboBox()
+        self.combo_avatar_style.addItem("🤖 Cyberpunk Radio Droids (Robots)", "droid")
+        self.combo_avatar_style.addItem("🔤 Cyber Initials (Decorated 2-Letter Frame)", "letters")
+        cur_style = getattr(self.config, "user_avatar_style", "droid")
+        idx = self.combo_avatar_style.findData(cur_style)
+        if idx >= 0:
+            self.combo_avatar_style.setCurrentIndex(idx)
+        self.combo_avatar_style.setToolTip("Select the avatar style for user contacts across chat, contacts list, and navigation. Repeaters always use tactical radar.")
+        chat_card.add_row("👤 User Contact Avatar Style:", self.combo_avatar_style, 250)
+        layout.addWidget(chat_card)
+
         # Card 1: Chat & Sidebar Accents
         c1 = SettingsCard("💬 Chat & Sidebar Accents")
         self.btn_col_fav_chan = ColorPickerButton(self.config.app_colors.favorite_channel_color)
@@ -1865,6 +1891,18 @@ class SettingsWidget(QWidget):
 
         self.config.gateway.http_bridge_enabled = self.chk_gate.isChecked()
         self.config.gateway.http_port = self.gate_port_spin.value()
+
+        if hasattr(self, "chk_show_splash"):
+            self.config.show_splash_screen = self.chk_show_splash.isChecked()
+
+        if hasattr(self, "chk_show_chat_avatars"):
+            self.config.show_chat_avatars = self.chk_show_chat_avatars.isChecked()
+
+        if hasattr(self, "combo_avatar_style"):
+            new_style = self.combo_avatar_style.currentData() or "droid"
+            self.config.user_avatar_style = new_style
+            from meshcore_tray.ui.avatar_generator import set_global_avatar_style
+            set_global_avatar_style(new_style)
 
         # Save to disk
         self.config.save()

@@ -12,6 +12,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QTextOption
 from meshcore_tray.core.event_bus import bus, EventType
 from meshcore_tray.core.models import NodeContact, MessageEnvelope
+from meshcore_tray.ui.avatar_generator import get_contact_avatar_icon
 
 
 class RepeaterConsoleWidget(QWidget):
@@ -40,9 +41,12 @@ class RepeaterConsoleWidget(QWidget):
         header_layout = QHBoxLayout(header_bar)
         header_layout.setContentsMargins(12, 8, 12, 8)
 
-        icon_lbl = QLabel("📡")
-        icon_lbl.setStyleSheet("font-size: 24px;")
-        header_layout.addWidget(icon_lbl)
+        self.icon_lbl = QLabel()
+        self.icon_lbl.setFixedSize(54, 54)
+        self.icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.icon_lbl.setText("📡")
+        self.icon_lbl.setStyleSheet("font-size: 36px; background: transparent; border: none;")
+        header_layout.addWidget(self.icon_lbl)
 
         info_layout = QVBoxLayout()
         info_layout.setSpacing(2)
@@ -259,6 +263,15 @@ class RepeaterConsoleWidget(QWidget):
         clean_alias = contact.alias.replace("[Rep]", "").replace("[rep]", "").strip()
         self.title_lbl.setText(f"📡 Repeater: @{clean_alias}")
         self.sub_lbl.setText(f"Node ID: {contact.node_id} • Status: Known Repeater")
+
+        if hasattr(self, "icon_lbl"):
+            avatar_icon = get_contact_avatar_icon(contact.node_id, contact.alias, is_repeater=True, size=54)
+            if avatar_icon and not avatar_icon.isNull():
+                self.icon_lbl.setPixmap(avatar_icon.pixmap(54, 54))
+                self.icon_lbl.setStyleSheet("background: transparent; border: none; border-radius: 8px;")
+            else:
+                self.icon_lbl.setText("📡")
+                self.icon_lbl.setStyleSheet("font-size: 36px; background: transparent; border: none;")
 
         snr_col = "#3FB950" if contact.snr_db >= 0 else "#D29922"
         self.telemetry_badge.setText(f"SNR: {contact.snr_db:+.1f} dB • RSSI: {contact.rssi_dbm:.1f} dBm")

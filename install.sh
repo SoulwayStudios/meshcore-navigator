@@ -42,7 +42,7 @@ pip install -e .
 mkdir -p "$HOME/.local/bin"
 cat << EOF > "$HOME/.local/bin/meshcore-navigator"
 #!/usr/bin/env bash
-export QTWEBENGINE_CHROMIUM_FLAGS="--no-sandbox"
+export QTWEBENGINE_CHROMIUM_FLAGS="--no-sandbox --ozone-platform-hint=auto --enable-features=UseOzonePlatform,WaylandWindowDecorations --disable-gpu-watchdog"
 export PYTHONPATH="$SCRIPT_DIR:$SCRIPT_DIR/vendor/pixoo/src:$SCRIPT_DIR/vendor/meshcore_py/src:\$PYTHONPATH"
 exec "$SCRIPT_DIR/venv/bin/python" -m meshcore_tray.main "\$@"
 EOF

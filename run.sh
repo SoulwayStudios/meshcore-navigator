@@ -10,7 +10,7 @@ fi
 
 export PYTHONPATH="$SCRIPT_DIR:$SCRIPT_DIR/vendor/pixoo/src:$SCRIPT_DIR/vendor/meshcore_py/src:$PYTHONPATH"
 if [ -z "$QTWEBENGINE_CHROMIUM_FLAGS" ]; then
-    export QTWEBENGINE_CHROMIUM_FLAGS="--no-sandbox"
+    export QTWEBENGINE_CHROMIUM_FLAGS="--no-sandbox --ozone-platform-hint=auto --enable-features=UseOzonePlatform,WaylandWindowDecorations --disable-gpu-watchdog"
 fi
 
 exec python3 -m meshcore_tray.main "$@"

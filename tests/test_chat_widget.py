@@ -367,3 +367,53 @@ def test_message_bubble_copy_menu_sanitizes_zwsp(qapp):
     assert clip.text() == "Received Dublin @[ANK 💳]: fefebc→fc2a45→55e0a0"
 
 
+def test_message_bubble_avatar_toggle(qapp):
+    """Verifies that MessageBubble renders avatar icon when enabled and hides when disabled."""
+    from meshcore_tray.config import AppConfig
+
+    msg = MessageEnvelope(
+        id="avatar_msg_1",
+        channel="#general",
+        sender_id="!user123",
+        sender_name="CyberDroid",
+        text="Testing avatar in chat bubble",
+        timestamp="2026-09-12T18:00:00Z"
+    )
+
+    # 1. Enabled by default (incoming message)
+    cfg_on = AppConfig()
+    cfg_on.show_chat_avatars = True
+    bubble_on = MessageBubble(msg, config=cfg_on)
+    assert hasattr(bubble_on, "avatar_lbl")
+    assert bubble_on.avatar_lbl.pixmap() is not None
+    assert not bubble_on.avatar_lbl.pixmap().isNull()
+    assert bubble_on.avatar_lbl.width() == 38
+    assert bubble_on.avatar_lbl.height() == 38
+    assert "CyberDroid" in bubble_on.avatar_lbl.toolTip()
+    # Incoming message: avatar is on the left (index 0 of bubble layout)
+    assert bubble_on.layout().itemAt(0).widget() is bubble_on.avatar_lbl
+
+    # Outgoing message: avatar is on the right (trailing in bubble layout)
+    msg_out = MessageEnvelope(
+        id="avatar_msg_out",
+        channel="#general",
+        sender_id="!my_node",
+        sender_name="LocalNode",
+        text="Outgoing text",
+        is_outgoing=True,
+        timestamp="2026-09-12T18:00:00Z"
+    )
+    bubble_out = MessageBubble(msg_out, config=cfg_on)
+    assert hasattr(bubble_out, "avatar_lbl")
+    assert bubble_out.avatar_lbl.width() == 38
+    # Outgoing message: avatar is on the right
+    assert bubble_out.layout().itemAt(1).widget() is bubble_out.avatar_lbl
+
+    # 2. Disabled in settings
+    cfg_off = AppConfig()
+    cfg_off.show_chat_avatars = False
+    bubble_off = MessageBubble(msg, config=cfg_off)
+    assert not hasattr(bubble_off, "avatar_lbl")
+
+
+

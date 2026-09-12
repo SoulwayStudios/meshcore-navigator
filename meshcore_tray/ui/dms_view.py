@@ -14,6 +14,7 @@ from meshcore_tray.core.models import NodeContact, MessageEnvelope
 from meshcore_tray.core.event_bus import bus, EventType
 from meshcore_tray.ui.chat_widget import ChatWidget
 from meshcore_tray.ui.composer import PowerComposer
+from meshcore_tray.ui.avatar_generator import get_contact_avatar_icon
 
 logger = logging.getLogger("meshcore_tray.dms_view")
 
@@ -84,21 +85,47 @@ class ContactItemWidget(QWidget):
         layout.setContentsMargins(10, 6, 10, 6)
         layout.setSpacing(12)
 
-        # Letter badge / emoji square with plenty of breathing room (NO photo avatar)
+        # Procedural avatar badge (Style C Cyberpunk Droid for users, Style B Tactical Radar for repeaters)
         self.badge = QLabel()
         self.badge.setFixedSize(36, 36)
         self.badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        badge_letter = "🏢" if is_room else get_letter_avatar(contact.alias or contact.node_id)
-        self.badge.setText(badge_letter)
 
-        bg_col = "#5865F2" if is_room else self._color_for_name(contact.alias or contact.node_id)
-        self.badge.setStyleSheet(f"""
-            background-color: {bg_col};
-            color: #FFFFFF;
-            border-radius: 8px;
-            font-size: 15px;
-            font-weight: bold;
-        """)
+        is_rep = False
+        if is_room:
+            self.badge.setText("🏢")
+            self.badge.setStyleSheet("""
+                background-color: #5865F2;
+                color: #FFFFFF;
+                border-radius: 8px;
+                font-size: 15px;
+                font-weight: bold;
+            """)
+        else:
+            alias_upper = (contact.alias or "").upper()
+            role_upper = (getattr(contact, "role", "") or "").upper()
+            type_upper = (getattr(contact, "type", "") or "").upper()
+            is_rep = bool(
+                getattr(contact, "is_repeater", False)
+                or any(kw in alias_upper for kw in ("[REP]", "[REPEATER]", "[ROUTER]", "[RTR]", "[GW]", "REPEATER", "ROUTER"))
+                or any(kw in role_upper for kw in ("REPEATER", "ROUTER"))
+                or any(kw in type_upper for kw in ("REPEATER", "ROUTER"))
+            )
+            badge_letter = get_letter_avatar(contact.alias or contact.node_id)
+            self.badge.setProperty("letter", badge_letter)
+            avatar_icon = get_contact_avatar_icon(contact.node_id, contact.alias, is_repeater=is_rep, size=36)
+            if avatar_icon and not avatar_icon.isNull():
+                self.badge.setPixmap(avatar_icon.pixmap(36, 36))
+                self.badge.setStyleSheet("background: transparent; border: none; border-radius: 8px;")
+            else:
+                self.badge.setText(badge_letter)
+                bg_col = self._color_for_name(contact.alias or contact.node_id)
+                self.badge.setStyleSheet(f"""
+                    background-color: {bg_col};
+                    color: #FFFFFF;
+                    border-radius: 8px;
+                    font-size: 15px;
+                    font-weight: bold;
+                """)
         layout.addWidget(self.badge)
 
         # Details
@@ -143,6 +170,30 @@ class ContactItemWidget(QWidget):
         info_layout.addWidget(self.sub_lbl)
 
         layout.addLayout(info_layout, 1)
+
+        # Rich Tooltip with Full Name and Node Details
+        role_desc = "🏢 Room Server" if is_room else ("📡 Repeater Node" if is_rep else "👤 User / Client Node")
+        hw_model = getattr(contact, "hw_model", "") or getattr(contact, "hardware", "")
+        hw_line = f"\n📟 Hardware: {hw_model}" if hw_model else ""
+        snr = getattr(contact, "snr_db", 0.0)
+        rssi = getattr(contact, "rssi_dbm", -100.0)
+        rf_line = f"\n📶 Signal: {rssi:.0f} dBm (SNR {snr:+.1f} dB)" if (snr != 0.0 or rssi != -100.0) else ""
+        hops = getattr(contact, "out_path_len", -1)
+        hops_line = f"\n🔀 Path: {hops} hop{'s' if hops != 1 else ''}" if hops >= 0 else ""
+        lat = getattr(contact, "latitude", None)
+        lon = getattr(contact, "longitude", None)
+        loc_line = f"\n📍 Location: {lat:.4f}, {lon:.4f}" if (lat is not None and lon is not None) else ""
+        seen_line = f"\n🕒 Last Seen: {last_time}" if (not is_room and last_time) else ""
+
+        tip = (
+            f"👤 {raw_name}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🏷️ Role: {role_desc}\n"
+            f"🔑 Node ID: {contact.node_id}{hw_line}{rf_line}{hops_line}{loc_line}{seen_line}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"💬 Click to open Direct Message"
+        )
+        self.setToolTip(tip)
 
     def _color_for_name(self, name: str) -> str:
         palette = [

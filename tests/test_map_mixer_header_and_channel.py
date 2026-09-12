@@ -4,6 +4,7 @@ import tempfile
 from unittest.mock import patch
 from PyQt6.QtWidgets import QApplication
 
+from meshcore_tray import __version__
 from meshcore_tray.config import AppConfig
 from meshcore_tray.storage import Storage
 from meshcore_tray.ui.main_window import MainWindow
@@ -30,8 +31,8 @@ def test_map_mixer_title_and_companion_node_heading(app):
         with patch("meshcore_tray.ui.mesh_map_widget.WEBENGINE_AVAILABLE", False):
             win = MainWindow(config=config, storage=storage)
 
-        # 1. Window title check
-        assert win.windowTitle() == "MESHCORE NAVIGATOR"
+        # 1. Window title check (includes application version)
+        assert win.windowTitle() == f"MESHCORE NAVIGATOR v{__version__}"
 
         # 2. Top bar logo label check
         assert hasattr(win, "companion_node_lbl")

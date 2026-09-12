@@ -12,6 +12,7 @@ from meshcore_tray.config import AppConfig
 from meshcore_tray.core.models import NodeContact
 from meshcore_tray.core.event_bus import bus, EventType
 from meshcore_tray.ui.repeater_console import RepeaterConsoleWidget
+from meshcore_tray.ui.avatar_generator import get_contact_avatar_icon
 
 logger = logging.getLogger("meshcore_tray.repeaters_view")
 
@@ -70,17 +71,24 @@ class RepeaterRowWidget(QWidget):
         layout.setContentsMargins(10, 6, 10, 6)
         layout.setSpacing(12)
 
-        # Repeater badge (square with rounded corners, 36x36)
-        badge = QLabel("⚡")
-        badge.setFixedSize(36, 36)
-        badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        badge.setStyleSheet("""
-            background-color: #FFA500;
-            color: #000000;
-            border-radius: 8px;
-            font-size: 16px;
-            font-weight: bold;
-        """)
+        # Repeater badge: Style B Tactical Radar Constellation avatar
+        self.badge = QLabel()
+        self.badge.setFixedSize(36, 36)
+        self.badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        avatar_icon = get_contact_avatar_icon(contact.node_id, contact.alias, is_repeater=True, size=36)
+        if avatar_icon and not avatar_icon.isNull():
+            self.badge.setPixmap(avatar_icon.pixmap(36, 36))
+            self.badge.setStyleSheet("background: transparent; border: none; border-radius: 8px;")
+        else:
+            self.badge.setText("📡")
+            self.badge.setStyleSheet("""
+                background-color: #FFA500;
+                color: #000000;
+                border-radius: 8px;
+                font-size: 16px;
+                font-weight: bold;
+            """)
+        badge = self.badge
         layout.addWidget(badge)
 
         # Info
@@ -124,6 +132,31 @@ class RepeaterRowWidget(QWidget):
         info_layout.addWidget(self.sub_lbl)
 
         layout.addLayout(info_layout, 1)
+
+        # Rich Tooltip with Full Repeater Name and Node Details
+        hw_model = getattr(contact, "hw_model", "") or getattr(contact, "hardware", "")
+        hw_line = f"\n📟 Hardware: {hw_model}" if hw_model else ""
+        snr = getattr(contact, "snr_db", None)
+        rssi = getattr(contact, "rssi_dbm", None)
+        rf_line = ""
+        if snr is not None and rssi is not None:
+            rf_line = f"\n📶 Signal: {rssi:.0f} dBm (SNR {snr:+.1f} dB)"
+        elif snr is not None:
+            rf_line = f"\n📶 SNR: {snr:+.1f} dB"
+        lat = getattr(contact, "latitude", None)
+        lon = getattr(contact, "longitude", None)
+        loc_line = f"\n📍 Location: {lat:.4f}, {lon:.4f}" if (lat is not None and lon is not None) else ""
+        seen_line = f"\n🕒 Last Seen: {last_time}" if last_time else ""
+
+        tip = (
+            f"📡 Repeater: {contact.alias or contact.node_id}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🏷️ Role: 📡 Repeater Node\n"
+            f"🔑 Node ID: {contact.node_id}{hw_line}{rf_line}{loc_line}{seen_line}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"⚡ Click to open Repeater Console"
+        )
+        self.setToolTip(tip)
 
 
 class RepeatersViewWidget(QWidget):

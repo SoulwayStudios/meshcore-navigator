@@ -14,8 +14,8 @@ import time
 from PyQt6.QtCore import QObject, Qt, QUrl, pyqtSignal, pyqtSlot, QTimer, QPoint, QEvent
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
-    QButtonGroup, QComboBox, QFrame, QHBoxLayout, QLabel, QMenu, QPushButton,
-    QSplitter, QVBoxLayout, QWidget, QApplication
+    QButtonGroup, QComboBox, QFrame, QHBoxLayout, QLabel, QMenu, QProgressBar,
+    QPushButton, QSplitter, QVBoxLayout, QWidget, QApplication
 )
 
 logger = logging.getLogger("meshcore_tray.mesh_map")
@@ -3054,10 +3054,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
         }
 
         function setNodes(nodesList) {
-            for (var id in markers) {
-                map.removeLayer(markers[id]);
-            }
-            markers = {};
+            var seen = {};
             var latLngs = [];
 
             nodesList.forEach(function(node) {
@@ -3099,19 +3096,6 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
 
                     var styleAttr = ' style="opacity: ' + opacity.toFixed(2) + ';' + initPathStyle + '"';
 
-                    // Generous 20px hit area around the dot for effortless mouse hovering & clicking
-                    var icon = L.divIcon({
-                        className: 'node-marker-wrap',
-                        html: '<div class="' + dotClass + '"' + styleAttr + '></div>',
-                        iconSize: [20, 20],
-                        iconAnchor: [10, 10]
-                    });
-
-                    var marker = L.marker([node.lat, node.lon], { icon: icon }).addTo(map);
-                    marker._nodeData = node;
-                    applyNodeMarkerStyling(marker, node);
-
-                    // Hover tooltip shows node name, last heard, and path info
                     var starPrefix = isFav ? '⭐ ' : '';
                     var lastHeardStr = isLocal ? 'Active now (Local node)' : formatLastHeard(node.last_seen);
                     var pathStr = formatPathInfo(node);
@@ -3134,45 +3118,78 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                         '<div style="font-size: 10px; margin-top: 2px;">' + pathStr + '</div>' +
                         actInfo +
                         '</div>';
-                    marker.bindTooltip(tipContent, {
-                        direction: 'top',
-                        offset: [0, -6],
-                        className: 'node-tooltip'
-                    });
 
-                    // Dynamic popup content including standard repeater info and docked orbital nodes list
-                    marker.bindPopup(function() {
-                        return buildNodePopupContent(node);
-                    }, { className: 'custom-popup', maxWidth: 320 });
+                    seen[node.node_id] = true;
+                    var marker = markers[node.node_id];
 
-                    if (isRep) {
-                        marker.on('click', function(ev) {
-                            if (window._companionOrbitalsActive) {
-                                var dMap = window._dockedCompanionsData || {};
-                                var dList = dMap[node.node_id] || dMap[node.alias];
-                                if (!dList && node.alias) {
-                                    dList = dMap['@' + node.alias] || dMap[node.alias.replace(/^@/, '')];
-                                }
-                                if (dList && dList.length > 0) {
-                                    // When zoomed out, clicking the gold ring zooms in to the level where orbitals show
-                                    if (map.getZoom() < ORBITAL_ZOOM_THRESHOLD) {
-                                        marker.closePopup();
-                                        setTimeout(function() { marker.closePopup(); }, 30);
-                                        map.flyTo([node.lat, node.lon], ORBITAL_ZOOM_THRESHOLD, { duration: 0.8 });
-                                        if (ev && ev.originalEvent) ev.originalEvent.stopPropagation();
-                                        return;
+                    if (marker) {
+                        var curLL = marker.getLatLng();
+                        if (Math.abs(curLL.lat - node.lat) > 0.00001 || Math.abs(curLL.lng - node.lon) > 0.00001) {
+                            marker.setLatLng([node.lat, node.lon]);
+                        }
+                        marker._nodeData = node;
+                        var icon = L.divIcon({
+                            className: 'node-marker-wrap',
+                            html: '<div class="' + dotClass + '"' + styleAttr + '></div>',
+                            iconSize: [20, 20],
+                            iconAnchor: [10, 10]
+                        });
+                        marker.setIcon(icon);
+                        applyNodeMarkerStyling(marker, node);
+                        marker.setTooltipContent(tipContent);
+                    } else {
+                        var icon = L.divIcon({
+                            className: 'node-marker-wrap',
+                            html: '<div class="' + dotClass + '"' + styleAttr + '></div>',
+                            iconSize: [20, 20],
+                            iconAnchor: [10, 10]
+                        });
+                        marker = L.marker([node.lat, node.lon], { icon: icon }).addTo(map);
+                        marker._nodeData = node;
+                        applyNodeMarkerStyling(marker, node);
+                        marker.bindTooltip(tipContent, {
+                            direction: 'top',
+                            offset: [0, -6],
+                            className: 'node-tooltip'
+                        });
+                        marker.bindPopup(function() {
+                            return buildNodePopupContent(marker._nodeData);
+                        }, { className: 'custom-popup', maxWidth: 320 });
+
+                        if (isRep) {
+                            marker.on('click', function(ev) {
+                                if (window._companionOrbitalsActive) {
+                                    var dMap = window._dockedCompanionsData || {};
+                                    var dList = dMap[node.node_id] || dMap[node.alias];
+                                    if (!dList && node.alias) {
+                                        dList = dMap['@' + node.alias] || dMap[node.alias.replace(/^@/, '')];
+                                    }
+                                    if (dList && dList.length > 0) {
+                                        if (map.getZoom() < ORBITAL_ZOOM_THRESHOLD) {
+                                            marker.closePopup();
+                                            setTimeout(function() { marker.closePopup(); }, 30);
+                                            map.flyTo([node.lat, node.lon], ORBITAL_ZOOM_THRESHOLD, { duration: 0.8 });
+                                            if (ev && ev.originalEvent) ev.originalEvent.stopPropagation();
+                                            return;
+                                        }
                                     }
                                 }
-                            }
-                        });
+                            });
+                        }
+                        markers[node.node_id] = marker;
                     }
-
-                    markers[node.node_id] = marker;
                     latLngs.push([node.lat, node.lon]);
                 } catch (nodeErr) {
                     console.error('Error rendering node marker:', node, nodeErr);
                 }
             });
+
+            for (var id in markers) {
+                if (!seen[id]) {
+                    map.removeLayer(markers[id]);
+                    delete markers[id];
+                }
+            }
 
             // Only fit bounds on first-ever load if user has not set/restored a custom viewport
             if (!window._initialViewSet && latLngs.length > 0) {
@@ -6388,6 +6405,244 @@ class WebBridge(QObject):
         self.calc_node_viewshed_signal.emit(node_id, alias, lat, lon)
 
 
+class ReformingMapOverlay(QWidget):
+    """Semi-transparent loading HUD displayed over Leaflet map during view recovery or resize."""
+
+    SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("reformingMapOverlay")
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        self.setStyleSheet("""
+            QWidget#reformingMapOverlay {
+                background-color: rgba(14, 17, 23, 0.90);
+            }
+        """)
+
+        self._spinner_idx = 0
+        self._spinner_timer = QTimer(self)
+        self._spinner_timer.setInterval(80)
+        self._spinner_timer.timeout.connect(self._advance_spinner)
+
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.card = QFrame()
+        self.card.setObjectName("reformingCard")
+        self.card.setFixedWidth(440)
+        self.card.setStyleSheet("""
+            QFrame#reformingCard {
+                background-color: #161920;
+                border: 1.5px solid #10B981;
+                border-radius: 14px;
+            }
+        """)
+        card_layout = QVBoxLayout(self.card)
+        card_layout.setContentsMargins(28, 22, 28, 22)
+        card_layout.setSpacing(10)
+        card_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        # Large animated cyber braille spinner centered above title
+        self.spinner_lbl = QLabel("⠋")
+        self.spinner_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.spinner_lbl.setFixedHeight(48)
+        self.spinner_lbl.setStyleSheet("""
+            font-size: 36px;
+            font-weight: bold;
+            color: #10B981;
+            background: transparent;
+            border: none;
+            font-family: monospace;
+        """)
+        card_layout.addWidget(self.spinner_lbl)
+
+        self.title_lbl = QLabel("INITIALIZING MESH MAP")
+        self.title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.title_lbl.setFixedHeight(24)
+        self.title_lbl.setStyleSheet("""
+            font-size: 15px;
+            font-weight: bold;
+            color: #FFFFFF;
+            background: transparent;
+            border: none;
+        """)
+        card_layout.addWidget(self.title_lbl)
+
+        # Stage status description
+        self.desc_lbl = QLabel("Synchronizing compositor & mesh layers...")
+        self.desc_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.desc_lbl.setWordWrap(True)
+        self.desc_lbl.setStyleSheet("""
+            font-size: 12px;
+            color: #94A3B8;
+            background: transparent;
+            border: none;
+        """)
+        card_layout.addWidget(self.desc_lbl)
+
+        # Stage pills row
+        self.pills_container = QWidget()
+        self.pills_container.setStyleSheet("background: transparent; border: none;")
+        self.pills_layout = QHBoxLayout(self.pills_container)
+        self.pills_layout.setContentsMargins(0, 4, 0, 4)
+        self.pills_layout.setSpacing(6)
+        self.pills_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.stage_pills: List[QLabel] = []
+        stage_names = ["1 ENGINE", "2 VIEWPORT", "3 NODES", "4 RADIO"]
+        for name in stage_names:
+            pill = QLabel(name)
+            pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            pill.setFixedHeight(22)
+            pill.setStyleSheet("""
+                background-color: #1E293B;
+                color: #64748B;
+                border: 1px solid #334155;
+                border-radius: 4px;
+                padding: 2px 8px;
+                font-size: 10px;
+                font-weight: bold;
+                letter-spacing: 0.8px;
+            """)
+            self.stage_pills.append(pill)
+            self.pills_layout.addWidget(pill)
+        card_layout.addWidget(self.pills_container)
+
+        # High-tech progress bar + percent readout
+        bar_layout = QVBoxLayout()
+        bar_layout.setSpacing(4)
+        bar_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(25)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setFixedHeight(8)
+        self.progress_bar.setFixedWidth(320)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                border: 1px solid rgba(16, 185, 129, 0.4);
+                border-radius: 4px;
+                background-color: #0F172A;
+            }
+            QProgressBar::chunk {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #059669, stop:0.5 #10B981, stop:1 #34D399);
+                border-radius: 3px;
+            }
+        """)
+        bar_layout.addWidget(self.progress_bar, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        self.percent_lbl = QLabel("25%")
+        self.percent_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.percent_lbl.setStyleSheet("""
+            font-size: 11px;
+            font-weight: bold;
+            color: #10B981;
+            font-family: monospace;
+            background: transparent;
+            border: none;
+        """)
+        bar_layout.addWidget(self.percent_lbl)
+        card_layout.addLayout(bar_layout)
+
+        # Retain pulse_bar attribute for backwards compatibility
+        self.pulse_bar = self.progress_bar
+
+        layout.addWidget(self.card)
+        self.hide()
+
+    def _advance_spinner(self):
+        self._spinner_idx = (self._spinner_idx + 1) % len(self.SPINNER_FRAMES)
+        self.spinner_lbl.setText(self.SPINNER_FRAMES[self._spinner_idx])
+
+    def _update_stage_pills(self, active_stage: Optional[int]):
+        if not active_stage:
+            self.pills_container.hide()
+            return
+        self.pills_container.show()
+        for idx, pill in enumerate(self.stage_pills, start=1):
+            if idx < active_stage:
+                # Completed stage
+                pill.setStyleSheet("""
+                    background-color: #064E3B;
+                    color: #A7F3D0;
+                    border: 1px solid #059669;
+                    border-radius: 4px;
+                    padding: 2px 8px;
+                    font-size: 10px;
+                    font-weight: bold;
+                    letter-spacing: 0.8px;
+                """)
+            elif idx == active_stage:
+                # Active stage
+                pill.setStyleSheet("""
+                    background-color: #10B981;
+                    color: #0F172A;
+                    border: 1.5px solid #34D399;
+                    border-radius: 4px;
+                    padding: 2px 8px;
+                    font-size: 10px;
+                    font-weight: 900;
+                    letter-spacing: 0.8px;
+                """)
+            else:
+                # Pending stage
+                pill.setStyleSheet("""
+                    background-color: #1E293B;
+                    color: #64748B;
+                    border: 1px solid #334155;
+                    border-radius: 4px;
+                    padding: 2px 8px;
+                    font-size: 10px;
+                    font-weight: bold;
+                    letter-spacing: 0.8px;
+                """)
+
+    def show_reforming(
+        self,
+        message: str = "Synchronizing compositor & mesh layers...",
+        title: Optional[str] = None,
+        stage: Optional[int] = None,
+        percent: Optional[int] = None,
+    ):
+        if title:
+            self.title_lbl.setText(title)
+        self.desc_lbl.setText(message)
+
+        if percent is not None:
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(percent)
+            self.percent_lbl.setText(f"{percent}%")
+            self.percent_lbl.show()
+        elif stage is not None:
+            pct = min(100, max(0, stage * 25))
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(pct)
+            self.percent_lbl.setText(f"{pct}%")
+            self.percent_lbl.show()
+        else:
+            # Indeterminate resize/recovery mode
+            self.progress_bar.setRange(0, 0)
+            self.percent_lbl.hide()
+
+        self._update_stage_pills(stage)
+
+        if not self._spinner_timer.isActive():
+            self._spinner_timer.start()
+
+        if self.parentWidget():
+            self.setGeometry(self.parentWidget().rect())
+        self.raise_()
+        self.show()
+
+    def hide_reforming(self):
+        if self._spinner_timer.isActive():
+            self._spinner_timer.stop()
+        self.hide()
+
+
 class MeshMapWidget(QWidget):
     """Interactive Mesh Map & Packet Path Watcher widget displayed between Chat and Pixoo mirror."""
 
@@ -6404,29 +6659,40 @@ class MeshMapWidget(QWidget):
         self.node_filter_mode = "ALL"
         self.show_repeaters_only = False
         self.show_rf_links = True
-        self.show_paths = True
-        self.show_companion_orbitals = getattr(self.config.meshcore, "map_show_companion_orbitals", False) if self.config else False
+        self.show_paths = False
+        self.show_companion_orbitals = False
         self._page_ready = not WEBENGINE_AVAILABLE
         self._last_traced_path_info = None
         self._pending_visualise_msg = None
         self._pending_neighbors_payload = None
+        self._watchdog_grace_until = 0.0
+        self._watchdog_unanswered = 0
+
+        self._initial_loading_active = WEBENGINE_AVAILABLE
+        self._stagger_stage = 1 if WEBENGINE_AVAILABLE else 0
+        self._geometry_in_motion = False
+        self._last_geometry_motion_time = 0.0
+        self._pending_refresh = False
+        self._stagger_timer = QTimer(self)
+        self._stagger_timer.setSingleShot(True)
+        self._stagger_timer.timeout.connect(self._on_stagger_timer_timeout)
 
         self.tropo_service = TropoForecastService(parent=self)
         self.tropo_service.forecast_ready.connect(self._on_tropo_forecast_ready)
         self.tropo_service.forecast_loading.connect(self._on_tropo_forecast_loading)
         self.tropo_service.forecast_error.connect(self._on_tropo_forecast_error)
 
-        self.show_adsb = getattr(self.config.meshcore, "map_show_adsb", False) if self.config else False
+        self.show_adsb = False
         self.adsb_service = ADSBService(parent=self)
         self.adsb_service.flights_updated.connect(self._on_adsb_flights_updated)
 
         self.activity_heatmap_active = False
         self.activity_timeframe_hours = 1
-        self.show_thunderstorm = getattr(self.config.meshcore, "map_show_thunderstorm", False) if self.config else False
+        self.show_thunderstorm = False
         self.thunderstorm_service = ThunderstormService(parent=self)
         self.thunderstorm_service.radar_updated.connect(self._on_thunderstorm_radar_updated)
 
-        self.show_space_weather = getattr(self.config.meshcore, "map_show_space_weather", False) if self.config else False
+        self.show_space_weather = False
         self.space_weather_service = SpaceWeatherService(parent=self)
         self.space_weather_service.weather_updated.connect(self._on_space_weather_updated)
         self.space_weather_service.weather_loading.connect(self._on_space_weather_loading)
@@ -6454,8 +6720,8 @@ class MeshMapWidget(QWidget):
 
         self._setup_ui()
         self._subscribe_events()
-        self._do_refresh_map_data()
         if not WEBENGINE_AVAILABLE:
+            self._do_refresh_map_data()
             QTimer.singleShot(600, self.map_ready.emit)
 
     def _setup_ui(self):
@@ -6776,7 +7042,14 @@ class MeshMapWidget(QWidget):
         self.map_splitter.setStretchFactor(1, 1)
         self.map_splitter.setChildrenCollapsible(False)
 
-        layout.addWidget(self.map_splitter, 1)
+        # Horizontal container for optional layer dock and map splitter
+        self.map_content_row = QWidget()
+        self.map_content_layout = QHBoxLayout(self.map_content_row)
+        self.map_content_layout.setContentsMargins(0, 0, 0, 0)
+        self.map_content_layout.setSpacing(0)
+        self.map_content_layout.addWidget(self.map_splitter, 1)
+
+        layout.addWidget(self.map_content_row, 1)
 
         # Purple Status Bar Below Map (Status of flood messages & watcher)
         self.watcher_status = QLabel("⚡ Watcher: Listening for live RF packet paths...")
@@ -6791,19 +7064,44 @@ class MeshMapWidget(QWidget):
         """)
         layout.addWidget(self.watcher_status)
 
+        self.reforming_overlay = ReformingMapOverlay(self)
+        if WEBENGINE_AVAILABLE:
+            self.reforming_overlay.show_reforming(
+                message="Stage 1/4: Initializing map engine & cache...",
+                title="INITIALIZING MESH MAP",
+                stage=1,
+                percent=25,
+            )
+
+    def attach_layer_dock(self, dock: QWidget):
+        """Attaches the vertical MapLayerDockWidget to the left edge of the map canvas."""
+        if hasattr(self, "map_content_layout"):
+            self.map_content_layout.insertWidget(0, dock)
+
+    def pause_geometry_motion(self):
+        """Temporarily pauses JS dispatch and watchdog during window moves, resizes or splitter drags.
+        
+        This prevents compositor buffer contention and guarantees no failsafes, reloads, or
+        recovery alerts are triggered during user resizing.
+        """
+        self._geometry_in_motion = True
+        self._last_geometry_motion_time = time.time()
+        self._watchdog_grace_until = time.time() + 60.0
+        self._watchdog_unanswered = 0
+        if hasattr(self, "reforming_overlay") and self.reforming_overlay.isVisible():
+            self.reforming_overlay.setGeometry(self.rect())
+        self._reposition_floating_controls()
+        self._schedule_map_invalidate(delay_ms=250)
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._reposition_floating_controls()
-        self._schedule_map_invalidate(150)
+        self.pause_geometry_motion()
 
     def changeEvent(self, event):
         super().changeEvent(event)
         if event.type() == QEvent.Type.WindowStateChange:
             # Window maximized, restored, or fullscreened.
-            # Allow OS window manager, compositor, and Chromium swapchain 250ms to settle
-            # before requesting Leaflet viewport invalidation, preventing buffer thrashing/hangs.
-            self._reposition_floating_controls()
-            self._schedule_map_invalidate(delay_ms=250)
+            self.pause_geometry_motion()
 
     def _reposition_floating_controls(self):
         if hasattr(self, "floating_controls"):
@@ -6812,7 +7110,10 @@ class MeshMapWidget(QWidget):
         if hasattr(self, "los_controls") and hasattr(self, "floating_controls") and hasattr(self, "web_view"):
             fl_w = self.floating_controls.width()
             los_w = self.los_controls.width()
-            web_w = self.web_view.width()
+            try:
+                web_w = int(self.web_view.width())
+            except Exception:
+                web_w = 800
             if fl_w + los_w + 30 <= web_w:
                 self.los_controls.move(fl_w + 20, 10)
             else:
@@ -6822,7 +7123,7 @@ class MeshMapWidget(QWidget):
     def moveEvent(self, event):
         super().moveEvent(event)
         self._connect_screen_listener()
-        self._schedule_map_invalidate(180)
+        self.pause_geometry_motion()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -6848,24 +7149,91 @@ class MeshMapWidget(QWidget):
         if new_screen:
             dpr = new_screen.devicePixelRatio()
             geo = new_screen.geometry()
-            logger.info(f"Display monitor changed to: {new_screen.name()} (DPI scale={dpr}, size={geo.width()}x{geo.height()})")
-            # 25-second grace period after monitor change so compositor sync never triggers a false-positive watchdog reload
-            self._watchdog_grace_until = time.time() + 25.0
-            self._watchdog_unanswered = 0
+            logger.info(f"Window moved to screen {new_screen.name()} (DPR={dpr}, bounds={geo.width()}x{geo.height()})")
             self._schedule_map_invalidate(delay_ms=250)
 
     def _schedule_map_invalidate(self, delay_ms: int = 150):
-        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and getattr(self, "_page_ready", False):
-            if not hasattr(self, "_map_resize_timer"):
-                self._map_resize_timer = QTimer(self)
-                self._map_resize_timer.setSingleShot(True)
-                self._map_resize_timer.timeout.connect(self._on_debounced_map_resize)
-            self._map_resize_timer.stop()
-            self._map_resize_timer.start(delay_ms)
+        if not hasattr(self, "_map_resize_timer"):
+            self._map_resize_timer = QTimer(self)
+            self._map_resize_timer.setSingleShot(True)
+            self._map_resize_timer.timeout.connect(self._on_debounced_map_resize)
+        self._map_resize_timer.stop()
+        self._map_resize_timer.start(delay_ms)
 
     def _on_debounced_map_resize(self):
+        self._geometry_in_motion = False
         if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and getattr(self, "_page_ready", False):
             self.web_view.page().runJavaScript("if (typeof map !== 'undefined' && map) map.invalidateSize(false);")
+        if getattr(self, "_initial_loading_active", False):
+            if hasattr(self, "_stagger_timer") and not self._stagger_timer.isActive():
+                self._stagger_timer.start(100)
+        elif getattr(self, "_pending_refresh", False):
+            self._pending_refresh = False
+            self._do_refresh_map_data()
+
+    def _on_stagger_timer_timeout(self):
+        if not getattr(self, "_initial_loading_active", False):
+            return
+        # If the window is currently in motion (resizing/moving), wait for stillness!
+        if getattr(self, "_geometry_in_motion", False):
+            if time.time() - getattr(self, "_last_geometry_motion_time", 0.0) >= 0.35:
+                self._geometry_in_motion = False
+            else:
+                self._stagger_timer.start(150)
+                return
+
+        if self._stagger_stage == 2:
+            # Stage 2 complete: Viewport geometry is now settled
+            if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
+                if self.config and hasattr(self.config.meshcore, "map_center_lat") and self.config.meshcore.map_center_lat is not None and self.config.meshcore.map_center_lon is not None:
+                    z = self.config.meshcore.map_zoom or 8
+                    lon = ((float(self.config.meshcore.map_center_lon) + 180.0) % 360.0 + 360.0) % 360.0 - 180.0
+                    lat = max(-85.0, min(85.0, float(self.config.meshcore.map_center_lat)))
+                    self.web_view.page().runJavaScript(f"map.setView([{lat}, {lon}], {z}); window._initialViewSet = true; map.invalidateSize(false);")
+                else:
+                    self.web_view.page().runJavaScript("if (typeof map !== 'undefined' && map) map.invalidateSize(false);")
+
+            fading = getattr(self.config.meshcore, "node_freshness_fading", True) if self.config else True
+            self.set_freshness_fading(fading)
+            self.apply_colors()
+
+            self._stagger_stage = 3
+            if hasattr(self, "reforming_overlay"):
+                self.reforming_overlay.show_reforming(
+                    message="Stage 3/4: Loading cached mesh nodes...",
+                    title="INITIALIZING MESH MAP",
+                    stage=3,
+                    percent=75,
+                )
+            self._stagger_timer.start(300)
+            return
+
+        elif self._stagger_stage == 3:
+            # Stage 3: Load nodes from SQLite disk cache
+            self._do_refresh_map_data()
+
+            self._stagger_stage = 4
+            if hasattr(self, "reforming_overlay"):
+                self.reforming_overlay.show_reforming(
+                    message="Stage 4/4: Ready • Synchronizing radio streams...",
+                    title="INITIALIZING MESH MAP",
+                    stage=4,
+                    percent=100,
+                )
+            self._stagger_timer.start(400)
+            return
+
+        elif self._stagger_stage == 4:
+            # Stage 4 complete: Final release of the map view!
+            self._initial_loading_active = False
+            self._stagger_stage = 0
+            if getattr(self, "_pending_refresh", False):
+                self._pending_refresh = False
+                self._do_refresh_map_data()
+            if hasattr(self, "reforming_overlay"):
+                self.reforming_overlay.hide_reforming()
+            self.map_ready.emit()
+            logger.info("Mesh map staggered initialization completed successfully.")
 
     def _start_renderer_watchdog(self):
         if not hasattr(self, "_renderer_watchdog_timer"):
@@ -6884,24 +7252,30 @@ class MeshMapWidget(QWidget):
     def _check_renderer_watchdog(self):
         if not (WEBENGINE_AVAILABLE and hasattr(self, "web_view") and getattr(self, "_page_ready", False)):
             return
-        # If the map widget or window is hidden / in background tab, Chromium intentionally throttles JS execution
+        if getattr(self, "_geometry_in_motion", False) or getattr(self, "_initial_loading_active", False):
+            self._watchdog_unanswered = 0
+            return
+        win = self.window()
+        if win and (win.isMinimized() or not win.isVisible()):
+            self._watchdog_unanswered = 0
+            return
         if not self.isVisible():
             self._watchdog_unanswered = 0
             return
         now = time.time()
         if now < getattr(self, "_watchdog_grace_until", 0.0):
-            # Window or screen was recently moved; allow compositor buffer synchronization
             self._watchdog_unanswered = 0
             return
 
-        # Require 6 consecutive unanswered pings outside grace period (60+ seconds of complete silence)
-        if self._watchdog_unanswered >= 6:
-            logger.error(
-                f"WebEngine renderer process unresponsive ({self._watchdog_unanswered} consecutive watchdog timeouts over 60s). "
-                "Triggering automatic view recovery..."
+        # Require 10 consecutive unanswered pings outside grace period (100 seconds of complete silence)
+        if self._watchdog_unanswered >= 10:
+            logger.warning(
+                f"WebEngine renderer process unresponsive ({self._watchdog_unanswered} consecutive watchdog timeouts over 100s). "
+                "Triggering graceful view recovery..."
             )
             self._watchdog_unanswered = 0
-            self._on_render_process_terminated(None, -1)
+            self._page_ready = False
+            self._recover_web_view_after_termination()
             return
 
         self._watchdog_unanswered += 1
@@ -6921,29 +7295,39 @@ class MeshMapWidget(QWidget):
 
     def _recover_web_view_after_termination(self):
         try:
+            if hasattr(self, "reforming_overlay"):
+                self.reforming_overlay.show_reforming("Reforming Map View...")
+
+            # Safety timeout: auto-dismiss recovery overlay after 8s so user is never locked out
+            def _dismiss_recovery_overlay():
+                if hasattr(self, "reforming_overlay") and not getattr(self, "_initial_loading_active", False):
+                    logger.info("Recovery safety timeout reached; dismissing reforming overlay.")
+                    self.reforming_overlay.hide_reforming()
+            QTimer.singleShot(8000, _dismiss_recovery_overlay)
+
             if hasattr(self, "web_view"):
                 logger.info("Reloading Leaflet map HTML after WebEngine render process recovery...")
                 page = self.web_view.page()
                 if page:
                     try:
-                        self.channel = QWebChannel()
-                        self.channel.registerObject("pyBridge", self.bridge)
-                        page.setWebChannel(self.channel)
+                        # Soft recovery: avoid page.setWebChannel() on existing page to prevent Qt 6.11 C++ crash!
                         self.web_view.setHtml(get_leaflet_html(), QUrl("http://localhost"))
                         return
                     except Exception as e:
                         logger.warning(f"Could not perform soft recovery on existing page: {e}")
                 try:
-                    self.web_page = LoggingWebEnginePage(self.web_view)
-                    self.web_view.setPage(self.web_page)
+                    new_channel = QWebChannel(self.web_view)
+                    new_channel.registerObject("pyBridge", self.bridge)
+                    new_page = LoggingWebEnginePage(self.web_view)
+                    new_page.setWebChannel(new_channel)
+                    self.channel = new_channel
+                    self.web_page = new_page
+                    self.web_view.setPage(new_page)
+                    if hasattr(new_page, "renderProcessTerminated"):
+                        new_page.renderProcessTerminated.connect(self._on_render_process_terminated)
+                    self.web_view.setHtml(get_leaflet_html(), QUrl("http://localhost"))
                 except Exception as e:
-                    logger.warning(f"Could not attach LoggingWebEnginePage on recovery: {e}")
-                self.channel = QWebChannel()
-                self.channel.registerObject("pyBridge", self.bridge)
-                self.web_view.page().setWebChannel(self.channel)
-                if hasattr(self.web_view.page(), "renderProcessTerminated"):
-                    self.web_view.page().renderProcessTerminated.connect(self._on_render_process_terminated)
-                self.web_view.setHtml(get_leaflet_html(), QUrl("http://localhost"))
+                    logger.warning(f"Could not attach fresh LoggingWebEnginePage on recovery: {e}")
         except Exception as e:
             logger.error(f"Failed recovering web view: {e}")
 
@@ -7018,44 +7402,49 @@ class MeshMapWidget(QWidget):
 
     def _on_map_loaded(self, ok: bool):
         logger.info(f"Leaflet map loaded in WebEngine (ok={ok})")
+        if not ok:
+            logger.warning("Leaflet map load failed in WebEngine.")
+            self._initial_loading_active = False
+            if hasattr(self, "reforming_overlay"):
+                self.reforming_overlay.hide_reforming()
+            return
+
         self._page_ready = True
         self._watchdog_unanswered = 0
         self._connect_screen_listener()
         self._start_renderer_watchdog()
-        if self.config and hasattr(self.config.meshcore, "map_center_lat") and self.config.meshcore.map_center_lat is not None and self.config.meshcore.map_center_lon is not None:
-            z = self.config.meshcore.map_zoom or 8
-            lon = ((float(self.config.meshcore.map_center_lon) + 180.0) % 360.0 + 360.0) % 360.0 - 180.0
-            lat = max(-85.0, min(85.0, float(self.config.meshcore.map_center_lat)))
-            self.web_view.page().runJavaScript(f"map.setView([{lat}, {lon}], {z}); window._initialViewSet = true; map.invalidateSize();")
-        fading = getattr(self.config.meshcore, "node_freshness_fading", True) if self.config else True
-        self.set_freshness_fading(fading)
-        show_pm = getattr(self.config.meshcore, "map_show_path_modes", False) if self.config else False
-        pm_str = "true" if show_pm else "false"
-        self.web_view.page().runJavaScript(f"setPathModesVisible({pm_str});")
-        show_orb = getattr(self.config.meshcore, "map_show_companion_orbitals", False) if self.config else False
-        docked_data = self.storage.get_docked_companions() if (self.storage and show_orb) else {}
-        orb_str = "true" if show_orb else "false"
-        self.web_view.page().runJavaScript(f"setCompanionOrbitalsVisible({orb_str}, {json.dumps(docked_data)});")
-        self._update_scope_overlays()
-        show_adsb = getattr(self.config.meshcore, "map_show_adsb", False) if self.config else False
-        if show_adsb:
-            self.set_adsb(True)
+
         base_layer = getattr(self.config, "map_base_layer", "canvas") if self.config else "canvas"
         if base_layer == "topo":
             self.web_view.page().runJavaScript("if (window.setBaseMapLayer) window.setBaseMapLayer('topo');")
-        self.apply_colors()
-        self.refresh_map_data()
-        if getattr(self, "show_space_weather", False):
-            self.set_space_weather(True)
+
         if getattr(self, "_pending_neighbors_payload", None):
             try:
                 p = self._pending_neighbors_payload
                 self._pending_neighbors_payload = None
                 js_payload = json.dumps(p)
-                self.web_view.page().runJavaScript(f"drawRepeaterNeighbors({js_payload});")
+                if hasattr(self, "web_view") and hasattr(self.web_view, "page"):
+                    self.web_view.page().runJavaScript(f"drawRepeaterNeighbors({js_payload});")
             except Exception as e:
                 logger.warning(f"Error drawing pending repeater neighbors on map load: {e}")
-        self.map_ready.emit()
+
+        if getattr(self, "_initial_loading_active", False):
+            self._geometry_in_motion = False
+            self._stagger_stage = 2
+            if hasattr(self, "reforming_overlay"):
+                self.reforming_overlay.show_reforming(
+                    message="Stage 2/4: Map engine ready • Settling viewport geometry...",
+                    title="INITIALIZING MESH MAP",
+                    stage=2,
+                    percent=50,
+                )
+            if hasattr(self, "_stagger_timer"):
+                self._stagger_timer.start(350)
+        else:
+            if hasattr(self, "reforming_overlay"):
+                self.reforming_overlay.hide_reforming()
+            self.refresh_map_data()
+            self.map_ready.emit()
 
     def _on_path_modes_toggle(self):
         visible = self.btn_path_modes.isChecked()
@@ -8245,8 +8634,13 @@ class MeshMapWidget(QWidget):
     def refresh_map_data(self, debounce: bool = False):
         """Fetches nodes and RF links with coordinates and pushes to Leaflet map.
         
+        If geometry is in motion or app is in initial staggered load, buffers the request.
         If debounce is True, defers the refresh by 150ms to coalesce burst events.
         """
+        if getattr(self, "_geometry_in_motion", False) or getattr(self, "_initial_loading_active", False):
+            self._pending_refresh = True
+            return
+
         if debounce and hasattr(self, "_refresh_timer"):
             self._refresh_timer.start()
         else:
@@ -8257,6 +8651,9 @@ class MeshMapWidget(QWidget):
     def _do_refresh_map_data(self):
         """Fetches nodes and RF links with coordinates and pushes to Leaflet map."""
         if not self.storage:
+            return
+        if WEBENGINE_AVAILABLE and not getattr(self, "_page_ready", False):
+            self._pending_refresh = True
             return
 
         local_coord = self._get_local_coordinates()
