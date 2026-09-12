@@ -58,8 +58,8 @@ def test_full_text_search(temp_storage):
 
 def test_channel_activity_ranking_for_autocomplete(temp_storage):
     ch_pub = ChannelInfo(0, "Public", True, True, "2026-09-01T10:00:00Z")
-    ch_ops = ChannelInfo(1, "public-ops", False, True, "2026-09-01T12:00:00Z")  # More recent
-    ch_test = ChannelInfo(2, "public-test", False, False, "2026-09-01T08:00:00Z")
+    ch_ops = ChannelInfo(1, "#public-ops", False, True, "2026-09-01T12:00:00Z")  # More recent
+    ch_test = ChannelInfo(2, "#public-test", False, False, "2026-09-01T08:00:00Z")
 
     temp_storage.save_channel(ch_pub)
     temp_storage.save_channel(ch_ops)
@@ -67,10 +67,10 @@ def test_channel_activity_ranking_for_autocomplete(temp_storage):
 
     ranked = temp_storage.get_channels_by_recent_activity("pu")
     assert len(ranked) == 3
-    # public-ops was most recent so it should be first
-    assert ranked[0].name == "public-ops"
+    # #public-ops was most recent so it should be first
+    assert ranked[0].name == "#public-ops"
     assert ranked[1].name == "Public"
-    assert ranked[2].name == "public-test"
+    assert ranked[2].name == "#public-test"
 
 
 def test_seen_username_autocomplete_from_messages(temp_storage):

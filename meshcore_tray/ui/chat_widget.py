@@ -329,13 +329,13 @@ class MessageBubble(QFrame):
                     if c:
                         is_rep = bool(
                             getattr(c, "is_repeater", False)
-                            or any(kw in (c.alias or "").upper() for kw in ("[REP]", "[REPEATER]", "[ROUTER]", "[RTR]", "[GW]", "REPEATER", "ROUTER"))
+                            or any(kw in (c.alias or "").upper() for kw in ("[REP]", "[REPEATER]", "[ROUTER]", "[RTR]", "[GW]"))
                             or any(kw in (getattr(c, "role", "") or "").upper() for kw in ("REPEATER", "ROUTER"))
                         )
                 except Exception:
                     pass
             if not is_rep:
-                is_rep = any(kw in sender_name.upper() for kw in ("[REP]", "[REPEATER]", "[ROUTER]", "[RTR]", "[GW]", "REPEATER", "ROUTER"))
+                is_rep = any(kw in sender_name.upper() for kw in ("[REP]", "[REPEATER]", "[ROUTER]", "[RTR]", "[GW]"))
 
             avatar_icon = get_contact_avatar_icon(sender_id, sender_name, is_repeater=is_rep, size=38)
             if avatar_icon and not avatar_icon.isNull():
@@ -432,6 +432,13 @@ class MessageBubble(QFrame):
         is_fav = bool(self.config and (self.msg.sender_name in self.config.favorites or self.msg.sender_id in self.config.favorites))
         act_fav = menu.addAction("⭐ Remove from Favorites" if is_fav else "⭐ Add to Favorites (Yellow Star)")
         act_info = menu.addAction("ℹ️ View Node Details")
+
+        act_toggle_role = None
+        c_for_role = self.storage.get_contact(self.msg.sender_id or self.msg.sender_name) if self.storage else None
+        if c_for_role:
+            role_label = "Mark as Companion (Client)" if c_for_role.is_repeater else "Mark as Repeater"
+            act_toggle_role = menu.addAction(f"🔄 {role_label}")
+
         act_block = menu.addAction("🚫 Block User")
         menu.addSeparator()
         act_delete = menu.addAction("🗑️ Delete Message")
@@ -462,6 +469,15 @@ class MessageBubble(QFrame):
                 self.storage.set_contact_favorite(self.msg.sender_id or self.msg.sender_name, new_state)
             bus.emit(EventType.FAVORITES_UPDATED, self.msg.sender_name)
             self.favorite_toggled.emit(self.msg.sender_name, new_state)
+        elif act_toggle_role and chosen == act_toggle_role:
+            new_rep = not c_for_role.is_repeater
+            if self.storage:
+                self.storage.set_contact_repeater_status(c_for_role.node_id, new_rep)
+                c_for_role.is_repeater = new_rep
+                bus.emit(EventType.MAP_NODES_UPDATED, None)
+                # Clear avatar cache so new role renders immediately
+                from meshcore_tray.ui.avatar_generator import _AVATAR_CACHE
+                _AVATAR_CACHE.clear()
         elif chosen == act_info:
             dlg = NodeInfoDialog(self.msg, storage=self.storage, parent=self)
             dlg.exec()

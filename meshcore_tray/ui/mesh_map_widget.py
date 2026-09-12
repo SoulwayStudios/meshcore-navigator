@@ -244,6 +244,51 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             color: #FFFFFF;
         }
 
+        /* Shared Unified Floating Overlay Panels Style */
+        .map-overlay-panel {
+            background: rgba(18, 21, 28, 0.94) !important;
+            backdrop-filter: blur(12px) !important;
+            -webkit-backdrop-filter: blur(12px) !important;
+            border: 1px solid rgba(255, 255, 255, 0.14) !important;
+            border-radius: 10px !important;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.65), 0 0 1px rgba(255, 255, 255, 0.2) !important;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+            user-select: none;
+            transition: box-shadow 0.2s ease, border-color 0.2s ease;
+        }
+        .map-overlay-panel:hover, .map-overlay-panel.active-drag {
+            border-color: rgba(96, 165, 250, 0.55) !important;
+            box-shadow: 0 12px 36px rgba(0, 0, 0, 0.8), 0 0 14px rgba(56, 189, 248, 0.2) !important;
+        }
+        .map-overlay-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 6px 10px;
+            cursor: move;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            background: rgba(255, 255, 255, 0.03);
+            border-top-left-radius: 9px;
+            border-top-right-radius: 9px;
+            gap: 8px;
+            user-select: none;
+        }
+        .map-overlay-header:active {
+            cursor: grabbing;
+        }
+        .map-drag-handle-grip {
+            opacity: 0.55;
+            font-size: 11px;
+            cursor: move;
+            letter-spacing: -1px;
+            margin-right: 4px;
+            color: #94A3B8;
+        }
+        .map-drag-handle-grip:hover {
+            opacity: 0.95;
+            color: #38BDF8;
+        }
+
         .floating-route-panel {
             position: absolute;
             top: 12px;
@@ -251,25 +296,18 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             width: 290px;
             max-width: calc(100% - 24px);
             max-height: calc(100% - 24px);
-            background: rgba(28, 28, 28, 0.96);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border: 1px solid #414143;
-            border-radius: 8px;
-            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.7);
             z-index: 1000;
             display: none;
             flex-direction: column;
             overflow: hidden;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
         }
         .floating-route-header {
             display: flex;
             align-items: center;
             justify-content: space-between;
             padding: 8px 12px;
-            background: #1C1C1C;
-            border-bottom: 1px solid #414143;
+            background: rgba(255, 255, 255, 0.04);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
             cursor: move;
             user-select: none;
         }
@@ -754,18 +792,12 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             position: absolute;
             bottom: 24px;
             left: 12px;
-            background: rgba(28, 28, 28, 0.94);
-            backdrop-filter: blur(8px);
-            -webkit-backdrop-filter: blur(8px);
-            border: 1px solid #414143;
-            border-radius: 6px;
-            padding: 6px 12px;
+            padding: 8px 12px;
             font-size: 11px;
             color: #E5E7EB;
-            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.6);
             z-index: 1000;
             display: none;
-            pointer-events: none;
+            pointer-events: auto;
             user-select: none;
         }
         .path-legend-item {
@@ -789,15 +821,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             position: absolute;
             bottom: 24px;
             right: 12px;
-            background: rgba(20, 22, 28, 0.94);
-            backdrop-filter: blur(8px);
-            -webkit-backdrop-filter: blur(8px);
-            border: 1px solid #3B4252;
-            border-radius: 8px;
             padding: 10px 14px;
             font-size: 11px;
             color: #E5E7EB;
-            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.7);
             z-index: 1000;
             display: none;
             user-select: none;
@@ -892,17 +918,13 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             left: 10px;
             z-index: 1000;
             background: rgba(34, 35, 39, 0.95);
-            backdrop-filter: blur(8px);
-            -webkit-backdrop-filter: blur(8px);
             border: 1px solid #414143;
-            border-radius: 8px;
-            padding: 6px 8px;
+            padding: 8px 10px;
             display: flex;
             flex-direction: column;
             gap: 4px;
-            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
             user-select: none;
-            width: 145px;
+            width: 155px;
             max-height: calc(100% - 120px);
             overflow-y: auto;
             overflow-x: hidden;
@@ -1031,19 +1053,13 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
         /* Floating Activity Heatmap Bar over Map */
         .activity-heatmap-bar {
             position: absolute;
-            top: 50px;
+            bottom: 72px;
             left: 12px;
             z-index: 1000;
-            background: rgba(30, 31, 34, 0.92);
-            backdrop-filter: blur(8px);
-            -webkit-backdrop-filter: blur(8px);
-            border: 1px solid rgba(255, 255, 255, 0.18);
-            border-radius: 8px;
-            padding: 5px 10px;
+            padding: 6px 12px;
             display: flex;
             align-items: center;
             gap: 8px;
-            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
             user-select: none;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         }
@@ -1118,19 +1134,14 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
         /* Floating Thunderstorm Panel */
         .thunderstorm-panel {
             position: absolute;
-            top: 64px;
+            top: 215px;
             right: 12px;
             z-index: 1000;
-            background: rgba(26, 28, 35, 0.95);
-            backdrop-filter: blur(8px);
-            -webkit-backdrop-filter: blur(8px);
-            border: 1px solid #38BDF8;
-            border-radius: 8px;
+            border: 1px solid rgba(56, 189, 248, 0.5) !important;
             padding: 8px 12px;
             display: flex;
             flex-direction: column;
             gap: 4px;
-            box-shadow: 0 4px 18px rgba(0, 0, 0, 0.6);
             user-select: none;
             width: 220px;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -1171,19 +1182,15 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
         /* Floating Space Weather & Aurora Panel */
         .aurora-legend-panel {
             position: absolute;
-            top: 70px;
-            left: 55px;
+            top: 60px;
+            left: 175px;
             z-index: 1000;
-            background: rgba(15, 23, 42, 0.94);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            border: 1px solid rgba(168, 85, 247, 0.45);
-            border-radius: 10px;
+            border: 1px solid rgba(168, 85, 247, 0.5) !important;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.65), 0 0 15px rgba(168, 85, 247, 0.2) !important;
             padding: 10px 14px;
             display: flex;
             flex-direction: column;
             gap: 8px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7), 0 0 15px rgba(168, 85, 247, 0.2);
             user-select: none;
             width: 275px;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -1313,16 +1320,10 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             top: 12px;
             right: 12px;
             z-index: 1000;
-            background: rgba(34, 35, 39, 0.95);
-            backdrop-filter: blur(8px);
-            -webkit-backdrop-filter: blur(8px);
-            border: 1px solid #414143;
-            border-radius: 8px;
             padding: 8px 10px;
             display: flex;
             flex-direction: column;
             gap: 6px;
-            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
             user-select: none;
             width: 235px;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -1819,9 +1820,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
         <span class="loading-spinner"></span>
         <span id="loading-hud-text">Initializing MeshCore Map &amp; RF Services...</span>
     </div>
-    <div id="adsb-panel" class="adsb-panel" style="display: none;">
-        <div class="adsb-header">
-            <span class="adsb-title">✈️ ADS-B FLIGHTS <span id="adsb-count-badge" class="scope-pill-count">0</span></span>
+    <div id="adsb-panel" class="adsb-panel map-overlay-panel" style="display: none;">
+        <div class="adsb-header map-overlay-header" id="adsb-drag-handle">
+            <span class="adsb-title"><span class="map-drag-handle-grip">⠿</span>✈️ ADS-B FLIGHTS <span id="adsb-count-badge" class="scope-pill-count">0</span></span>
             <button class="adsb-close-btn" onclick="if (window.pyBridge && window.pyBridge.on_adsb_toggled) window.pyBridge.on_adsb_toggled(false)" title="Close ADS-B Layer">×</button>
         </div>
         <div class="adsb-mode-bar">
@@ -1838,20 +1839,26 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
         </div>
         <div id="adsb-legend-container"></div>
     </div>
-    <div id="scope-filter-bar" class="scope-filter-bar" style="display: none;">
-        <div class="scope-filter-title">🌐 Scopes</div>
+    <div id="scope-filter-bar" class="scope-filter-bar map-overlay-panel" style="display: none;">
+        <div class="map-overlay-header" id="scope-filter-drag-handle" style="margin: -8px -10px 4px -10px; padding: 4px 8px;">
+            <div class="scope-filter-title" style="border-bottom:none; margin:0; padding:0; display:flex; align-items:center; gap:4px;"><span class="map-drag-handle-grip">⠿</span>🌐 Scopes</div>
+            <button class="tropo-legend-close" onclick="document.getElementById('scope-filter-bar').style.display='none'" title="Hide Scopes" style="font-size:12px; padding:0 2px;">×</button>
+        </div>
         <div id="scope-pills-container" class="scope-pills-container"></div>
     </div>
     <div id="orbital-tactical-tooltip" class="orbital-tactical-tooltip"></div>
-    <div id="path-mode-legend" class="path-mode-legend">
+    <div id="path-mode-legend" class="path-mode-legend map-overlay-panel">
+        <div class="map-overlay-header" id="path-mode-drag-handle" style="margin: -8px -12px 6px -12px; padding: 4px 8px; cursor: move; border-bottom: 1px solid rgba(255,255,255,0.08);">
+            <span style="font-size: 10px; font-weight: 700; color: #94A3B8; display: flex; align-items: center; gap: 4px;"><span class="map-drag-handle-grip">⠿</span>Path Modes</span>
+        </div>
         <span class="path-legend-item"><span class="path-legend-dot" style="background: #EF4444; box-shadow: 0 0 6px #EF4444;"></span>1-Byte Path</span>
         <span class="path-legend-item" title="Multibyte Path (2-Byte)"><span class="path-legend-dot" style="background: #00D2FF; box-shadow: 0 0 6px #00D2FF;"></span>2-Byte Path</span>
         <span class="path-legend-item" title="Multibyte Path (3-Byte)"><span class="path-legend-dot" style="background: #00FF7F; box-shadow: 0 0 6px #00FF7F;"></span>3-Byte Path</span>
         <span class="path-legend-item"><span class="path-legend-dot" style="background: #6B7280;"></span>Direct / Flood</span>
     </div>
-    <div id="tropo-legend-panel" class="tropo-legend-panel">
-        <div class="tropo-legend-header">
-            <span class="tropo-legend-title">📡 Tropo Ducting Forecast</span>
+    <div id="tropo-legend-panel" class="tropo-legend-panel map-overlay-panel">
+        <div class="tropo-legend-header map-overlay-header" id="tropo-drag-handle">
+            <span class="tropo-legend-title"><span class="map-drag-handle-grip">⠿</span>📡 Tropo Ducting Forecast</span>
             <div class="tropo-stepper">
                 <button class="tropo-step-btn" onclick="if (window.pyBridge && window.pyBridge.on_tropo_stepped) window.pyBridge.on_tropo_stepped(-3)" title="Previous 3h">◀</button>
                 <span id="tropo-time-label" class="tropo-time-label">--:-- UTC</span>
@@ -1879,10 +1886,10 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             <span>NOAA GFS Refractivity Index • F5LEN</span>
         </div>
     </div>
-    <div id="visualised-floating-panel" class="floating-route-panel">
-        <div class="floating-route-header" id="floating-route-drag-handle">
+    <div id="visualised-floating-panel" class="floating-route-panel map-overlay-panel">
+        <div class="floating-route-header map-overlay-header" id="floating-route-drag-handle">
             <div class="floating-route-title">
-                <span style="opacity: 0.7; font-size: 11px;">⠿</span>
+                <span class="map-drag-handle-grip">⠿</span>
                 <span id="floating-route-title-text">📍 Visualised Route</span>
             </div>
             <button class="floating-route-close" id="floating-route-close-btn" title="Close Route (Esc)">×</button>
@@ -1890,8 +1897,10 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
         <div class="floating-route-body" id="floating-route-body-content"></div>
     </div>
     <!-- Floating Node Activity Heatmap Bar -->
-    <div id="activity-heatmap-bar" class="activity-heatmap-bar" style="display: none;">
-        <div class="activity-bar-title">🔥 Node Activity</div>
+    <div id="activity-heatmap-bar" class="activity-heatmap-bar map-overlay-panel" style="display: none;">
+        <div class="map-overlay-header" id="activity-heatmap-drag-handle" style="margin:0; padding:0 4px; border:none; background:transparent;">
+            <div class="activity-bar-title"><span class="map-drag-handle-grip">⠿</span>🔥 Node Activity</div>
+        </div>
         <div class="activity-btn-group">
             <button id="act-btn-1h" class="activity-tf-btn active" onclick="setActivityTimeframe(1)">1 hour</button>
             <button id="act-btn-6h" class="activity-tf-btn" onclick="setActivityTimeframe(6)">6 hours</button>
@@ -1906,9 +1915,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
         <button class="activity-bar-close" onclick="closeActivityHeatmap()" title="Close Activity Heatmap">×</button>
     </div>
     <!-- Floating Thunderstorm & Radar Panel -->
-    <div id="thunderstorm-panel" class="thunderstorm-panel" style="display: none;">
-        <div class="thunderstorm-header">
-            <span class="thunderstorm-title">🌩️ THUNDERSTORMS <span id="strike-count-badge" class="scope-pill-count">0 strikes</span></span>
+    <div id="thunderstorm-panel" class="thunderstorm-panel map-overlay-panel" style="display: none;">
+        <div class="thunderstorm-header map-overlay-header" id="thunderstorm-drag-handle">
+            <span class="thunderstorm-title"><span class="map-drag-handle-grip">⠿</span>🌩️ THUNDERSTORMS <span id="strike-count-badge" class="scope-pill-count">0 strikes</span></span>
             <button class="thunderstorm-close-btn" onclick="if (window.pyBridge && window.pyBridge.on_thunderstorm_toggled) window.pyBridge.on_thunderstorm_toggled(false)" title="Close Thunderstorm Layer">×</button>
         </div>
         <div class="thunderstorm-sub">
@@ -1916,11 +1925,12 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
         </div>
     </div>
     <!-- Floating Space Weather & Aurora Panel -->
-    <div id="aurora-legend-panel" class="aurora-legend-panel" style="display: none;">
-        <div class="aurora-header">
+    <div id="aurora-legend-panel" class="aurora-legend-panel map-overlay-panel" style="display: none;">
+        <div class="aurora-header map-overlay-header" id="aurora-drag-handle">
             <div class="aurora-title">
+                <span class="map-drag-handle-grip">⠿</span>
                 <span>🌌</span>
-                <span>SPACE WEATHER & AURORA</span>
+                <span>SPACE WEATHER &amp; AURORA</span>
             </div>
             <div style="display: flex; align-items: center; gap: 4px;">
                 <button class="aurora-refresh-btn" onclick="if (window.pyBridge && window.pyBridge.on_space_weather_refresh) window.pyBridge.on_space_weather_refresh()" title="Refresh NOAA Feeds">↺</button>
@@ -3916,20 +3926,47 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             document.body.insertAdjacentHTML('beforeend', bannerHtml);
         }
 
-        function initDraggablePanel() {
-            var panel = document.getElementById('visualised-floating-panel');
-            var handle = document.getElementById('floating-route-drag-handle');
-            var closeBtn = document.getElementById('floating-route-close-btn');
+        var _overlayZIndexCounter = 1050;
+
+        function bringOverlayToFront(panel) {
+            if (!panel) return;
+            _overlayZIndexCounter += 1;
+            panel.style.zIndex = _overlayZIndexCounter;
+        }
+
+        function makeOverlayDraggable(panelId, handleId, storageKey) {
+            var panel = document.getElementById(panelId);
+            var handle = document.getElementById(handleId) || panel;
             if (!panel || !handle) return;
 
-            L.DomEvent.disableClickPropagation(panel);
-            L.DomEvent.disableScrollPropagation(panel);
+            if (typeof L !== 'undefined' && L.DomEvent) {
+                L.DomEvent.disableClickPropagation(panel);
+                L.DomEvent.disableScrollPropagation(panel);
+            }
 
-            if (closeBtn) {
-                closeBtn.addEventListener('click', function(e) {
-                    e.stopPropagation();
-                    closeVisualisedPanel();
-                });
+            panel.addEventListener('mousedown', function() {
+                bringOverlayToFront(panel);
+            });
+
+            // Restore position from sessionStorage if present and valid
+            if (storageKey) {
+                try {
+                    var saved = sessionStorage.getItem('overlay_pos_' + storageKey);
+                    if (saved) {
+                        var pos = JSON.parse(saved);
+                        if (typeof pos.left === 'number' && typeof pos.top === 'number') {
+                            var mapEl = document.getElementById('map');
+                            var containerW = (mapEl ? mapEl.clientWidth : window.innerWidth);
+                            var containerH = (mapEl ? mapEl.clientHeight : window.innerHeight);
+                            var clampLeft = Math.max(0, Math.min(Math.max(0, containerW - 100), pos.left));
+                            var clampTop = Math.max(0, Math.min(Math.max(0, containerH - 60), pos.top));
+                            panel.style.left = clampLeft + 'px';
+                            panel.style.top = clampTop + 'px';
+                            panel.style.right = 'auto';
+                            panel.style.bottom = 'auto';
+                        }
+                    }
+                } catch(e) {}
             }
 
             var isDragging = false;
@@ -3937,12 +3974,38 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             var origLeft = 0, origTop = 0;
 
             handle.addEventListener('mousedown', function(e) {
-                if (e.target && e.target.closest && e.target.closest('.floating-route-close')) return;
+                if (e.button !== 0) return;
+                if (e.target && e.target.closest && (
+                    e.target.closest('button') || 
+                    e.target.closest('input') || 
+                    e.target.closest('select') || 
+                    e.target.closest('a') || 
+                    e.target.closest('.floating-route-close') ||
+                    e.target.closest('.tropo-legend-close') ||
+                    e.target.closest('.activity-bar-close') ||
+                    e.target.closest('.thunderstorm-close-btn') ||
+                    e.target.closest('.aurora-close-btn') ||
+                    e.target.closest('.adsb-close-btn')
+                )) {
+                    return;
+                }
+
+                bringOverlayToFront(panel);
                 isDragging = true;
+                panel.classList.add('active-drag');
                 startX = e.clientX;
                 startY = e.clientY;
-                origLeft = panel.offsetLeft;
-                origTop = panel.offsetTop;
+
+                var rect = panel.getBoundingClientRect();
+                var parentRect = panel.offsetParent ? panel.offsetParent.getBoundingClientRect() : { left: 0, top: 0 };
+                origLeft = rect.left - parentRect.left;
+                origTop = rect.top - parentRect.top;
+
+                panel.style.left = origLeft + 'px';
+                panel.style.top = origTop + 'px';
+                panel.style.right = 'auto';
+                panel.style.bottom = 'auto';
+
                 document.body.style.userSelect = 'none';
                 e.preventDefault();
             });
@@ -3952,10 +4015,14 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 var dx = e.clientX - startX;
                 var dy = e.clientY - startY;
                 var mapEl = document.getElementById('map');
-                var maxW = (mapEl ? mapEl.clientWidth : window.innerWidth) - panel.offsetWidth;
-                var maxH = (mapEl ? mapEl.clientHeight : window.innerHeight) - panel.offsetHeight;
-                var newLeft = Math.max(0, Math.min(Math.max(0, maxW), origLeft + dx));
-                var newTop = Math.max(0, Math.min(Math.max(0, maxH), origTop + dy));
+                var containerW = (mapEl ? mapEl.clientWidth : window.innerWidth);
+                var containerH = (mapEl ? mapEl.clientHeight : window.innerHeight);
+
+                var maxW = Math.max(0, containerW - panel.offsetWidth);
+                var maxH = Math.max(0, containerH - panel.offsetHeight);
+                var newLeft = Math.max(0, Math.min(maxW, origLeft + dx));
+                var newTop = Math.max(0, Math.min(maxH, origTop + dy));
+
                 panel.style.left = newLeft + 'px';
                 panel.style.top = newTop + 'px';
                 panel.style.right = 'auto';
@@ -3965,11 +4032,53 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             document.addEventListener('mouseup', function() {
                 if (isDragging) {
                     isDragging = false;
+                    panel.classList.remove('active-drag');
                     document.body.style.userSelect = '';
+                    if (storageKey) {
+                        try {
+                            sessionStorage.setItem('overlay_pos_' + storageKey, JSON.stringify({
+                                left: parseInt(panel.style.left, 10),
+                                top: parseInt(panel.style.top, 10)
+                            }));
+                        } catch(e) {}
+                    }
                 }
             });
         }
-        setTimeout(initDraggablePanel, 100);
+
+        function initAllDraggableOverlays() {
+            // Visualised Route
+            var vClose = document.getElementById('floating-route-close-btn');
+            if (vClose) {
+                vClose.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    closeVisualisedPanel();
+                });
+            }
+            makeOverlayDraggable('visualised-floating-panel', 'floating-route-drag-handle', 'visualised_route');
+
+            // ADS-B Live Flights
+            makeOverlayDraggable('adsb-panel', 'adsb-drag-handle', 'adsb');
+
+            // Thunderstorms & Radar
+            makeOverlayDraggable('thunderstorm-panel', 'thunderstorm-drag-handle', 'thunderstorm');
+
+            // Space Weather & Aurora
+            makeOverlayDraggable('aurora-legend-panel', 'aurora-drag-handle', 'aurora');
+
+            // Scopes Bar
+            makeOverlayDraggable('scope-filter-bar', 'scope-filter-drag-handle', 'scopes');
+
+            // Node Activity Heatmap
+            makeOverlayDraggable('activity-heatmap-bar', 'activity-heatmap-drag-handle', 'activity_heatmap');
+
+            // Tropo Ducting Forecast
+            makeOverlayDraggable('tropo-legend-panel', 'tropo-drag-handle', 'tropo');
+
+            // Path Mode Legend
+            makeOverlayDraggable('path-mode-legend', 'path-mode-drag-handle', 'path_mode_legend');
+        }
+        setTimeout(initAllDraggableOverlays, 100);
 
         function rebuildSegmentsFromMeta(meta) {
             var nodeChain = [];
@@ -6659,7 +6768,7 @@ class MeshMapWidget(QWidget):
         self.node_filter_mode = "ALL"
         self.show_repeaters_only = False
         self.show_rf_links = True
-        self.show_paths = False
+        self.show_paths = True
         self.show_companion_orbitals = False
         self._page_ready = not WEBENGINE_AVAILABLE
         self._last_traced_path_info = None
@@ -8556,6 +8665,7 @@ class MeshMapWidget(QWidget):
 
     def _on_links_toggle(self):
         self.show_rf_links = self.btn_links.isChecked()
+        self.show_paths = self.show_rf_links
         self.btn_links.setStyleSheet(self._btn_style(self.show_rf_links))
         self.refresh_map_data()
 
@@ -8565,6 +8675,7 @@ class MeshMapWidget(QWidget):
 
     def set_rf_links(self, visible: bool):
         self.show_rf_links = visible
+        self.show_paths = visible
         self.refresh_map_data()
 
     def set_path_modes(self, visible: bool):
@@ -8814,7 +8925,7 @@ class MeshMapWidget(QWidget):
         if len(route_coords) < 2:
             return
 
-        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self.show_paths and self._page_ready:
+        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and (self.show_paths or self.show_rf_links) and self._page_ready:
             js_coords = json.dumps(route_coords)
             js_meta = json.dumps({
                 "hops": len(route_coords) - 1,
@@ -8924,7 +9035,7 @@ class MeshMapWidget(QWidget):
             display_name = f"📡 {sender_contact.alias}" if sender_contact.is_repeater else f"@{sender_contact.alias}"
 
         # If 2 or more coordinates are resolved, draw the green route on the map!
-        if len(route_coords) >= 2 and self.show_paths:
+        if len(route_coords) >= 2 and (self.show_paths or self.show_rf_links):
             js_coords = json.dumps(route_coords)
             js_meta = json.dumps({
                 "hops": len(route_coords) - 1,

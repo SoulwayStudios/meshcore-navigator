@@ -164,7 +164,7 @@ def test_auxiliary_layers_default_off_on_start(app, tmp_path):
     with patch("meshcore_tray.ui.mesh_map_widget.WEBENGINE_AVAILABLE", False):
         mesh_map = MeshMapWidget(storage=storage, config=config)
         assert mesh_map.show_rf_links is True  # Watcher / Observer mode defaulted ON
-        assert mesh_map.show_paths is False
+        assert mesh_map.show_paths is True  # Coupled with RF links watcher mode
         assert mesh_map.show_companion_orbitals is False
         assert mesh_map.show_adsb is False
         assert mesh_map.show_thunderstorm is False

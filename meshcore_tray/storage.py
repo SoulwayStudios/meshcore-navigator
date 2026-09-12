@@ -121,6 +121,16 @@ class Storage:
                 )
             """)
 
+            cursor.execute("""
+                INSERT OR IGNORE INTO channels (channel_id, name, is_favorite, is_pixoo_enabled, last_activity_ts, unread_count)
+                VALUES (0, 'Public', 1, 1, '', 0)
+            """)
+            try:
+                cursor.execute("UPDATE channels SET name = '#' || name WHERE name NOT LIKE '#%' AND LOWER(name) != 'public'")
+                cursor.execute("UPDATE messages SET channel = '#' || channel WHERE channel NOT LIKE '#%' AND LOWER(channel) != 'public' AND is_direct_message = 0")
+            except Exception:
+                pass
+
             # Discovered Scopes table (automatic OTA scope discoverability)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS discovered_scopes (
@@ -992,12 +1002,40 @@ class Storage:
                            (ch.name, f"#{clean}", clean))
             row = cursor.fetchone()
             cid = row["channel_id"] if row else ch.channel_id
-            name_to_use = row["name"] if row else ch.name
+            if ch.name.strip().lower() == "public":
+                name_to_use = "Public"
+            elif ch.name.startswith("#"):
+                name_to_use = ch.name
+            elif row and row["name"] and row["name"].startswith("#"):
+                name_to_use = row["name"]
+            else:
+                name_to_use = f"#{clean}"
             cursor.execute("""
                 INSERT OR REPLACE INTO channels (channel_id, name, is_favorite, is_pixoo_enabled, last_activity_ts, unread_count)
                 VALUES (?, ?, ?, ?, ?, ?)
             """, (cid, name_to_use, int(ch.is_favorite), int(ch.is_pixoo_enabled), ch.last_activity_ts, ch.unread_count))
             conn.commit()
+
+    def get_next_available_channel_slot(self) -> int:
+        """Finds an unused hardware channel slot (1-7), or evicts/recycles the lowest priority slot if full."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT channel_id FROM channels WHERE channel_id >= 1 AND channel_id <= 7")
+            used_slots = {r["channel_id"] for r in cursor.fetchall()}
+            for s in range(1, 8):
+                if s not in used_slots:
+                    return s
+            # If all slots 1..7 are in use, pick non-favorite with oldest activity
+            cursor.execute("""
+                SELECT channel_id FROM channels
+                WHERE channel_id >= 1 AND channel_id <= 7
+                ORDER BY is_favorite ASC, last_activity_ts ASC
+                LIMIT 1
+            """)
+            row = cursor.fetchone()
+            if row:
+                return row["channel_id"]
+            return 1
 
     def get_channel_by_name(self, name: str) -> Optional[ChannelInfo]:
         """Find channel by exact name or without # prefix."""
@@ -1095,7 +1133,7 @@ class Storage:
             cursor.execute("SELECT * FROM contacts ORDER BY alias ASC")
             return [self._row_to_contact(r) for r in cursor.fetchall()]
 
-    def save_contact(self, contact: NodeContact):
+    def save_contact(self, contact: NodeContact, update_role: bool = False):
         nid = (contact.node_id or "").strip()
         pk = (contact.public_key or "").strip().lower()
         if not is_valid_node_id(nid) and not is_valid_node_id(pk):
@@ -1163,7 +1201,7 @@ class Storage:
                     is_favorite = CASE WHEN excluded.is_favorite != 0 THEN excluded.is_favorite ELSE contacts.is_favorite END,
                     last_seen = COALESCE(NULLIF(excluded.last_seen, ''), contacts.last_seen),
                     public_key = COALESCE(NULLIF(excluded.public_key, ''), contacts.public_key),
-                    is_repeater = CASE WHEN excluded.is_repeater != 0 THEN excluded.is_repeater ELSE contacts.is_repeater END,
+                    is_repeater = CASE WHEN ? != 0 THEN excluded.is_repeater WHEN excluded.is_repeater != 0 THEN excluded.is_repeater ELSE contacts.is_repeater END,
                     snr_db = CASE WHEN excluded.snr_db != 0.0 THEN excluded.snr_db ELSE contacts.snr_db END,
                     rssi_dbm = CASE WHEN excluded.rssi_dbm != -100.0 THEN excluded.rssi_dbm ELSE contacts.rssi_dbm END,
                     latitude = CASE WHEN excluded.latitude IS NOT NULL AND abs(excluded.latitude) >= 1.0 AND excluded.latitude BETWEEN -85.0 AND 85.0 AND NOT (abs(excluded.latitude) < 5.0 AND abs(excluded.longitude) < 5.0) THEN excluded.latitude ELSE contacts.latitude END,
@@ -1182,7 +1220,8 @@ class Storage:
                 getattr(contact, "out_path_hash_mode", -1),
                 getattr(contact, "out_path", ""),
                 sc_name,
-                al_reg_json
+                al_reg_json,
+                1 if update_role else 0
             ))
             if is_valid_coordinate(lat, lon):
                 cursor.execute("DELETE FROM docked_companions WHERE node_id = ? OR alias = ?", (nid, alias))
@@ -1592,37 +1631,124 @@ class Storage:
 
         return result
 
+    def set_contact_repeater_status(self, node_id: str, is_repeater: bool) -> bool:
+        """Explicitly sets or toggles a contact's is_repeater flag across contacts and neighbours."""
+        if not node_id:
+            return False
+        raw_id = (node_id or "").strip()
+        clean_id = raw_id.lstrip("!@").strip()
+        with self._get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                UPDATE contacts
+                SET is_repeater = ?
+                WHERE node_id = ? COLLATE NOCASE
+                   OR node_id = ? COLLATE NOCASE
+                   OR node_id = ('!' || ?) COLLATE NOCASE
+                   OR ('!' || node_id) = ? COLLATE NOCASE
+                   OR alias = ? COLLATE NOCASE
+                   OR alias = ? COLLATE NOCASE
+            """, (int(is_repeater), raw_id, clean_id, clean_id, raw_id, clean_id, raw_id))
+            updated = cur.rowcount > 0
+            cur.execute("""
+                UPDATE neighbours
+                SET is_repeater = ?
+                WHERE node_id = ? COLLATE NOCASE
+                   OR node_id = ? COLLATE NOCASE
+                   OR alias = ? COLLATE NOCASE
+            """, (int(is_repeater), raw_id, clean_id, clean_id))
+            conn.commit()
+            return updated
+
     def get_contact(self, node_id: str) -> Optional[NodeContact]:
-        """Lookup a contact by node_id, public key, or prefix with case-insensitivity."""
+        """Lookup a contact by node_id, public key, alias, or prefix with strict precedence and no false substring shadowing."""
         if not node_id:
             return None
         raw_id = (node_id or "").strip()
         clean_id = raw_id.lstrip("!@").strip()
+        if not clean_id:
+            return None
+
         with self._get_connection() as conn:
             cursor = conn.cursor()
+
+            # 1. Exact match on node_id (case-insensitive, with/without '!' or '@')
             cursor.execute("""
                 SELECT * FROM contacts
-                WHERE node_id = ? OR lower(node_id) = lower(?)
-                   OR node_id = ? OR lower(node_id) = lower(?)
-                   OR ('!' || lower(node_id)) = lower(?)
-                   OR lower(node_id) = ('!' || lower(?))
-                   OR lower(node_id) LIKE ? OR lower(node_id) LIKE ?
-                   OR lower(public_key) = lower(?) OR lower(public_key) LIKE ?
-                   OR lower(alias) = lower(?) OR lower(alias) LIKE ?
+                WHERE node_id = ? COLLATE NOCASE
+                   OR node_id = ? COLLATE NOCASE
+                   OR node_id = ('!' || ?) COLLATE NOCASE
+                   OR ('!' || node_id) = ? COLLATE NOCASE
+                ORDER BY is_repeater ASC, rowid DESC
                 LIMIT 1
-            """, (
-                raw_id, raw_id,
-                clean_id, clean_id,
-                raw_id,
-                clean_id,
-                f"{clean_id.lower()}%", f"!{clean_id.lower()}%",
-                clean_id.lower(), f"{clean_id.lower()}%",
-                raw_id.lower(), f"%{clean_id.lower()}%"
-            ))
+            """, (raw_id, clean_id, clean_id, raw_id))
             r = cursor.fetchone()
-            if not r:
-                return None
-            return self._row_to_contact(r)
+            if r:
+                return self._row_to_contact(r)
+
+            # 2. Exact match on alias (case-insensitive, companion/client prioritized over repeater)
+            cursor.execute("""
+                SELECT * FROM contacts
+                WHERE alias = ? COLLATE NOCASE
+                   OR alias = ? COLLATE NOCASE
+                ORDER BY is_repeater ASC, rowid DESC
+                LIMIT 1
+            """, (clean_id, raw_id))
+            r = cursor.fetchone()
+            if r:
+                return self._row_to_contact(r)
+
+            # 3. Exact match on public_key (case-insensitive)
+            cursor.execute("""
+                SELECT * FROM contacts
+                WHERE public_key = ? COLLATE NOCASE
+                ORDER BY is_repeater ASC, rowid DESC
+                LIMIT 1
+            """, (clean_id,))
+            r = cursor.fetchone()
+            if r:
+                return self._row_to_contact(r)
+
+            # 4. Prefix match on node_id or public_key (min 4 hex chars, wildcard-escaped)
+            if len(clean_id) >= 4 and all(c in "0123456789abcdefABCDEF" for c in clean_id):
+                safe_prefix = clean_id.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+                cursor.execute("""
+                    SELECT * FROM contacts
+                    WHERE (node_id LIKE ? ESCAPE '\\' OR public_key LIKE ? ESCAPE '\\')
+                    ORDER BY is_repeater ASC, rowid DESC
+                    LIMIT 1
+                """, (safe_prefix, safe_prefix))
+                r = cursor.fetchone()
+                if r:
+                    return self._row_to_contact(r)
+
+            # 5. Prefix match on alias (min 3 chars, wildcard-escaped, companion first)
+            if len(clean_id) >= 3:
+                safe_prefix = clean_id.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+                cursor.execute("""
+                    SELECT * FROM contacts
+                    WHERE alias LIKE ? ESCAPE '\\'
+                    ORDER BY is_repeater ASC, rowid DESC
+                    LIMIT 1
+                """, (safe_prefix,))
+                r = cursor.fetchone()
+                if r:
+                    return self._row_to_contact(r)
+
+            # 6. Fallback substring match on alias (min 3 chars, wildcard-escaped, companion first)
+            if len(clean_id) >= 3:
+                safe_substr = "%" + clean_id.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+                cursor.execute("""
+                    SELECT * FROM contacts
+                    WHERE alias LIKE ? ESCAPE '\\'
+                    ORDER BY is_repeater ASC, rowid DESC
+                    LIMIT 1
+                """, (safe_substr,))
+                r = cursor.fetchone()
+                if r:
+                    return self._row_to_contact(r)
+
+            return None
 
     def get_discovered_nodes(self) -> List[dict]:
         """Scans packet paths, neighbours, and messages for unlinked/overheard nodes.

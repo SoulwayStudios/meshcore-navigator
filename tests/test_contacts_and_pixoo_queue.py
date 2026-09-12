@@ -387,7 +387,7 @@ def test_sidebar_channel_unread_count_and_bold(qapp, tmp_path):
     ops_item = None
     for i in range(sidebar.channel_list.count()):
         it = sidebar.channel_list.item(i)
-        if it.data(Qt.ItemDataRole.UserRole) == "Ops":
+        if it.data(Qt.ItemDataRole.UserRole) in ("Ops", "#Ops"):
             ops_item = it
             break
     assert ops_item is not None
@@ -401,7 +401,7 @@ def test_sidebar_channel_unread_count_and_bold(qapp, tmp_path):
     sidebar.reload()
     for i in range(sidebar.channel_list.count()):
         it = sidebar.channel_list.item(i)
-        if it.data(Qt.ItemDataRole.UserRole) == "Ops":
+        if it.data(Qt.ItemDataRole.UserRole) in ("Ops", "#Ops"):
             ops_item = it
             break
     assert ops_item.text() == "#Ops (2)"
@@ -414,7 +414,7 @@ def test_sidebar_channel_unread_count_and_bold(qapp, tmp_path):
 
     for i in range(sidebar.channel_list.count()):
         it = sidebar.channel_list.item(i)
-        if it.data(Qt.ItemDataRole.UserRole) == "Ops":
+        if it.data(Qt.ItemDataRole.UserRole) in ("Ops", "#Ops"):
             ops_item = it
             break
     assert ops_item.text() == "#Ops"

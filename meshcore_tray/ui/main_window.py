@@ -155,7 +155,7 @@ class MainWindow(QMainWindow):
 
         self.chat_widget = ChatWidget(storage=self.storage, config=self.config)
         self.chat_widget.reply_requested.connect(self._on_reply_requested)
-        self.chat_widget.dm_requested.connect(self._on_contact_selected)
+        self.chat_widget.dm_requested.connect(self._on_dm_requested)
         self.chat_widget.visualise_path_requested.connect(self._on_visualise_message_path)
         center_chat_layout.addWidget(self.chat_widget, 1)
 
@@ -545,7 +545,20 @@ class MainWindow(QMainWindow):
         self._on_channel_selected(clean_name)
         self.sidebar.reload()
 
-    def _on_contact_selected(self, contact_id: str):
+    def _on_dm_requested(self, contact_id: str):
+        contact = self.storage.get_contact(contact_id) if self.storage else None
+        target_id = contact.node_id if contact else contact_id
+        self.current_dm = target_id
+        self.chat_widget.set_target(self.current_channel, target_id)
+        self.composer.set_active_target(self.current_channel, target_id)
+        self.center_stack.setCurrentIndex(0)
+        self.dms_view.select_contact(target_id)
+
+    def _on_contact_selected(self, contact_id: str, force_dm: bool = False):
+        if force_dm:
+            self._on_dm_requested(contact_id)
+            return
+
         contact = self.storage.get_contact(contact_id) if self.storage else None
         is_rep = False
         if contact:
@@ -556,11 +569,7 @@ class MainWindow(QMainWindow):
             self.center_stack.setCurrentIndex(1)
             self.repeaters_view.set_active_repeater(contact)
         else:
-            self.current_dm = contact_id
-            self.chat_widget.set_target(self.current_channel, contact_id)
-            self.composer.set_active_target(self.current_channel, contact_id)
-            self.center_stack.setCurrentIndex(0)
-            self.dms_view.select_contact(contact_id)
+            self._on_dm_requested(contact_id)
 
     def _on_send_repeater_command(self, repeater_id: str, command: str):
         if self.radio_driver:

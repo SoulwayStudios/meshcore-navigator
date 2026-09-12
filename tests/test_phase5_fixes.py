@@ -15,14 +15,17 @@ def storage(tmp_path):
     return Storage(db_path=tmp_path / "p5_test.db")
 
 
-def test_send_channel_message_rejects_unconfigured_channel(storage):
+def test_send_channel_message_auto_allocates_unconfigured_channel(storage):
     cfg = AppConfig()
     driver = MeshCoreDriver(config=cfg, storage=storage)
 
-    # Channel that does not exist in storage
-    res = driver.send_channel_message("NonExistentChannel", "Hello secret")
-    assert res["status"] == "error"
-    assert "not configured on this radio" in res["message"]
+    # Channel that does not exist in storage is dynamically allocated and sent
+    res = driver.send_channel_message("NewDynamicChannel", "Hello secret")
+    assert res["status"] == "ok"
+    # Channel was created in storage
+    ch = storage.get_channel("#NewDynamicChannel")
+    assert ch is not None
+    assert 1 <= ch.channel_id <= 7
 
     # Public channel is allowed
     res_pub = driver.send_channel_message("Public", "Hello public")

@@ -82,10 +82,10 @@ chmod +x install.sh
 > ```
 
 ### Linux (Portable Tarball)
-Download `meshcore-navigator-v0.4.0-linux.tar.gz` from [GitHub Releases](https://github.com/SoulwayStudios/meshcore-navigator/releases):
+Download `meshcore-navigator-v0.4.1-linux.tar.gz` from [GitHub Releases](https://github.com/SoulwayStudios/meshcore-navigator/releases):
 ```bash
-tar -xzf meshcore-navigator-v0.4.0-linux.tar.gz
-cd meshcore-navigator-v0.4.0-linux
+tar -xzf meshcore-navigator-v0.4.1-linux.tar.gz
+cd meshcore-navigator-v0.4.1-linux
 ./run.sh
 ```
 

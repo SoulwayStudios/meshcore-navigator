@@ -1812,7 +1812,8 @@ class MeshCoreDriver(BaseRadioDriver):
 
     def send_channel_message(self, channel: str, text: str) -> Dict[str, Any]:
         msg_id = f"out-{int(datetime.now().timestamp()*1000)}"
-        channel_clean = channel.lstrip("#")
+        channel_clean = channel.lstrip("#").strip()
+        canonical_name = f"#{channel_clean}" if channel_clean.lower() != "public" else "Public"
         channel_idx = 0
         found_channel = False
         if self.storage:
@@ -1820,24 +1821,43 @@ class MeshCoreDriver(BaseRadioDriver):
             for ch in channels:
                 if ch.name.lower() == channel.lower() or ch.name.lstrip("#").lower() == channel_clean.lower():
                     channel_idx = ch.channel_id
+                    canonical_name = ch.name
                     found_channel = True
                     break
 
         if not found_channel and channel_clean.lower() in ("public", ""):
             channel_idx = 0
+            canonical_name = "Public"
             found_channel = True
 
+        # Dynamic channel resilience: If channel not pre-configured on this radio/storage,
+        # dynamically allocate an available hardware slot (1-7), save, register in parser, and send!
         if not found_channel:
-            err_msg = f"Cannot send message: channel '{channel}' is not configured on this radio."
-            logger.warning(err_msg)
-            return {"status": "error", "message": err_msg}
+            if self.storage and hasattr(self.storage, "get_next_available_channel_slot"):
+                channel_idx = self.storage.get_next_available_channel_slot()
+            else:
+                channel_idx = 1
+            logger.info(f"Auto-allocating channel slot {channel_idx} for new channel '{canonical_name}'")
+            if self.storage:
+                is_fav = bool(self.config and self.config.is_channel_favorite(canonical_name))
+                new_ch = ChannelInfo(
+                    channel_id=channel_idx,
+                    name=canonical_name,
+                    is_favorite=is_fav,
+                    is_pixoo_enabled=True
+                )
+                self.storage.save_channel(new_ch)
+            self.ensure_channel_synced(canonical_name)
+            if self.client and self.is_connected():
+                self._dispatch_task(self._async_set_channel(channel_idx, canonical_name))
+            found_channel = True
 
         msg = MessageEnvelope(
             id=msg_id,
             source_driver="meshcore_serial",
             sender_id=self.config.meshcore.node_id if self.config else "!local",
             sender_name=self.config.meshcore.node_alias if self.config else "Local",
-            channel=channel,
+            channel=canonical_name,
             channel_id=channel_idx,
             is_direct_message=False,
             text=text,
@@ -1846,14 +1866,14 @@ class MeshCoreDriver(BaseRadioDriver):
         )
         if self.storage:
             self.storage.save_message(msg)
-        self._record_outgoing_message(msg_id, channel, text)
+        self._record_outgoing_message(msg_id, canonical_name, text)
         bus.emit(EventType.MESSAGE_SENT, msg)
 
         # Dispatch transmission via asyncio task
         if self.client and self.is_connected():
             self._dispatch_task(self._async_send_channel(msg, channel_idx, text))
 
-        return {"status": "ok", "message_id": msg_id}
+        return {"status": "ok", "message_id": msg_id, "message": msg}
 
     async def _async_send_channel(self, msg: MessageEnvelope, channel_idx: int, text: str):
         async with self._get_cmd_lock():
@@ -1861,15 +1881,19 @@ class MeshCoreDriver(BaseRadioDriver):
                 res = await self.client.commands.send_chan_msg(channel_idx, text)
                 if res and res.type != McEventType.ERROR:
                     msg.delivery_status = "sent"
+                    logger.info(f"Successfully transmitted channel message {msg.id} on slot {channel_idx}")
                 else:
                     msg.delivery_status = "failed"
+                    logger.warning(f"Hardware error transmitting channel message {msg.id} on slot {channel_idx}: {res}")
                 if self.storage:
                     self.storage.save_message(msg)
+                bus.emit(EventType.MESSAGE_UPDATED, msg)
             except Exception as e:
-                logger.error(f"Failed to transmit channel message: {e}")
+                logger.error(f"Failed to transmit channel message {msg.id}: {e}")
                 msg.delivery_status = "failed"
                 if self.storage:
                     self.storage.save_message(msg)
+                bus.emit(EventType.MESSAGE_UPDATED, msg)
 
     def send_direct_message(self, recipient_id: str, text: str) -> Dict[str, Any]:
         msg_id = f"dm-out-{int(datetime.now().timestamp()*1000)}"
@@ -1926,15 +1950,19 @@ class MeshCoreDriver(BaseRadioDriver):
                 res = await self.client.commands.send_msg(dst, text)
                 if res and res.type != McEventType.ERROR:
                     msg.delivery_status = "sent"
+                    logger.info(f"Successfully transmitted DM {msg.id} to {recipient_id}")
                 else:
                     msg.delivery_status = "failed"
+                    logger.warning(f"Hardware error transmitting DM {msg.id} to {recipient_id}: {res}")
                 if self.storage:
                     self.storage.save_message(msg)
+                bus.emit(EventType.MESSAGE_UPDATED, msg)
             except Exception as e:
-                logger.error(f"Failed to transmit DM: {e}")
+                logger.error(f"Failed to transmit DM {msg.id}: {e}")
                 msg.delivery_status = "failed"
                 if self.storage:
                     self.storage.save_message(msg)
+                bus.emit(EventType.MESSAGE_UPDATED, msg)
 
     def send_repeater_command(self, repeater_id: str, command: str) -> Dict[str, Any]:
         """Sends a CLI command or login request to a repeater node."""
@@ -2161,12 +2189,15 @@ class MeshCoreDriver(BaseRadioDriver):
             hw_channels = {}
             try:
                 for i in range(8):
-                    ch_event = await self.client.commands.get_channel(i)
-                    if ch_event and ch_event.type == McEventType.CHANNEL_INFO:
-                        payload = ch_event.payload if isinstance(ch_event.payload, dict) else {}
-                        c_name = payload.get("channel_name", "").strip()
-                        if c_name:
-                            hw_channels[i] = c_name
+                    try:
+                        ch_event = await asyncio.wait_for(self.client.commands.get_channel(i), timeout=1.5)
+                        if ch_event and ch_event.type == McEventType.CHANNEL_INFO:
+                            payload = ch_event.payload if isinstance(ch_event.payload, dict) else {}
+                            c_name = payload.get("channel_name", "").strip()
+                            if c_name:
+                                hw_channels[i] = c_name
+                    except asyncio.TimeoutError:
+                        logger.debug(f"Timeout querying hardware channel {i}")
                     await asyncio.sleep(0.04)
             except Exception as e:
                 logger.debug(f"Error querying initial hardware channels: {e}")
@@ -2183,7 +2214,7 @@ class MeshCoreDriver(BaseRadioDriver):
                     if hw_name.lower() != name.lower():
                         try:
                             logger.info(f"Syncing app channel to hardware slot {slot}: '{name}' (hardware had '{hw_name}')...")
-                            res = await self.client.commands.set_channel(slot, name)
+                            res = await asyncio.wait_for(self.client.commands.set_channel(slot, name), timeout=3.5)
                             if res and res.type != McEventType.ERROR:
                                 hw_channels[slot] = name
                                 synced.append({"slot": slot, "name": name, "status": "updated"})
@@ -2191,6 +2222,9 @@ class MeshCoreDriver(BaseRadioDriver):
                             else:
                                 logger.warning(f"Failed syncing channel to hardware slot {slot}: {res}")
                             await asyncio.sleep(0.12)
+                        except asyncio.TimeoutError:
+                            logger.warning(f"Timeout waiting for hardware ACK syncing slot {slot} to '{name}'")
+                            synced.append({"slot": slot, "name": name, "status": "timeout_registered_locally"})
                         except Exception as e:
                             logger.error(f"Error pushing channel '{name}' to slot {slot}: {e}")
                     else:
@@ -2234,21 +2268,42 @@ class MeshCoreDriver(BaseRadioDriver):
         return {"status": "error", "message": "Radio hardware not connected"}
 
     def ensure_channel_synced(self, channel_name: str) -> bool:
-        """Ensures that a channel is programmed into a radio hardware slot."""
+        """Ensures that a channel is registered in the packet parser for immediate decryption."""
         if not channel_name:
             return False
         clean_name = channel_name.strip()
         if clean_name.lower() == "public":
             return True
+        canonical_name = clean_name if clean_name.startswith("#") else f"#{clean_name}"
         if not self.client or not self.is_connected():
             return False
-        if self.storage:
-            ch = self.storage.get_channel(clean_name)
-            if ch and 0 <= ch.channel_id <= 7:
-                slot = ch.channel_id
-                self._dispatch_task(self._async_set_channel(slot, clean_name))
-                return True
-        return False
+
+        # Register immediately in the local packet_parser so incoming packets can be decrypted
+        if hasattr(self.client, "_reader") and hasattr(self.client._reader, "packet_parser"):
+            try:
+                from hashlib import sha256
+                slot = 0
+                if self.storage:
+                    ch = self.storage.get_channel(canonical_name) or self.storage.get_channel(clean_name)
+                    if ch and 0 <= ch.channel_id <= 7:
+                        slot = ch.channel_id
+                secret = sha256(canonical_name.encode("utf-8")).digest()[0:16]
+                chan_h = sha256(secret).hexdigest()[0:2]
+                coro = self.client._reader.packet_parser.newChannel({
+                    "channel_idx": slot,
+                    "channel_name": canonical_name,
+                    "channel_secret": secret,
+                    "channel_hash": chan_h
+                })
+                if asyncio.iscoroutine(coro):
+                    self._dispatch_task(coro)
+            except Exception as e:
+                logger.debug(f"Error registering channel {canonical_name} in parser: {e}")
+
+        # Note: We intentionally avoid calling client.commands.set_channel over serial on passive tab switches
+        # because some firmware modes do not respond to set_channel, which would tie up the serial command lock
+        # for 15 seconds. Active channel joins/edits explicitly call _async_set_channel.
+        return True
 
     def join_channel(self, channel_name: str, slot: Optional[int] = None) -> Dict[str, Any]:
         """Joins and programs a MeshCore channel slot on the hardware radio."""
@@ -2293,29 +2348,35 @@ class MeshCoreDriver(BaseRadioDriver):
         return {"status": "ok", "channel_id": slot, "name": clean_name}
 
     async def _async_set_channel(self, slot: int, channel_name: str):
+        from hashlib import sha256
+        canonical_name = channel_name.strip()
+        if canonical_name.lower() != "public" and not canonical_name.startswith("#"):
+            canonical_name = f"#{canonical_name}"
+
+        # Register in parser FIRST for immediate over-the-air decryption without waiting for serial lock
+        if hasattr(self.client, "_reader") and hasattr(self.client._reader, "packet_parser"):
+            try:
+                secret = sha256(canonical_name.encode("utf-8")).digest()[0:16]
+                chan_h = sha256(secret).hexdigest()[0:2]
+                await self.client._reader.packet_parser.newChannel({
+                    "channel_idx": slot,
+                    "channel_name": canonical_name,
+                    "channel_secret": secret,
+                    "channel_hash": chan_h
+                })
+            except Exception as e:
+                logger.debug(f"Error pre-registering channel {canonical_name} in parser: {e}")
+
         async with self._get_cmd_lock():
             try:
-                from hashlib import sha256
-                logger.info(f"Setting hardware MeshCore channel slot {slot} to '{channel_name}'...")
-                res = await self.client.commands.set_channel(slot, channel_name)
+                logger.info(f"Setting hardware MeshCore channel slot {slot} to '{canonical_name}'...")
+                res = await asyncio.wait_for(self.client.commands.set_channel(slot, canonical_name), timeout=3.5)
                 if res and res.type != McEventType.ERROR:
-                    logger.info(f"Hardware channel slot {slot} successfully set to '{channel_name}'")
+                    logger.info(f"Hardware channel slot {slot} successfully set to '{canonical_name}'")
                 else:
-                    logger.error(f"Hardware error setting channel slot {slot}: {res}")
-
-                # Register in parser for immediate over-the-air decryption
-                if hasattr(self.client, "_reader") and hasattr(self.client._reader, "packet_parser"):
-                    try:
-                        secret = sha256(channel_name.encode("utf-8")).digest()[0:16]
-                        chan_h = sha256(secret).hexdigest()[0:2]
-                        await self.client._reader.packet_parser.newChannel({
-                            "channel_idx": slot,
-                            "channel_name": channel_name,
-                            "channel_secret": secret,
-                            "channel_hash": chan_h
-                        })
-                    except Exception as e:
-                        logger.debug(f"Error registering channel {channel_name} in parser: {e}")
+                    logger.warning(f"Hardware response setting channel slot {slot}: {res}")
+            except asyncio.TimeoutError:
+                logger.warning(f"Timeout (3.5s) waiting for hardware ACK setting channel slot {slot} to '{canonical_name}' (channel registered locally)")
             except Exception as e:
                 logger.error(f"Failed to set hardware channel slot {slot}: {e}")
 

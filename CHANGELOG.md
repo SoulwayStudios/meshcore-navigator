@@ -7,6 +7,38 @@ and this project follows semantic versioning with automated build increments:
 - **Patch (+0.0.1)**: Routine bug fixes, UI adjustments, maintenance, and regular GitHub commits.
 - **Minor (+0.1.0)**: Substantial new features and architectural additions.
 
+## [0.4.1] - 2026-09-12
+
+### Fixed & Enhanced
+- **Canonical Channel Hash Matching & Firmware Sync**:
+  - Automatically canonicalize channel names with `#` prefix across SQLite storage and radio driver, aligning SHA-256 channel hashes (`f9` for `#cumbria`, etc.) with over-the-air firmware packets.
+  - Dynamically scan and allocate hardware channel slots 1–7 for new or unconfigured channels on the fly, with automated least-recently-used slot recycling.
+  - Register channel keys in packet parser immediately in memory, allowing zero-latency packet decryption on channel switch without waiting on serial command locks.
+  - Reduced serial lock timeout to 3.5s with local registration fallback, ensuring channel navigation never locks the radio interface.
+- **Strict Contact Resolution & Shadowing Fix**:
+  - Eliminated false substring shadowing where repeaters with short names (e.g. `M1`, `M6`) masked human companion/client nodes.
+  - Implemented strict lookup precedence (exact node ID -> exact alias -> public key -> prefix -> substring), explicitly ranking companion users over repeaters.
+  - Added dedicated repeater status management across both `contacts` and `neighbours` tables.
+- **Real-Time Traffic Map Default**:
+  - Coupled packet route paths (`show_paths`) with RF Observer/Watcher mode (`show_rf_links`), enabling animated packet paths by default on startup.
+  - Hardened draggable map overlays, context menus, and channel switching across both map and chat interfaces.
+
+## [0.4.0] - 2026-09-12
+
+### Added & Enhanced
+- **Procedural User Avatars & Style Switcher**:
+  - Over 180,000 deterministic Cyberpunk Radio Droid faces and bilateral Cyber Initials framed in circuit brackets across 10 neon palettes.
+  - Switchable avatar styles in Settings (`Settings` → `💬 Chat Settings` → `👤 User Contact Avatar Style`).
+  - Chat stream avatars displaying sender icons inside message bubble cards.
+- **Tactical Radar Repeaters**:
+  - Dedicated radar constellation avatars for infrastructure repeater nodes with concentric range rings and orbital satellite blips.
+  - Enlarged 54×54px radar badge in the repeater inspector console header.
+- **Map Loading HUD & Startup Controls**:
+  - Redesigned centered map loading HUD with 36px emerald spinner and stage progress bar.
+  - Configurable startup splash screen behavior.
+- **Sleek Vector Line Navigation & Toolbar Icons**:
+  - Clean white line vector icons with emerald neon active states for Observer traffic, Heatmap, Thunderstorms, ADS-B, and Space Weather.
+
 ## [0.3.0] - 2026-09-12
 
 ### Added
