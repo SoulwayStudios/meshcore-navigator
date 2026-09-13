@@ -13,7 +13,7 @@ import meshcore
 from meshcore.events import Event, EventType as McEventType
 from meshcore_tray.core.models import (
     ChannelInfo, MessageEnvelope, NeighbourInfo, NodeContact, TelemetryEnvelope, PacketPathInfo, DockedCompanionInfo,
-    is_valid_alias, is_valid_node_id, is_valid_coordinate, is_plausible_rf_coordinate
+    is_valid_alias, is_valid_node_id, is_valid_coordinate, is_plausible_rf_coordinate, is_room_server_contact
 )
 from meshcore_tray.core.event_bus import bus, EventType
 from meshcore_tray.drivers.base_driver import BaseRadioDriver
@@ -1075,6 +1075,7 @@ class MeshCoreDriver(BaseRadioDriver):
                     alias = existing.alias
 
                 is_rep = bool(c.get("type") == 2)
+                is_room = bool(c.get("type") == 3 or is_room_server_contact(c) or (existing.is_room_server if existing else False))
                 last_seen = ""
                 last_adv = c.get("last_advert") or c.get("lastmod")
                 if last_adv:
@@ -1135,6 +1136,7 @@ class MeshCoreDriver(BaseRadioDriver):
                     last_seen=last_seen,
                     public_key=pubkey,
                     is_repeater=is_rep,
+                    is_room_server=is_room,
                     latitude=lat,
                     longitude=lon,
                     out_path_len=out_path_len,
@@ -1143,7 +1145,7 @@ class MeshCoreDriver(BaseRadioDriver):
                 )
                 contacts_list.append(contact)
 
-                if is_rep or last_adv:
+                if is_rep or is_room or last_adv:
                     neighbours_list.append(NeighbourInfo(
                         node_id=pubkey[:12],
                         alias=alias,
@@ -1151,6 +1153,7 @@ class MeshCoreDriver(BaseRadioDriver):
                         rssi_dbm=-85.0 if is_rep else -100.0,
                         last_heard_ts=last_seen or datetime.now(timezone.utc).isoformat(),
                         is_repeater=is_rep,
+                        is_room_server=is_room,
                         is_favorite=is_fav,
                         latitude=lat,
                         longitude=lon
@@ -1186,6 +1189,8 @@ class MeshCoreDriver(BaseRadioDriver):
 
 
             is_rep = bool(c.get("type") == 2)
+            c_exist = self.storage.get_contact(pubkey[:12]) if self.storage else None
+            is_room = bool(c.get("type") == 3 or is_room_server_contact(c) or (c_exist.is_room_server if c_exist else False))
             is_fav = bool(self.config and (alias in self.config.favorites or pubkey in self.config.favorites))
             lat_raw = c.get("adv_lat") or c.get("latitude")
             lon_raw = c.get("adv_lon") or c.get("longitude")
@@ -1195,7 +1200,6 @@ class MeshCoreDriver(BaseRadioDriver):
                 lon = float(lon_raw)
 
             # Protect existing valid coordinates from corrupted single contact updates
-            c_exist = self.storage.get_contact(pubkey[:12]) if self.storage else None
             if c_exist and c_exist.latitude is not None and c_exist.longitude is not None:
                 if not is_valid_alias(raw_alias):
                     lat = c_exist.latitude
@@ -1217,6 +1221,7 @@ class MeshCoreDriver(BaseRadioDriver):
                 is_favorite=is_fav,
                 public_key=pubkey,
                 is_repeater=is_rep,
+                is_room_server=is_room,
                 latitude=lat,
                 longitude=lon,
                 out_path_len=out_path_len,
@@ -1271,6 +1276,7 @@ class MeshCoreDriver(BaseRadioDriver):
 
             # Protect existing coordinates if any
             c_exist = self.storage.get_contact(pubkey[:12]) if self.storage else None
+            is_room = bool(raw.get("type") == 3 or (c and c.get("type") == 3) or is_room_server_contact({"alias": alias}) or (c_exist.is_room_server if c_exist else False))
             if c_exist and c_exist.latitude is not None and c_exist.longitude is not None:
                 if not is_valid_alias(adv_name):
                     lat = c_exist.latitude
@@ -1287,6 +1293,7 @@ class MeshCoreDriver(BaseRadioDriver):
                 rssi_dbm=float(raw.get("rssi", -100.0)),
                 last_heard_ts=datetime.now(timezone.utc).isoformat(),
                 is_repeater=is_rep,
+                is_room_server=is_room,
                 is_favorite=bool(self.config and alias in self.config.favorites),
                 latitude=lat,
                 longitude=lon
@@ -1300,6 +1307,7 @@ class MeshCoreDriver(BaseRadioDriver):
                     last_seen=datetime.now(timezone.utc).isoformat(),
                     public_key=pubkey.lower(),
                     is_repeater=is_rep or (c_exist.is_repeater if c_exist else False),
+                    is_room_server=is_room or (c_exist.is_room_server if c_exist else False),
                     latitude=lat if lat is not None else (c_exist.latitude if c_exist else None),
                     longitude=lon if lon is not None else (c_exist.longitude if c_exist else None),
                     out_path_len=c_exist.out_path_len if c_exist else -1,
@@ -1469,6 +1477,7 @@ class MeshCoreDriver(BaseRadioDriver):
 
                                     if self.storage:
                                         fav = existing.is_favorite if existing else bool(self.config and self.config.is_user_favorite(node_id, alias))
+                                        is_room = bool(is_room_server_contact({"alias": alias}) or (existing.is_room_server if existing else False))
                                         contact = NodeContact(
                                             node_id=node_id,
                                             alias=alias,
@@ -1476,6 +1485,7 @@ class MeshCoreDriver(BaseRadioDriver):
                                             last_seen=datetime.now(timezone.utc).isoformat(),
                                             public_key=adv_key.lower(),
                                             is_repeater=is_rep or (existing.is_repeater if existing else False),
+                                            is_room_server=is_room,
                                             latitude=lat if lat is not None else (existing.latitude if existing else None),
                                             longitude=lon if lon is not None else (existing.longitude if existing else None),
                                             out_path_len=existing.out_path_len if existing else -1,
@@ -1507,6 +1517,7 @@ class MeshCoreDriver(BaseRadioDriver):
 
                             if self.storage:
                                 fav = existing.is_favorite if existing else bool(self.config and self.config.is_user_favorite(node_id, alias))
+                                is_room = bool(is_room_server_contact({"alias": alias}) or (existing.is_room_server if existing else False))
                                 contact = NodeContact(
                                     node_id=node_id,
                                     alias=alias,
@@ -1514,6 +1525,7 @@ class MeshCoreDriver(BaseRadioDriver):
                                     last_seen=datetime.now(timezone.utc).isoformat(),
                                     public_key=adv_key.lower(),
                                     is_repeater=is_rep or (existing.is_repeater if existing else False),
+                                    is_room_server=is_room,
                                     latitude=lat if lat is not None else (existing.latitude if existing else None),
                                     longitude=lon if lon is not None else (existing.longitude if existing else None),
                                     out_path_len=existing.out_path_len if existing else -1,
@@ -1989,6 +2001,25 @@ class MeshCoreDriver(BaseRadioDriver):
 
         return {"status": "ok", "message_id": msg_id}
 
+    def send_room_login(self, node_id: str, password: str) -> Dict[str, Any]:
+        """Stores or updates the password for the room server and dispatches login authentication."""
+        if self.storage:
+            self.storage.set_room_password(node_id, password)
+            self.storage.set_contact_room_server_status(node_id, True)
+        return self.send_repeater_command(node_id, f"!login {password}")
+
+    def send_room_logout(self, node_id: str) -> Dict[str, Any]:
+        """Dispatches logout command to the room server."""
+        return self.send_repeater_command(node_id, "!logout")
+
+    def send_room_command(self, node_id: str, command: str) -> Dict[str, Any]:
+        """Sends a text command (e.g. !help, !info, !status, !read, !list) to the room server."""
+        return self.send_repeater_command(node_id, command)
+
+    def send_room_message(self, node_id: str, text: str) -> Dict[str, Any]:
+        """Sends a message to the room server bulletin board stream."""
+        return self.send_direct_message(node_id, text)
+
     async def _async_send_repeater_cmd(self, dst_pubkey: str, command: str, repeater_id: str = ""):
         try:
             target_id = repeater_id or dst_pubkey[:12]
@@ -2054,6 +2085,17 @@ class MeshCoreDriver(BaseRadioDriver):
                     emit_repeater_reply(f"❌ Login rejected by @{alias}. Invalid password.")
                 else:
                     emit_repeater_reply(f"⚠️ Login timed out. No response received from @{alias}.")
+
+            elif cmd_lower == "!logout":
+                if hasattr(self.client, "commands") and hasattr(self.client.commands, "send_logout"):
+                    try:
+                        await self.client.commands.send_logout(contact_obj)
+                        emit_repeater_reply(f"👋 Logged out from @{alias}.")
+                    except Exception as ex:
+                        logger.warning(f"Error during send_logout to {target_id}: {ex}")
+                        emit_repeater_reply(f"👋 Logged out from @{alias}.")
+                else:
+                    emit_repeater_reply(f"👋 Logged out from @{alias}.")
 
             elif cmd_lower == "!status":
                 status_data = await self.client.commands.req_status_sync(contact_obj, min_timeout=6)

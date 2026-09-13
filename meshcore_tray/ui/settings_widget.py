@@ -994,6 +994,11 @@ class SettingsWidget(QWidget):
         self.btn_col_map_comp_hover = ColorPickerButton(getattr(self.config.app_colors, "map_companion_hover_color", "#00FFFF"))
         c2.add_row("👤 Companion Node Hover Color:", self.btn_col_map_comp_hover, 250)
 
+        self.btn_col_map_room = ColorPickerButton(getattr(self.config.app_colors, "map_room_server_color", "#FF00FF"))
+        c2.add_row("🏢 Room Server Diamond Color:", self.btn_col_map_room, 250)
+        self.btn_col_map_room_hover = ColorPickerButton(getattr(self.config.app_colors, "map_room_server_hover_color", "#FF55FF"))
+        c2.add_row("🏢 Room Server Hover Color:", self.btn_col_map_room_hover, 250)
+
         self.btn_col_map_orbital_rep = ColorPickerButton(getattr(self.config.app_colors, "map_orbital_repeater_color", "#FFD335"))
         c2.add_row("🛰️ Orbital Repeater Ring Color:", self.btn_col_map_orbital_rep, 250)
 
@@ -1122,6 +1127,8 @@ class SettingsWidget(QWidget):
             (self.btn_col_map_rep_hover, "map_repeater_hover_color"),
             (self.btn_col_map_comp, "map_companion_color"),
             (self.btn_col_map_comp_hover, "map_companion_hover_color"),
+            (self.btn_col_map_room, "map_room_server_color"),
+            (self.btn_col_map_room_hover, "map_room_server_hover_color"),
             (self.btn_col_map_orbital_rep, "map_orbital_repeater_color"),
             (self.btn_col_watch_start, "map_watcher_line_start"),
             (self.btn_col_watch_end, "map_watcher_line_end"),
@@ -1210,6 +1217,8 @@ class SettingsWidget(QWidget):
         c.map_repeater_hover_color = self.btn_col_map_rep_hover.current_hex
         c.map_companion_color = self.btn_col_map_comp.current_hex
         c.map_companion_hover_color = self.btn_col_map_comp_hover.current_hex
+        c.map_room_server_color = self.btn_col_map_room.current_hex
+        c.map_room_server_hover_color = self.btn_col_map_room_hover.current_hex
         c.map_orbital_repeater_color = self.btn_col_map_orbital_rep.current_hex
         c.map_watcher_line_start = self.btn_col_watch_start.current_hex
         c.map_watcher_line_end = self.btn_col_watch_end.current_hex
@@ -1252,6 +1261,8 @@ class SettingsWidget(QWidget):
         self.btn_col_map_rep_hover.set_color(getattr(c, "map_repeater_hover_color", "#FF55FF"))
         self.btn_col_map_comp.set_color(c.map_companion_color)
         self.btn_col_map_comp_hover.set_color(getattr(c, "map_companion_hover_color", "#00FFFF"))
+        self.btn_col_map_room.set_color(getattr(c, "map_room_server_color", "#FF00FF"))
+        self.btn_col_map_room_hover.set_color(getattr(c, "map_room_server_hover_color", "#FF55FF"))
         self.btn_col_map_orbital_rep.set_color(getattr(c, "map_orbital_repeater_color", "#FFD335"))
         self.btn_col_watch_start.set_color(c.map_watcher_line_start)
         self.btn_col_watch_end.set_color(c.map_watcher_line_end)

@@ -74,6 +74,8 @@ class AppColors:
     map_repeater_hover_color: str = "#FF55FF"
     map_companion_color: str = "#00FF7F"
     map_companion_hover_color: str = "#00FFFF"
+    map_room_server_color: str = "#FF00FF"
+    map_room_server_hover_color: str = "#FF55FF"
     map_watcher_line_start: str = "#AA55FF"
     map_watcher_line_end: str = "#67397A"
     map_message_line_start: str = "#00FFFF"

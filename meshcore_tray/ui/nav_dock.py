@@ -39,6 +39,7 @@ PRIMARY_NAV_SVGS = {
     "main": '<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>',
     "floods": '<path d="M2 12h3l3-7 4 14 3-7h7" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>',
     "dms": '<path d="M17 8h2a2 2 0 0 1 2 2v7l-3-2h-1" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M15 14H7l-4 3V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2z" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>',
+    "rooms": '<path d="M12 2L2 12l10 10 10-10L12 2z" stroke="{color}" stroke-width="2" stroke-linejoin="round" fill="none"/><path d="M7 12h10M9 9h6M9 15h6" stroke="{color}" stroke-width="1.8" stroke-linecap="round"/>',
     "repeaters": '<path d="M12 18v4M9 22h6M12 18l3-11h-6l3 11z" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M7.5 9.5a6.5 6.5 0 0 1 9 0M5 7a10 10 0 0 1 14 0" stroke="{color}" stroke-width="2" stroke-linecap="round" fill="none"/>',
 }
 
@@ -46,7 +47,7 @@ CYCLE_SVGS = {
     "ALL": '<circle cx="12" cy="12" r="9" stroke="{color}" stroke-width="2" fill="none"/><path d="M3.6 9h16.8M3.6 15h16.8M12 3a15.3 15.3 0 0 1 4 9 15.3 15.3 0 0 1-4 9 15.3 15.3 0 0 1-4-9 15.3 15.3 0 0 1 4-9z" stroke="{color}" stroke-width="1.6" fill="none"/>',
     "CLIENTS": '<rect x="6" y="2" width="12" height="20" rx="2" stroke="{color}" stroke-width="2" fill="none"/><line x1="12" y1="18" x2="12.01" y2="18" stroke="{color}" stroke-width="2" stroke-linecap="round"/>',
     "REPEATERS": '<path d="M12 2v20M4 6l8 4 8-4M4 14l8 4 8-4M7 22l5-4 5 4" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>',
-    "ROOMS": '<rect x="4" y="3" width="16" height="18" rx="2" stroke="{color}" stroke-width="2" fill="none"/><line x1="9" y1="8" x2="9.01" y2="8" stroke="{color}" stroke-width="2"/><line x1="15" y1="8" x2="15.01" y2="8" stroke="{color}" stroke-width="2"/><line x1="9" y1="13" x2="9.01" y2="13" stroke="{color}" stroke-width="2"/><line x1="15" y1="13" x2="15.01" y2="13" stroke="{color}" stroke-width="2"/>'
+    "ROOMS": '<path d="M12 2L2 12l10 10 10-10L12 2z" stroke="{color}" stroke-width="2" stroke-linejoin="round" fill="none"/><circle cx="12" cy="12" r="2.5" fill="{color}"/>'
 }
 
 
@@ -152,6 +153,8 @@ class DockButton(QPushButton):
             "🌊": "floods",
             "dms": "dms",
             "👥": "dms",
+            "rooms": "rooms",
+            "🏢": "rooms",
             "repeaters": "repeaters",
             "📡": "repeaters",
             "app_icon": "app_icon",
@@ -561,11 +564,16 @@ class NavDockWidget(QWidget):
         layout.addWidget(self.btn_floods)
 
         # 4. View 3: Direct Contacts & DMs
-        self.btn_dms = DockButton("dms", "Direct Messages & Contacts (Favorites, Room Servers, DMs)", parent=self)
+        self.btn_dms = DockButton("dms", "Direct Messages & Contacts (Favorites, Companions, DMs)", parent=self)
         self.btn_dms.clicked.connect(lambda: self.switch_view("dms"))
         layout.addWidget(self.btn_dms)
 
-        # 5. View 4: Repeaters & Infrastructure
+        # 5. View 4: Room Servers (Bulletin Boards, Chatrooms, Authentication)
+        self.btn_rooms = DockButton("rooms", "Room Servers (Bulletin Boards, Chatrooms, Authentication)", parent=self)
+        self.btn_rooms.clicked.connect(lambda: self.switch_view("rooms"))
+        layout.addWidget(self.btn_rooms)
+
+        # 6. View 5: Repeaters & Infrastructure
         self.btn_repeaters = DockButton("repeaters", "Repeaters & Infrastructure (Terminal, Credentials, Neighbors)", parent=self)
         self.btn_repeaters.clicked.connect(lambda: self.switch_view("repeaters"))
         layout.addWidget(self.btn_repeaters)
@@ -763,6 +771,8 @@ class NavDockWidget(QWidget):
         if hasattr(self, "btn_floods"):
             self.btn_floods.set_active(view_name == "floods")
         self.btn_dms.set_active(view_name == "dms")
+        if hasattr(self, "btn_rooms"):
+            self.btn_rooms.set_active(view_name == "rooms")
         self.btn_repeaters.set_active(view_name == "repeaters")
         self.view_changed.emit(view_name)
 

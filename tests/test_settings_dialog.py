@@ -328,12 +328,12 @@ def test_embedded_settings_view_in_main_window(qapp, tmp_path, monkeypatch):
 
     # Initial state: main_stack is index 0 (main_splitter with channels, chat, map)
     assert win.main_stack.currentIndex() == 0
-    assert win.main_stack.count() == 4
-    assert win.main_stack.widget(3) == win.settings_view
+    assert win.main_stack.count() == 5
+    assert win.main_stack.widget(4) == win.settings_view
 
     # Open Settings via nav_dock icon or _open_settings
     win._open_settings()
-    assert win.main_stack.currentIndex() == 3
+    assert win.main_stack.currentWidget() == win.settings_view
 
     # Close Settings via close_requested / Back button
     win.settings_view.close_requested.emit()
@@ -341,9 +341,9 @@ def test_embedded_settings_view_in_main_window(qapp, tmp_path, monkeypatch):
 
     # Navigating to another view exits settings as well
     win._open_settings()
-    assert win.main_stack.currentIndex() == 3
+    assert win.main_stack.currentWidget() == win.settings_view
     win.nav_dock.switch_view("dms")
-    assert win.main_stack.currentIndex() == 1
+    assert win.main_stack.currentWidget() == win.dms_view
 
     win.cleanup()
 

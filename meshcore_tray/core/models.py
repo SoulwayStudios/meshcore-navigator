@@ -74,6 +74,7 @@ class NeighbourInfo:
     rssi_dbm: float = -100.0
     last_heard_ts: str = field(default_factory=current_iso_time)
     is_repeater: bool = False
+    is_room_server: bool = False
     is_favorite: bool = False
     via_node_id: Optional[str] = None
     latitude: Optional[float] = None
@@ -181,6 +182,7 @@ class NodeContact:
     last_seen: str = field(default_factory=current_iso_time)
     public_key: str = ""
     is_repeater: bool = False
+    is_room_server: bool = False
     snr_db: float = 0.0
     rssi_dbm: float = -100.0
     latitude: Optional[float] = None
@@ -197,6 +199,23 @@ class NodeContact:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "NodeContact":
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+
+
+def is_room_server_contact(contact: Optional[Union[NodeContact, dict]]) -> bool:
+    """Helper to detect if a contact represents a Room Server (by flag, type code, or alias tag)."""
+    if not contact:
+        return False
+    if isinstance(contact, dict):
+        if contact.get("is_room_server"):
+            return True
+        if contact.get("type") == 3:
+            return True
+        alias = str(contact.get("alias") or contact.get("adv_name") or "").lower()
+    else:
+        if getattr(contact, "is_room_server", False):
+            return True
+        alias = (contact.alias or "").lower()
+    return "[room]" in alias or "[server]" in alias or alias.endswith("-bbs") or "-room" in alias
 
 
 @dataclass

@@ -41,10 +41,14 @@
 - **🗺️ High-Performance Interactive Leaflet Map**:
   - GPU-accelerated HTML5 Canvas rendering for hundreds of nodes and live RF routes.
   - Multi-hop packet path visualisation tracing exact repeaters and zero-hop transmissions.
+  - Distinct node geometry: circular companions, tactical radar repeaters, and **45° magenta diamond Room Servers** with specialized filter cycling (`ROOMS`).
   - Real-time **Tropospheric Ducting Forecasts** (VHF/UHF propagation conditions).
   - Live **Thunderstorm & Lightning Tracking** with RainViewer radar overlays and Blitzortung lightning strikes.
   - **ADS-B Aircraft Tracking** around nodes with flight altitude color-coding and live flight trails.
   - **Node Activity Heatmap** (1h, 6h, 24h) identifying busy repeaters.
+- **🏢 Room Servers & Mesh Bulletin Boards**:
+  - First-class discovery and management of decentralized MeshCore Room Servers.
+  - Dedicated dual-pane authentication console, password persistence in SQLite, quick commands (`!help`, `!read`, `!info`, `!status`, `!list`), and real-time public bulletin streams.
 - **💬 Modern Discord-Style Architecture**:
   - Foldable channel categories, unread message badges, favorites system (`★`), and direct messaging.
   - **Power Composer**: Instant `#channel` routing, `@contact` autocomplete ranked by recent RF activity, slash commands (`/join`, `/switch`), and full-text SQLite history search (`? query`).
@@ -82,10 +86,10 @@ chmod +x install.sh
 > ```
 
 ### Linux (Portable Tarball)
-Download `meshcore-navigator-v0.4.1-linux.tar.gz` from [GitHub Releases](https://github.com/SoulwayStudios/meshcore-navigator/releases):
+Download `meshcore-navigator-v0.5.0-linux.tar.gz` from [GitHub Releases](https://github.com/SoulwayStudios/meshcore-navigator/releases):
 ```bash
-tar -xzf meshcore-navigator-v0.4.1-linux.tar.gz
-cd meshcore-navigator-v0.4.1-linux
+tar -xzf meshcore-navigator-v0.5.0-linux.tar.gz
+cd meshcore-navigator-v0.5.0-linux
 ./run.sh
 ```
 

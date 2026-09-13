@@ -7,6 +7,21 @@ and this project follows semantic versioning with automated build increments:
 - **Patch (+0.0.1)**: Routine bug fixes, UI adjustments, maintenance, and regular GitHub commits.
 - **Minor (+0.1.0)**: Substantial new features and architectural additions.
 
+## [0.5.0] - 2026-09-13
+
+### Added & Enhanced
+- **Headline Feature: Room Servers Support (BBS & Mesh Chatrooms)**:
+  - **What They Are & How They Work**: Room Servers are MeshCore's 3rd dedicated node type alongside Companions and Repeaters. They act as decentralized mesh chatrooms, bulletin boards, and gateway hosts. Nodes announce as room servers via `AdvType.ROOM` (`0x03`) or alias patterns (`[room]`, `[server]`, `-bbs`). Once discovered, users can authenticate using `!login <password>`, read public bulletin feeds, post messages, and run standard room server commands (`!help`, `!read`, `!info`, `!status`, `!list`).
+  - **Saved Passwords & Credential Persistence**: Added a dedicated `room_credentials` SQLite table. Passwords can be saved per room server with auto-fill on selection, allowing seamless reconnection without retyping keys. Saved entries display a clear `🔑 Saved` indicator in the server list.
+  - **Dedicated Left Navigation View**: Added a primary navigation dock button (`btn_rooms`) placed directly beneath Contacts/Companions:
+    - *Discovered Servers Directory (Left Pane)*: Searchable list of all room servers with signal quality metrics (SNR/RSSI), GPS coordinates, favorite stars, and saved-password status indicators.
+    - *Authentication Card (Top Right)*: Host details, instant "Locate on Map" and "Track ADS-B" actions, password input with show/hide toggle (👁️/🔒), Login/Logout controls, and one-click quick action command buttons.
+    - *Bulletin Stream & Composer (Bottom Right)*: Live chronological room server bulletin stream displaying sender identity, message text, and SNR metrics, backed by a quick composer.
+- **45° Diamond Map Markers & Filter Mode**:
+  - Room servers render distinctly on the Leaflet map as **diamonds (square rotated 45°)** rather than circles, making infrastructure servers immediately identifiable.
+  - Defaulted to high-visibility magenta (`#FF00FF`) with interactive hover animation (`#FF55FF`), fully customizable in Settings (`Settings` → `🎨 Map Visualisation Colors`).
+  - Added `ROOMS` mode to the map node filter cycle (`ALL` → `CLIENTS` → `REPEATERS` → `ROOMS`) with live count badges and isolated server coverage views.
+
 ## [0.4.1] - 2026-09-12
 
 ### Fixed & Enhanced

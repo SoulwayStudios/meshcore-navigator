@@ -4,7 +4,25 @@
 
 ---
 
-## 🌟 What's New in v0.4.1
+## 🌟 What's New in v0.5.0
+
+### 🏢 Headline Feature: Room Servers (BBS & Mesh Chatrooms)
+- **3rd Dedicated Node Type**: MeshCore Room Servers are now first-class citizens alongside Companions and Repeaters across telemetry decoding, database models, and user interfaces.
+- **How Room Servers Work**: Room servers advertise via `AdvType.ROOM` (0x03) or identifying tags (`[room]`, `[server]`, `-bbs`). Users can connect and authenticate with `!login <password>`, read public bulletin feeds, execute server commands (`!help`, `!read`, `!info`, `!status`, `!list`), and broadcast room messages.
+- **Persistent Saved Credentials**: Passwords can be saved in SQLite (`room_credentials`) with automatic pre-fill and clear `🔑 Saved` status pills.
+- **Dedicated Dual-Pane Console**: Added a primary navigation dock button (`btn_rooms`) positioned directly below Contacts/Companions:
+  - **Left Pane**: Discovered room servers directory with search filtering, signal quality (SNR/RSSI), GPS positions, and saved-password status.
+  - **Top Auth Card**: Host details, map/ADS-B shortcuts, password box with visibility eye toggle (👁️/🔒), Login/Logout controls, and quick action command buttons.
+  - **Bottom Message Stream**: Real-time room server bulletin feed with sender styling, timestamps, and interactive message composer.
+
+### 💎 45° Diamond Map Markers & Filter Mode
+- **Diamond Geometry**: Room servers render as sharp 45-degree rotated diamonds on the interactive mesh map, distinguishing them from circular companion nodes and tactical radar repeaters.
+- **Vibrant Magenta Theme**: Styled in high-contrast magenta (`#FF00FF`) by default with dynamic hover halo effects (`#FF55FF`), fully customizable in Settings (`Settings` → `🎨 Map Visualisation Colors`).
+- **Dedicated Node Filter Mode**: Map node type cycler now includes `ROOMS` mode (`ALL` → `CLIENTS` → `REPEATERS` → `ROOMS`) with live count badges.
+
+---
+
+## 📦 Previous Highlights (v0.4.1)
 
 ### 📻 Canonical Channel Hash Matching & Firmware Sync
 - **Deterministic `#` Canonicalization**: Channels are canonically formatted with a `#` prefix in SQLite storage and the radio driver, aligning SHA-256 channel hashes (`f9` for `#cumbria`, etc.) with over-the-air firmware packets.

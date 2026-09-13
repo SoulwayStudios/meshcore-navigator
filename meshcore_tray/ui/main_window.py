@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
 from meshcore_tray import __app_name__, __version__
 from meshcore_tray.config import AppConfig
 from meshcore_tray.core.event_bus import bus, EventType
-from meshcore_tray.core.models import MessageEnvelope, ChannelInfo
+from meshcore_tray.core.models import MessageEnvelope, ChannelInfo, NodeContact, is_room_server_contact
 from meshcore_tray.ui.chat_widget import ChatWidget
 from meshcore_tray.ui.composer import PowerComposer
 from meshcore_tray.ui.sidebar import Sidebar
@@ -24,6 +24,7 @@ from meshcore_tray.ui.settings_widget import SettingsWidget, SettingsDialog
 from meshcore_tray.ui.mesh_map_widget import MeshMapWidget
 from meshcore_tray.ui.nav_dock import NavDockWidget
 from meshcore_tray.ui.dms_view import DMsViewWidget
+from meshcore_tray.ui.room_servers_view import RoomServersViewWidget
 from meshcore_tray.ui.repeaters_view import RepeatersViewWidget
 from meshcore_tray.ui.heard_floods_view import HeardFloodsWidget
 from meshcore_tray.ui.splash_overlay import SplashOverlay
@@ -225,6 +226,13 @@ class MainWindow(QMainWindow):
         self.dms_view.track_adsb_requested.connect(self._on_track_node_adsb)
         self.main_stack.addWidget(self.dms_view)       # Index 1: DMs View
 
+        # --- VIEW: Room Servers ---
+        self.rooms_view = RoomServersViewWidget(storage=self.storage, config=self.config, radio_driver=self.radio_driver)
+        self.rooms_view.send_message_requested.connect(lambda target, txt: self._on_send_message("DM", target, txt))
+        self.rooms_view.show_on_map_requested.connect(self._on_show_contact_on_map)
+        self.rooms_view.track_adsb_requested.connect(self._on_track_node_adsb)
+        self.main_stack.addWidget(self.rooms_view)     # Index 2: Room Servers View
+
         # --- VIEW 3: Repeaters & Infrastructure ---
         self.repeaters_view = RepeatersViewWidget(storage=self.storage, config=self.config, radio_driver=self.radio_driver)
         self.repeaters_view.send_command_requested.connect(self._on_send_repeater_command)
@@ -267,6 +275,7 @@ class MainWindow(QMainWindow):
         bus.subscribe(EventType.FAVORITES_UPDATED, lambda _: (
             self.sidebar.reload(),
             self.dms_view.reload_contacts(),
+            getattr(self, "rooms_view", None) and self.rooms_view.reload_rooms(),
             self.repeaters_view.reload_repeaters(),
             self.chat_widget.set_target(self.chat_widget.current_channel, self.chat_widget.current_dm),
             self._update_dock_favorites()
@@ -292,12 +301,12 @@ class MainWindow(QMainWindow):
         if view_name == "main":
             if hasattr(self, "sidebar"):
                 self.sidebar.setVisible(True)
-            self.main_stack.setCurrentIndex(0)
+            self.main_stack.setCurrentWidget(self.main_splitter)
             self.center_stack.setCurrentIndex(0)
         elif view_name == "floods":
             if hasattr(self, "sidebar"):
                 self.sidebar.setVisible(False)
-            self.main_stack.setCurrentIndex(0)
+            self.main_stack.setCurrentWidget(self.main_splitter)
             self.center_stack.setCurrentIndex(2)
             if hasattr(self, "heard_floods_view"):
                 self.heard_floods_view.reload()
@@ -305,12 +314,17 @@ class MainWindow(QMainWindow):
             if hasattr(self, "sidebar"):
                 self.sidebar.setVisible(False)
             self.dms_view.reload_contacts()
-            self.main_stack.setCurrentIndex(1)
+            self.main_stack.setCurrentWidget(self.dms_view)
+        elif view_name == "rooms":
+            if hasattr(self, "sidebar"):
+                self.sidebar.setVisible(False)
+            self.rooms_view.reload_rooms()
+            self.main_stack.setCurrentWidget(self.rooms_view)
         elif view_name == "repeaters":
             if hasattr(self, "sidebar"):
                 self.sidebar.setVisible(False)
             self.repeaters_view.reload_repeaters()
-            self.main_stack.setCurrentIndex(2)
+            self.main_stack.setCurrentWidget(self.repeaters_view)
 
     def _on_dock_layer_toggled(self, layer_key: str, is_active: bool):
         if not hasattr(self, "mesh_map"):
@@ -561,10 +575,16 @@ class MainWindow(QMainWindow):
 
         contact = self.storage.get_contact(contact_id) if self.storage else None
         is_rep = False
+        is_room = False
         if contact:
+            is_room = getattr(contact, "is_room_server", False) or is_room_server_contact(contact)
             is_rep = contact.is_repeater or "[rep]" in (contact.alias or "").lower()
 
-        if is_rep and contact:
+        if is_room and contact:
+            self.nav_dock.switch_view("rooms")
+            if hasattr(self, "rooms_view"):
+                self.rooms_view.set_active_room(contact)
+        elif is_rep and contact:
             self.repeater_console.set_repeater(contact)
             self.center_stack.setCurrentIndex(1)
             self.repeaters_view.set_active_repeater(contact)
@@ -656,6 +676,8 @@ class MainWindow(QMainWindow):
         self.sidebar.reload()
         if hasattr(self, "dms_view"):
             self.dms_view.reload_contacts()
+        if hasattr(self, "rooms_view"):
+            self.rooms_view.reload_rooms()
         if hasattr(self, "repeaters_view"):
             self.repeaters_view.reload_repeaters()
         self.chat_widget.reload_messages()
@@ -663,29 +685,29 @@ class MainWindow(QMainWindow):
     def _open_settings(self):
         """Opens embedded settings view, hiding channels, chat and map."""
         if hasattr(self, "main_stack") and hasattr(self, "settings_view"):
-            if self.main_stack.currentIndex() == 3:
+            if self.main_stack.currentWidget() == self.settings_view:
                 self._close_settings()
             else:
+                self._previous_view_widget = self.main_stack.currentWidget()
                 if hasattr(self, "sidebar"):
                     self.sidebar.setVisible(False)
-                self._previous_view_index = self.main_stack.currentIndex()
                 self.settings_view.reload()
-                self.main_stack.setCurrentIndex(3)
+                self.main_stack.setCurrentWidget(self.settings_view)
 
     def _close_settings(self):
         """Returns to the previous view from the embedded settings view."""
         if hasattr(self, "main_stack"):
-            prev_idx = getattr(self, "_previous_view_index", 0)
-            if prev_idx == 3:
-                prev_idx = 0
-            if prev_idx == 0:
+            prev_widget = getattr(self, "_previous_view_widget", self.main_splitter)
+            if prev_widget == self.settings_view or not prev_widget:
+                prev_widget = self.main_splitter
+            if prev_widget == self.main_splitter:
                 is_main_chat = (not hasattr(self, "center_stack")) or (self.center_stack.currentIndex() == 0)
                 if hasattr(self, "sidebar"):
                     self.sidebar.setVisible(is_main_chat)
             else:
                 if hasattr(self, "sidebar"):
                     self.sidebar.setVisible(False)
-            self.main_stack.setCurrentIndex(prev_idx)
+            self.main_stack.setCurrentWidget(prev_widget)
 
     def _on_reply_requested(self, reply_prefix: str):
         cur = self.composer.input_field.text()

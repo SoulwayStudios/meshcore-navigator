@@ -92,7 +92,8 @@ class Storage:
                     out_path_hash_mode INTEGER DEFAULT -1,
                     out_path TEXT DEFAULT '',
                     scope_name TEXT DEFAULT '',
-                    allowed_regions TEXT DEFAULT '[]'
+                    allowed_regions TEXT DEFAULT '[]',
+                    is_room_server INTEGER DEFAULT 0
                 )
             """)
 
@@ -108,6 +109,8 @@ class Storage:
                 cursor.execute("ALTER TABLE contacts ADD COLUMN scope_name TEXT DEFAULT ''")
             if "allowed_regions" not in contact_cols:
                 cursor.execute("ALTER TABLE contacts ADD COLUMN allowed_regions TEXT DEFAULT '[]'")
+            if "is_room_server" not in contact_cols:
+                cursor.execute("ALTER TABLE contacts ADD COLUMN is_room_server INTEGER DEFAULT 0")
 
             # Channels table
             cursor.execute("""
@@ -176,7 +179,23 @@ class Storage:
                     is_favorite INTEGER,
                     via_node_id TEXT,
                     latitude REAL,
-                    longitude REAL
+                    longitude REAL,
+                    is_room_server INTEGER DEFAULT 0
+                )
+            """)
+
+            cursor.execute("PRAGMA table_info(neighbours)")
+            neigh_cols = [col[1] for col in cursor.fetchall()]
+            if "is_room_server" not in neigh_cols:
+                cursor.execute("ALTER TABLE neighbours ADD COLUMN is_room_server INTEGER DEFAULT 0")
+
+            # Room Credentials table (securely stores passwords and auto-login preferences for room servers)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS room_credentials (
+                    node_id TEXT PRIMARY KEY,
+                    password TEXT,
+                    last_login_ts TEXT,
+                    auto_login INTEGER DEFAULT 1
                 )
             """)
 
@@ -1124,7 +1143,8 @@ class Storage:
             out_path_hash_mode=r["out_path_hash_mode"] if ("out_path_hash_mode" in keys and r["out_path_hash_mode"] is not None) else -1,
             out_path=r["out_path"] if ("out_path" in keys and r["out_path"]) else "",
             scope_name=r["scope_name"] if ("scope_name" in keys and r["scope_name"]) else "",
-            allowed_regions=allowed_reg
+            allowed_regions=allowed_reg,
+            is_room_server=bool(r["is_room_server"]) if ("is_room_server" in keys and r["is_room_server"] is not None) else False
         )
 
     def get_contacts(self) -> List[NodeContact]:
@@ -1194,14 +1214,15 @@ class Storage:
             cursor.execute("""
                 INSERT INTO contacts (
                     node_id, alias, is_favorite, last_seen, public_key, is_repeater, snr_db, rssi_dbm, latitude, longitude,
-                    out_path_len, out_path_hash_mode, out_path, scope_name, allowed_regions
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    out_path_len, out_path_hash_mode, out_path, scope_name, allowed_regions, is_room_server
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(node_id) DO UPDATE SET
                     alias = CASE WHEN excluded.alias != '' THEN excluded.alias ELSE contacts.alias END,
                     is_favorite = CASE WHEN excluded.is_favorite != 0 THEN excluded.is_favorite ELSE contacts.is_favorite END,
                     last_seen = COALESCE(NULLIF(excluded.last_seen, ''), contacts.last_seen),
                     public_key = COALESCE(NULLIF(excluded.public_key, ''), contacts.public_key),
                     is_repeater = CASE WHEN ? != 0 THEN excluded.is_repeater WHEN excluded.is_repeater != 0 THEN excluded.is_repeater ELSE contacts.is_repeater END,
+                    is_room_server = CASE WHEN ? != 0 THEN excluded.is_room_server WHEN excluded.is_room_server != 0 THEN excluded.is_room_server ELSE contacts.is_room_server END,
                     snr_db = CASE WHEN excluded.snr_db != 0.0 THEN excluded.snr_db ELSE contacts.snr_db END,
                     rssi_dbm = CASE WHEN excluded.rssi_dbm != -100.0 THEN excluded.rssi_dbm ELSE contacts.rssi_dbm END,
                     latitude = CASE WHEN excluded.latitude IS NOT NULL AND abs(excluded.latitude) >= 1.0 AND excluded.latitude BETWEEN -85.0 AND 85.0 AND NOT (abs(excluded.latitude) < 5.0 AND abs(excluded.longitude) < 5.0) THEN excluded.latitude ELSE contacts.latitude END,
@@ -1221,6 +1242,8 @@ class Storage:
                 getattr(contact, "out_path", ""),
                 sc_name,
                 al_reg_json,
+                int(getattr(contact, "is_room_server", False)),
+                1 if update_role else 0,
                 1 if update_role else 0
             ))
             if is_valid_coordinate(lat, lon):
@@ -1296,20 +1319,22 @@ class Storage:
                     getattr(c, "out_path_hash_mode", -1),
                     getattr(c, "out_path", ""),
                     sc_name,
-                    al_reg_json
+                    al_reg_json,
+                    int(getattr(c, "is_room_server", False))
                 ))
 
             cursor.executemany("""
                 INSERT INTO contacts (
                     node_id, alias, is_favorite, last_seen, public_key, is_repeater, snr_db, rssi_dbm, latitude, longitude,
-                    out_path_len, out_path_hash_mode, out_path, scope_name, allowed_regions
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    out_path_len, out_path_hash_mode, out_path, scope_name, allowed_regions, is_room_server
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(node_id) DO UPDATE SET
                     alias = CASE WHEN excluded.alias != '' THEN excluded.alias ELSE contacts.alias END,
                     is_favorite = CASE WHEN excluded.is_favorite != 0 THEN excluded.is_favorite ELSE contacts.is_favorite END,
                     last_seen = COALESCE(NULLIF(excluded.last_seen, ''), contacts.last_seen),
                     public_key = COALESCE(NULLIF(excluded.public_key, ''), contacts.public_key),
                     is_repeater = CASE WHEN excluded.is_repeater != 0 THEN excluded.is_repeater ELSE contacts.is_repeater END,
+                    is_room_server = CASE WHEN excluded.is_room_server != 0 THEN excluded.is_room_server ELSE contacts.is_room_server END,
                     snr_db = CASE WHEN excluded.snr_db != 0.0 THEN excluded.snr_db ELSE contacts.snr_db END,
                     rssi_dbm = CASE WHEN excluded.rssi_dbm != -100.0 THEN excluded.rssi_dbm ELSE contacts.rssi_dbm END,
                     latitude = CASE WHEN excluded.latitude IS NOT NULL AND abs(excluded.latitude) >= 1.0 AND excluded.latitude BETWEEN -85.0 AND 85.0 AND NOT (abs(excluded.latitude) < 5.0 AND abs(excluded.longitude) < 5.0) THEN excluded.latitude ELSE contacts.latitude END,
@@ -1659,6 +1684,76 @@ class Storage:
             """, (int(is_repeater), raw_id, clean_id, clean_id))
             conn.commit()
             return updated
+
+    def set_contact_room_server_status(self, node_id: str, is_room_server: bool) -> bool:
+        """Explicitly sets or toggles a contact's is_room_server flag across contacts and neighbours."""
+        if not node_id:
+            return False
+        raw_id = (node_id or "").strip()
+        clean_id = raw_id.lstrip("!@").strip()
+        with self._get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                UPDATE contacts
+                SET is_room_server = ?
+                WHERE node_id = ? COLLATE NOCASE
+                   OR node_id = ? COLLATE NOCASE
+                   OR node_id = ('!' || ?) COLLATE NOCASE
+                   OR ('!' || node_id) = ? COLLATE NOCASE
+                   OR alias = ? COLLATE NOCASE
+                   OR alias = ? COLLATE NOCASE
+            """, (int(is_room_server), raw_id, clean_id, clean_id, raw_id, clean_id, raw_id))
+            updated = cur.rowcount > 0
+            cur.execute("""
+                UPDATE neighbours
+                SET is_room_server = ?
+                WHERE node_id = ? COLLATE NOCASE
+                   OR node_id = ? COLLATE NOCASE
+                   OR alias = ? COLLATE NOCASE
+            """, (int(is_room_server), raw_id, clean_id, clean_id))
+            conn.commit()
+            return updated
+
+    def get_room_servers(self) -> List[NodeContact]:
+        """Returns all discovered Room Servers ordered by alias."""
+        with self._get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT * FROM contacts
+                WHERE is_room_server = 1
+                   OR lower(alias) LIKE '%[room]%'
+                   OR lower(alias) LIKE '%[server]%'
+                   OR lower(alias) LIKE '%-bbs%'
+                   OR lower(alias) LIKE '%-room%'
+                ORDER BY alias ASC
+            """)
+            return [self._row_to_contact(r) for r in cur.fetchall()]
+
+    def set_room_password(self, node_id: str, password: str, auto_login: bool = True):
+        """Stores or updates the password for a room server."""
+        if not node_id:
+            return
+        clean_id = node_id.strip().lstrip("!@").lower()
+        with self._get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT OR REPLACE INTO room_credentials (node_id, password, last_login_ts, auto_login)
+                VALUES (?, ?, ?, ?)
+            """, (clean_id, password, datetime.now(timezone.utc).isoformat(), int(auto_login)))
+            conn.commit()
+
+    def get_room_password(self, node_id: str) -> Optional[str]:
+        """Retrieves the saved password for a room server, if any."""
+        if not node_id:
+            return None
+        clean_id = node_id.strip().lstrip("!@").lower()
+        with self._get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT password FROM room_credentials WHERE lower(node_id) = ? LIMIT 1", (clean_id,))
+            row = cur.fetchone()
+            if row and row[0]:
+                return row[0]
+            return None
 
     def get_contact(self, node_id: str) -> Optional[NodeContact]:
         """Lookup a contact by node_id, public key, alias, or prefix with strict precedence and no false substring shadowing."""
@@ -2473,12 +2568,12 @@ class Storage:
             cursor = conn.cursor()
             cursor.execute("""
                 INSERT OR REPLACE INTO neighbours (
-                    node_id, alias, snr_db, rssi_dbm, last_heard_ts, is_repeater, is_favorite, via_node_id, latitude, longitude
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    node_id, alias, snr_db, rssi_dbm, last_heard_ts, is_repeater, is_favorite, via_node_id, latitude, longitude, is_room_server
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 n.node_id, n.alias, n.snr_db, n.rssi_dbm, n.last_heard_ts,
                 int(n.is_repeater), int(n.is_favorite), n.via_node_id,
-                n.latitude, n.longitude
+                n.latitude, n.longitude, int(getattr(n, "is_room_server", False))
             ))
             conn.commit()
 
@@ -2486,6 +2581,8 @@ class Storage:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM neighbours ORDER BY snr_db DESC LIMIT ?", (limit,))
+            rows = cursor.fetchall()
+            keys = rows[0].keys() if rows and hasattr(rows[0], "keys") else []
             return [
                 NeighbourInfo(
                     node_id=r["node_id"],
@@ -2494,12 +2591,13 @@ class Storage:
                     rssi_dbm=r["rssi_dbm"] or -100.0,
                     last_heard_ts=r["last_heard_ts"] or "",
                     is_repeater=bool(r["is_repeater"]),
+                    is_room_server=bool(r["is_room_server"]) if ("is_room_server" in keys and r["is_room_server"] is not None) else False,
                     is_favorite=bool(r["is_favorite"]),
                     via_node_id=r["via_node_id"],
                     latitude=r["latitude"],
                     longitude=r["longitude"]
                 )
-                for r in cursor.fetchall()
+                for r in rows
             ]
 
     # --- Packet Path Watcher Operations ---

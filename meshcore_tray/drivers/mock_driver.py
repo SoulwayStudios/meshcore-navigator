@@ -146,10 +146,20 @@ class MockRadioDriver(BaseRadioDriver):
             NeighbourInfo(node_id="!9c21", alias="Bob-Node", snr_db=4.5, rssi_dbm=-88.0, is_repeater=False, is_favorite=False),
             NeighbourInfo(node_id="!10a4", alias="Charlie-Base", snr_db=-3.2, rssi_dbm=-108.0, is_repeater=False, is_favorite=False),
             NeighbourInfo(node_id="!ff01", alias="Hilltop-Repeater", snr_db=8.4, rssi_dbm=-82.0, is_repeater=True, is_favorite=True),
+            NeighbourInfo(node_id="!rm01", alias="North-BBS [Room]", snr_db=9.5, rssi_dbm=-82.0, is_repeater=False, is_room_server=True, is_favorite=False, latitude=54.662, longitude=-3.428),
         ]
         if self.storage:
             for n in neighbours:
                 self.storage.save_neighbour(n)
+            self.storage.save_contact(NodeContact(
+                node_id="!rm01",
+                alias="North-BBS [Room]",
+                is_room_server=True,
+                latitude=54.662,
+                longitude=-3.428,
+                snr_db=9.5,
+                rssi_dbm=-82.0
+            ))
         bus.emit(EventType.NEIGHBOURS_UPDATED, neighbours)
         return {"status": "ok", "neighbours": [n.to_dict() for n in neighbours]}
 
@@ -289,3 +299,85 @@ class MockRadioDriver(BaseRadioDriver):
         adv_type = "Flood-routed" if flood else "Zero-hop"
         logger.info(f"[MockRadioDriver] Broadcasted {adv_type} node advert")
         return True
+
+    def send_room_login(self, node_id: str, password: str) -> Dict[str, Any]:
+        """Simulates room server login in mock mode."""
+        if self.storage:
+            self.storage.set_room_password(node_id, password)
+            self.storage.set_contact_room_server_status(node_id, True)
+
+        msg_id = f"mock-room-login-{int(datetime.now().timestamp()*1000)}"
+        resp_msg = MessageEnvelope(
+            id=f"mock-room-res-{int(datetime.now().timestamp()*1000)}",
+            source_driver="mock_radio",
+            sender_id=node_id,
+            sender_name="North-BBS [Room]",
+            is_direct_message=True,
+            text="✅ Welcome to North-BBS Room Server!\nAuthenticated successfully. Type !help for commands or !read to catch up on latest mesh posts.",
+            metadata={"is_room_response": True, "snr": 9.5, "rssi": -82.0}
+        )
+        if self.storage:
+            self.storage.save_message(resp_msg)
+        bus.emit(EventType.MESSAGE_RECEIVED, resp_msg)
+        return {"status": "ok", "message_id": msg_id}
+
+    def send_room_logout(self, node_id: str) -> Dict[str, Any]:
+        """Simulates room server logout in mock mode."""
+        msg_id = f"mock-room-logout-{int(datetime.now().timestamp()*1000)}"
+        resp_msg = MessageEnvelope(
+            id=f"mock-room-res-{int(datetime.now().timestamp()*1000)}",
+            source_driver="mock_radio",
+            sender_id=node_id,
+            sender_name="North-BBS [Room]",
+            is_direct_message=True,
+            text="👋 Logged out from North-BBS Room Server. Goodbye!",
+            metadata={"is_room_response": True}
+        )
+        if self.storage:
+            self.storage.save_message(resp_msg)
+        bus.emit(EventType.MESSAGE_RECEIVED, resp_msg)
+        return {"status": "ok", "message_id": msg_id}
+
+    def send_room_command(self, node_id: str, command: str) -> Dict[str, Any]:
+        """Simulates room server command responses in mock mode."""
+        msg_id = f"mock-room-cmd-{int(datetime.now().timestamp()*1000)}"
+        cmd = command.strip().lower()
+        if cmd == "!help":
+            resp_text = (
+                "📖 North-BBS Room Server Commands:\n"
+                "  • !help   - Show this command reference\n"
+                "  • !info   - Room server stats & uptime\n"
+                "  • !status - System health & battery\n"
+                "  • !read   - Read latest 5 bulletin posts\n"
+                "  • !list   - List active chat channels in this room\n"
+                "  • Send any text to post to the public bulletin stream."
+            )
+        elif cmd == "!info":
+            resp_text = "🏢 North-BBS [Room] | Software: MeshCore RoomServer v1.4 | Max Users: 64 | Retention: 7 days"
+        elif cmd == "!status":
+            resp_text = "🔋 Power: Solar Float (13.8V) | Storage: 4.2MB / 16MB | Messages Stored: 142"
+        elif cmd == "!read":
+            resp_text = "📢 Latest Posts:\n1. [Alice] Weather station on Scafell Pike operational.\n2. [Bob] Gateway testing complete on 868.125MHz.\n3. [Sysop] BBS database backed up."
+        elif cmd == "!list":
+            resp_text = "📁 Active Rooms:\n  #general (Main discussion)\n  #alerts (Emergency traffic)\n  #tech (RF & antenna chatter)"
+        else:
+            resp_text = f"ACK: Room received command '{command}'."
+
+        resp_msg = MessageEnvelope(
+            id=f"mock-room-res-{int(datetime.now().timestamp()*1000)}",
+            source_driver="mock_radio",
+            sender_id=node_id,
+            sender_name="North-BBS [Room]",
+            is_direct_message=True,
+            text=resp_text,
+            metadata={"is_room_response": True, "snr": 9.5, "rssi": -82.0}
+        )
+        if self.storage:
+            self.storage.save_message(resp_msg)
+        bus.emit(EventType.MESSAGE_RECEIVED, resp_msg)
+        return {"status": "ok", "message_id": msg_id}
+
+    def send_room_message(self, node_id: str, text: str) -> Dict[str, Any]:
+        """Simulates sending a message to the room bulletin stream."""
+        return self.send_direct_message(node_id, text)
+

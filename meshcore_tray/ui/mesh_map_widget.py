@@ -47,7 +47,7 @@ else:
         pass
 
 from meshcore_tray.core.event_bus import bus, EventType
-from meshcore_tray.core.models import MessageEnvelope, NodeContact, PacketPathInfo, is_valid_coordinate, is_plausible_rf_coordinate
+from meshcore_tray.core.models import MessageEnvelope, NodeContact, PacketPathInfo, is_valid_coordinate, is_plausible_rf_coordinate, is_room_server_contact
 from meshcore_tray.core.tropo_service import TropoForecastService
 from meshcore_tray.core.adsb_service import ADSBService
 from meshcore_tray.core.thunderstorm_service import ThunderstormService
@@ -136,6 +136,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             --visualised-path-color: #FF00FF;
             --visualised-heading-color: #FF00FF;
             --orbital-repeater-color: #FFD335;
+            --room-server-color: #FF00FF;
+            --room-server-hover-color: #FF55FF;
+            --dot-size-room: 7px;
         }
 
         @keyframes pathPulse {
@@ -581,6 +584,16 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             box-shadow: 0 0 6px #38BDF8;
         }
 
+        /* Room server nodes: square rotated 45deg (diamond) with luminous magenta glow */
+        .node-dot-room {
+            width: var(--dot-size-room, 7px);
+            height: var(--dot-size-room, 7px);
+            border-radius: 0% !important;
+            transform: rotate(45deg);
+            background: var(--room-server-color, #FF00FF);
+            box-shadow: 0 0 8px var(--room-server-color, #FF00FF);
+        }
+
         /* Hover animations when mouse enters the 20px hitbox */
         .node-marker-wrap:hover .node-dot {
             transform: scale(3.0);
@@ -601,6 +614,11 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
         .node-marker-wrap:hover .node-dot-local {
             background: #7DD3FC;
             box-shadow: 0 0 10px #38BDF8;
+        }
+        .node-marker-wrap:hover .node-dot-room {
+            transform: rotate(45deg) scale(2.6) !important;
+            background: var(--room-server-hover-color, #FF55FF) !important;
+            box-shadow: 0 0 16px var(--room-server-hover-color, #FF55FF);
         }
 
         /* Tactical Radar Blip & Sender Badge */
@@ -2647,12 +2665,15 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             if (mapColors.companion) document.documentElement.style.setProperty('--companion-color', mapColors.companion);
             if (mapColors.companionHover) document.documentElement.style.setProperty('--companion-hover-color', mapColors.companionHover);
             if (mapColors.favorite) document.documentElement.style.setProperty('--favorite-color', mapColors.favorite);
+            if (mapColors.roomServer) document.documentElement.style.setProperty('--room-server-color', mapColors.roomServer);
+            if (mapColors.roomServerHover) document.documentElement.style.setProperty('--room-server-hover-color', mapColors.roomServerHover);
             if (mapColors.dotSize) {
                 var s = parseFloat(mapColors.dotSize);
                 document.documentElement.style.setProperty('--dot-size-repeater', (s * 1.0).toFixed(1) + 'px');
                 document.documentElement.style.setProperty('--dot-size-companion', (s * 0.85).toFixed(1) + 'px');
                 document.documentElement.style.setProperty('--dot-size-favorite', (s * 1.1).toFixed(1) + 'px');
                 document.documentElement.style.setProperty('--dot-size-local', (s * 1.25).toFixed(1) + 'px');
+                document.documentElement.style.setProperty('--dot-size-room', (s * 1.1).toFixed(1) + 'px');
             }
             if (mapColors.visualisedPath) {
                 document.documentElement.style.setProperty('--visualised-path-color', mapColors.visualisedPath);
@@ -2895,9 +2916,10 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
         function buildNodePopupContent(node) {
             var isLocal = !!node.is_local;
             var isRep = !!node.is_repeater;
+            var isRoom = !!node.is_room_server;
             var isFav = !!node.is_favorite;
             var favLabel = isFav ? 'Favorite ' : '';
-            var typeLabel = isLocal ? 'Local Companion' : (isRep ? favLabel + 'Repeater' : favLabel + 'Companion Node');
+            var typeLabel = isLocal ? 'Local Companion' : (isRoom ? 'Room Server' : (isRep ? favLabel + 'Repeater' : favLabel + 'Companion Node'));
             var starHtml = isFav ? '<span style="color: #FFD700;">★ </span>' : '';
             var safeAlias = escapeHtml(node.alias || node.node_id || 'Node');
             var safeNodeId = escapeHtml(node.node_id);
@@ -3045,8 +3067,11 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 }
             }
 
+            var iconPrefix = isLocal ? '👤 ' : (isRoom ? '🏢 ' : (isRep ? '📡 ' : '👤 '));
+            var actionBtnLabel = isRoom ? 'Open Room Server' : (isRep ? 'Open Repeater Console' : 'Direct Message');
+
             return '<div class="custom-popup">' +
-                '<div class="popup-title">' + starHtml + (isRep ? '📡 ' : '👤 ') + safeAlias + '</div>' +
+                '<div class="popup-title">' + starHtml + iconPrefix + safeAlias + '</div>' +
                 '<div class="popup-stat">ID: ' + safeNodeId + ' (' + typeLabel + ')</div>' +
                 '<div class="popup-stat">Last heard: ' + lastHeardStr + '</div>' +
                 '<div class="popup-stat">Routing: ' + pathStr + '</div>' +
@@ -3054,7 +3079,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 '<div class="popup-stat">Coords: ' + Number(node.lat).toFixed(4) + ', ' + Number(node.lon).toFixed(4) + '</div>' +
                 scopeInfoHtml +
                 dockedOrbitalsHtml +
-                '<button class="popup-btn" data-node-id="' + encodeURIComponent(node.node_id) + '" onclick="onNodeClicked(decodeURIComponent(this.dataset.nodeId))">' + (isRep ? 'Open Repeater Console' : 'Direct Message') + '</button>' +
+                '<button class="popup-btn" data-node-id="' + encodeURIComponent(node.node_id) + '" onclick="onNodeClicked(decodeURIComponent(this.dataset.nodeId))">' + actionBtnLabel + '</button>' +
                 '<div style="margin-top: 5px; display: flex; gap: 4px;">' +
                     '<button class="popup-btn" style="flex: 1; margin-top: 0; background-color: #1E293B; color: #38BDF8; border: 1px solid #38BDF8;" data-nid="' + encodeURIComponent(node.node_id) + '" data-alias="' + encodeURIComponent(node.alias || node.node_id || '') + '" data-lat="' + Number(node.lat) + '" data-lon="' + Number(node.lon) + '" onclick="onProfileNodeClicked(this)">🏔️ Path Profile</button>' +
                     '<button class="popup-btn" style="flex: 1; margin-top: 0; background-color: #064E3B; color: #34D399; border: 1px solid #10B981;" data-nid="' + encodeURIComponent(node.node_id) + '" data-alias="' + encodeURIComponent(node.alias || node.node_id || '') + '" data-lat="' + Number(node.lat) + '" data-lon="' + Number(node.lon) + '" onclick="onCalcViewshedClicked(this)">🟢 LOS Viewshed</button>' +
@@ -3074,11 +3099,14 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
 
                     var isLocal = !!node.is_local;
                     var isRep = !!node.is_repeater;
+                    var isRoom = !!node.is_room_server;
                     var isFav = !!node.is_favorite;
 
                     var dotClass = 'node-dot ';
                     if (isLocal) {
                         dotClass += 'node-dot-local';
+                    } else if (isRoom) {
+                        dotClass += 'node-dot-room';
                     } else if (isFav) {
                         dotClass += 'node-dot-favorite';
                         if (isRep) dotClass += ' node-dot-repeater';
@@ -8593,6 +8621,8 @@ class MeshMapWidget(QWidget):
                 "unknownPath": getattr(app_colors, "map_unknown_path_color", "#EF4444"),
                 "noGpsPath": getattr(app_colors, "map_no_gps_path_color", "#000000"),
                 "orbitalRepeater": getattr(app_colors, "map_orbital_repeater_color", "#FFD335"),
+                "roomServer": getattr(app_colors, "map_room_server_color", "#FF00FF"),
+                "roomServerHover": getattr(app_colors, "map_room_server_hover_color", "#FF55FF"),
                 "dotSize": getattr(app_colors, "map_dot_size", 6.4)
             }
             self.web_view.page().runJavaScript(f"setMapColors({json.dumps(theme_dict)});")
@@ -8775,11 +8805,11 @@ class MeshMapWidget(QWidget):
             and not (self.storage and self.storage.is_phantom_node(c.node_id, c.alias))
         ]
         if self.node_filter_mode == "CLIENTS":
-            contacts = [c for c in contacts if not c.is_repeater and "[rep]" not in (c.alias or "").lower() and "[room]" not in (c.alias or "").lower() and "[server]" not in (c.alias or "").lower()]
+            contacts = [c for c in contacts if not c.is_repeater and not getattr(c, "is_room_server", False) and not is_room_server_contact(c) and "[rep]" not in (c.alias or "").lower() and "[room]" not in (c.alias or "").lower() and "[server]" not in (c.alias or "").lower()]
         elif self.node_filter_mode == "REPEATERS" or self.show_repeaters_only:
             contacts = [c for c in contacts if c.is_repeater or "[rep]" in (c.alias or "").lower()]
         elif self.node_filter_mode == "ROOMS":
-            contacts = [c for c in contacts if "[room]" in (c.alias or "").lower() or "[server]" in (c.alias or "").lower()]
+            contacts = [c for c in contacts if getattr(c, "is_room_server", False) or is_room_server_contact(c)]
 
         nodes_data = []
         node_coords_map = {}
@@ -8836,6 +8866,7 @@ class MeshMapWidget(QWidget):
                 "node_id": str(c.node_id or ""),
                 "alias": str(c.alias or c.node_id or "Node"),
                 "is_repeater": bool(c.is_repeater),
+                "is_room_server": bool(getattr(c, "is_room_server", False) or is_room_server_contact(c)),
                 "is_favorite": is_fav,
                 "is_local": c.node_id == "local" or (self.config and c.node_id == self.config.meshcore.node_id.lstrip("!")),
                 "lat": float(c.latitude),
@@ -8852,7 +8883,11 @@ class MeshMapWidget(QWidget):
             })
 
         rep_count = sum(1 for c in contacts if c.is_repeater)
-        self.stats_badge.setText(f"{len(contacts)} Nodes • {rep_count} Repeaters")
+        room_count = sum(1 for c in contacts if getattr(c, "is_room_server", False) or is_room_server_contact(c))
+        if room_count > 0:
+            self.stats_badge.setText(f"{len(contacts)} Nodes • {rep_count} Repeaters • {room_count} Rooms")
+        else:
+            self.stats_badge.setText(f"{len(contacts)} Nodes • {rep_count} Repeaters")
 
         # Companion Orbitals data & badge counter
         docked_data = {}
