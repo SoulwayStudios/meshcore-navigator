@@ -7,6 +7,26 @@ and this project follows semantic versioning with automated build increments:
 - **Patch (+0.0.1)**: Routine bug fixes, UI adjustments, maintenance, and regular GitHub commits.
 - **Minor (+0.1.0)**: Substantial new features and architectural additions.
 
+## [0.6.0] - 2026-09-13
+
+### Added
+- **Asynchronous Startup Version Checker & GitHub Release Notifier**:
+  - Automatically queries GitHub repository releases (`SoulwayStudios/meshcore-navigator`) on startup via an asynchronous `QThread` with a 4-second timeout and 1-hour rate-limit caching.
+  - Interactive glassmorphic update prompt on the application splash screen:
+    - Displays release name and version badge (`🎉 Update Available: vX.Y.Z`).
+    - Automatically pauses splash screen auto-dismissal when an update is found, allowing users to choose their action.
+    - Direct **"📥 Download Update"** action button launching the default web browser to the release download page.
+    - **"Remind Later"** action button to smoothly dismiss and enter the application.
+  - Fallback notification banner displayed above the main view when the splash screen is disabled in settings.
+  - New **"🚀 Software Updates & Releases"** card in Settings → About tab with installed version display, a **"🔍 Check for Updates"** button for on-demand checks with live feedback, and a link to view all releases.
+  - Configurable startup check toggle under Settings → General / Startup (`check_updates_on_startup`).
+
+### Fixed & Hardened
+- **Leaflet Map Resize & Chromium Mojo IPC Serialization Hardening**:
+  - Resolved renderer thread lockups and multi-gigabyte memory exhaustion during window resizing/maximizing with heavy map layers (such as Tropospheric Ducting contours) active.
+  - Centralized all JavaScript evaluation through `MeshMapWidget.run_js()`, appending `void 0;` to all fire-and-forget calls to instruct Chromium's V8 engine to immediately discard return values and bypass cyclic `L.Map` Mojo IPC serialization.
+  - Preserved callbacks for callers that explicitly request return values.
+
 ## [0.5.1] - 2026-09-13
 
 ### Fixed & Hardened

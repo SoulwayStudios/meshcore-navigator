@@ -206,6 +206,7 @@ class AppConfig:
     window_width: int = 1380
     window_height: int = 800
     show_splash_screen: bool = True
+    check_updates_on_startup: bool = True
     show_chat_avatars: bool = True
     user_avatar_style: str = "droid"  # "droid" (Cyberpunk Radio Droid) or "letters" (Decorated 2-letter Initials)
 
@@ -382,6 +383,8 @@ class AppConfig:
             config.last_active_channel = str(data["last_active_channel"])
         if "show_splash_screen" in data:
             config.show_splash_screen = bool(data["show_splash_screen"])
+        if "check_updates_on_startup" in data:
+            config.check_updates_on_startup = bool(data["check_updates_on_startup"])
         if "show_chat_avatars" in data:
             config.show_chat_avatars = bool(data["show_chat_avatars"])
         if "user_avatar_style" in data:

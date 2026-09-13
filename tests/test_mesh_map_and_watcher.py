@@ -834,7 +834,13 @@ def test_path_modes_overheard_resolution_and_styling(qapp, tmp_path):
         set_nodes_call = calls[-1]
 
         # Extract JSON array from setNodes(...)
-        json_str = set_nodes_call[len("setNodes("):-2]
+        raw_payload = set_nodes_call[len("setNodes("):]
+        if raw_payload.endswith("); void 0;"):
+            json_str = raw_payload[:-len("); void 0;")]
+        elif raw_payload.endswith(");"):
+            json_str = raw_payload[:-2]
+        else:
+            json_str = raw_payload.rsplit(")", 1)[0]
         nodes_list = json.loads(json_str)
 
         node_map = {n["node_id"]: n for n in nodes_list}
@@ -1501,6 +1507,60 @@ def test_logging_system_and_map_watchdog(tmp_path, monkeypatch):
     widget._check_renderer_watchdog()
     assert len(recovery_forced) == 1
     assert widget._recovery_attempts == 2
+
+
+def test_run_js_void_discard_hardening(qapp, tmp_path):
+    """Verifies that run_js discards return values with void 0; to prevent V8 IPC serialization hangs."""
+    from unittest.mock import MagicMock
+    from meshcore_tray.ui.mesh_map_widget import MeshMapWidget
+    from meshcore_tray.storage import Storage
+    from meshcore_tray.config import AppConfig
+
+    storage = Storage(tmp_path / "run_js_test.db")
+    config = AppConfig()
+    widget = MeshMapWidget(storage=storage, config=config)
+
+    mock_page = MagicMock()
+    mock_view = MagicMock()
+    mock_view.page.return_value = mock_page
+    widget.web_view = mock_view
+
+    # 1. When _page_ready is False, run_js safely no-ops
+    widget._page_ready = False
+    widget.run_js("map.invalidateSize(false);")
+    assert not mock_page.runJavaScript.called
+
+    # 2. When _page_ready is True and callback is None, appends void 0;
+    widget._page_ready = True
+    widget.run_js("map.invalidateSize(false);")
+    assert mock_page.runJavaScript.called
+    assert mock_page.runJavaScript.call_args[0][0] == "map.invalidateSize(false); void 0;"
+
+    # 3. Without trailing semicolon, correctly appends ; void 0;
+    mock_page.reset_mock()
+    widget.run_js("if (typeof map !== 'undefined' && map) map.invalidateSize(false)")
+    assert mock_page.runJavaScript.call_args[0][0] == "if (typeof map !== 'undefined' && map) map.invalidateSize(false); void 0;"
+
+    # 4. If script already has void 0;, doesn't duplicate it
+    mock_page.reset_mock()
+    widget.run_js("map.invalidateSize(false); void 0;")
+    assert mock_page.runJavaScript.call_args[0][0] == "map.invalidateSize(false); void 0;"
+
+    # 5. When callback is provided, callback is preserved and void 0 is omitted
+    mock_page.reset_mock()
+    cb = lambda res: None
+    widget.run_js("1 + 1;", callback=cb)
+    assert mock_page.runJavaScript.call_args[0][0] == "1 + 1;"
+    assert mock_page.runJavaScript.call_args[0][1] == cb
+
+    # 6. Verify debounced map resize runs through run_js and outputs void 0;
+    mock_page.reset_mock()
+    widget._on_debounced_map_resize()
+    assert mock_page.runJavaScript.called
+    resize_call = mock_page.runJavaScript.call_args[0][0]
+    assert "map.invalidateSize(false)" in resize_call
+    assert resize_call.endswith("void 0;")
+
 
 
 

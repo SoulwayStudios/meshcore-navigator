@@ -59,7 +59,13 @@ def test_repeater_neighbors_dict_and_single_point():
         assert "DD2DF7A117C6" in last_js
 
         # Parse the JSON payload passed to drawRepeaterNeighbors
-        js_arg = last_js[len("drawRepeaterNeighbors("):-2]
+        raw_arg = last_js[len("drawRepeaterNeighbors("):]
+        if raw_arg.endswith("); void 0;"):
+            js_arg = raw_arg[:-len("); void 0;")]
+        elif raw_arg.endswith(");"):
+            js_arg = raw_arg[:-2]
+        else:
+            js_arg = raw_arg.rsplit(")", 1)[0]
         payload = json.loads(js_arg)
         assert payload["repeater"]["coord"] == [54.6588, -3.4344]
         assert payload["repeater"]["alias"] == 'Repeater "North" <Beta>'

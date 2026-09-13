@@ -1,6 +1,7 @@
 """Splash Screen and Loading Mask Overlay for MESHCORE NAVIGATOR."""
 
 import logging
+from typing import Optional
 from PyQt6.QtCore import Qt, QTimer, QUrl, QPropertyAnimation, QEasingCurve, pyqtSignal
 from PyQt6.QtGui import QColor, QDesktopServices
 from PyQt6.QtWidgets import (
@@ -9,6 +10,7 @@ from PyQt6.QtWidgets import (
 )
 
 from meshcore_tray import __version__, __app_name__, __author__, __coffee_url__
+from meshcore_tray.core.version_checker import VersionChecker, ReleaseInfo
 
 logger = logging.getLogger("meshcore_tray.splash")
 
@@ -27,6 +29,8 @@ class SplashOverlay(QWidget):
         self._map_is_ready = False
         self._min_timer_done = False
         self._is_dismissing = False
+        self._update_available = False
+        self._pending_release_info: Optional[ReleaseInfo] = None
 
         self.setObjectName("splashOverlay")
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
@@ -34,6 +38,7 @@ class SplashOverlay(QWidget):
 
         self._setup_ui()
         self._setup_timing()
+        self._setup_version_checker()
 
     def _setup_ui(self):
         # Full overlay dark glass backdrop
@@ -120,6 +125,84 @@ class SplashOverlay(QWidget):
 
         card_layout.addSpacing(4)
 
+        # Update Notification Card (Hidden until a newer release is detected)
+        self.update_card = QFrame()
+        self.update_card.setObjectName("splashUpdateCard")
+        self.update_card.setStyleSheet("""
+            QFrame#splashUpdateCard {
+                background-color: rgba(12, 74, 110, 0.40);
+                border: 1.5px solid #38BDF8;
+                border-radius: 12px;
+            }
+            QLabel {
+                background: transparent;
+                border: none;
+            }
+        """)
+        update_layout = QVBoxLayout(self.update_card)
+        update_layout.setContentsMargins(14, 10, 14, 10)
+        update_layout.setSpacing(6)
+
+        self.update_title = QLabel()
+        self.update_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.update_title.setStyleSheet("font-size: 13px; font-weight: 800; color: #38BDF8;")
+        update_layout.addWidget(self.update_title)
+
+        self.update_sub = QLabel()
+        self.update_sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.update_sub.setWordWrap(True)
+        self.update_sub.setStyleSheet("font-size: 11px; color: #E2E8F0;")
+        update_layout.addWidget(self.update_sub)
+
+        update_btn_row = QHBoxLayout()
+        update_btn_row.setSpacing(10)
+        update_btn_row.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.update_btn = QPushButton("📥 Download Update")
+        self.update_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.update_btn.setFixedHeight(34)
+        self.update_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #0284C7;
+                color: #FFFFFF;
+                border: 1px solid #38BDF8;
+                border-radius: 6px;
+                padding: 6px 18px;
+                font-size: 12px;
+                font-weight: 700;
+            }
+            QPushButton:hover {
+                background-color: #0369A1;
+                border-color: #7DD3FC;
+            }
+        """)
+        update_btn_row.addWidget(self.update_btn)
+
+        self.update_dismiss_btn = QPushButton("Remind Later")
+        self.update_dismiss_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.update_dismiss_btn.setFixedHeight(34)
+        self.update_dismiss_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #334155;
+                color: #CBD5E1;
+                border: 1px solid #475569;
+                border-radius: 6px;
+                padding: 6px 14px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #475569;
+                color: #FFFFFF;
+            }
+        """)
+        self.update_dismiss_btn.clicked.connect(self.dismiss)
+        update_btn_row.addWidget(self.update_dismiss_btn)
+
+        update_layout.addLayout(update_btn_row)
+        self.update_card.setVisible(False)
+        card_layout.addWidget(self.update_card)
+
         # Buy Me a Coffee Action Button
         coffee_btn = QPushButton("☕ Buy Me a Coffee")
         coffee_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -186,6 +269,40 @@ class SplashOverlay(QWidget):
         backdrop_layout.addWidget(self.card)
         overlay_layout.addWidget(self.backdrop)
 
+    def _setup_version_checker(self):
+        if getattr(self.config, "check_updates_on_startup", True):
+            self._version_checker = VersionChecker.get_instance()
+            self._version_checker.check_finished.connect(self._on_version_check_finished)
+            self._version_checker.check_for_updates()
+
+    def _on_version_check_finished(self, is_newer: bool, info: Optional[ReleaseInfo], error: str):
+        if self._is_dismissing:
+            return
+
+        if is_newer and info:
+            self._update_available = True
+            self._pending_release_info = info
+            if hasattr(self, "_fallback_timer") and self._fallback_timer.isActive():
+                self._fallback_timer.stop()
+
+            self.update_title.setText(f"🎉 <b>Update Available: v{info.version}</b>")
+            sub_text = info.name if (info.name and info.name != f"v{info.version}") else "A new release of MeshCore Navigator is available on GitHub."
+            self.update_sub.setText(sub_text)
+            self.update_btn.setText(f"📥 Download v{info.version}")
+            try:
+                self.update_btn.clicked.disconnect()
+            except Exception:
+                pass
+            self.update_btn.clicked.connect(lambda: (
+                QDesktopServices.openUrl(QUrl(info.html_url)),
+                self.dismiss()
+            ))
+            self.update_card.setVisible(True)
+            self.status_lbl.setText("🚀 New release ready for download")
+        elif not error:
+            if not self._map_is_ready:
+                self.status_lbl.setText(f"✓ Version v{__version__} is up to date")
+
     def _setup_timing(self):
         # Ensure a minimum comfortable display time (1.8s) so splash doesn't jarringly flicker
         min_display_ms = 1800
@@ -198,19 +315,24 @@ class SplashOverlay(QWidget):
         if not self.first_run:
             self._fallback_timer = QTimer(self)
             self._fallback_timer.setSingleShot(True)
-            self._fallback_timer.timeout.connect(self.dismiss)
+            self._fallback_timer.timeout.connect(self._on_fallback_timeout)
             self._fallback_timer.start(4500)
+
+    def _on_fallback_timeout(self):
+        if not self._update_available:
+            self.dismiss()
 
     def on_map_ready(self):
         """Called when MeshMapWidget signals that Leaflet has finished loading."""
         self._map_is_ready = True
-        self.status_lbl.setText("✓ Mesh Map Ready")
-        if not self.first_run and self._min_timer_done:
-            self.dismiss()
+        if not self._update_available:
+            self.status_lbl.setText("✓ Mesh Map Ready")
+            if not self.first_run and self._min_timer_done:
+                self.dismiss()
 
     def _on_min_timer_done(self):
         self._min_timer_done = True
-        if not self.first_run and self._map_is_ready:
+        if not self.first_run and self._map_is_ready and not self._update_available:
             self.dismiss()
 
     def _on_ok_clicked(self):
@@ -228,6 +350,12 @@ class SplashOverlay(QWidget):
         if self._is_dismissing:
             return
         self._is_dismissing = True
+
+        if hasattr(self, "_version_checker"):
+            try:
+                self._version_checker.check_finished.disconnect(self._on_version_check_finished)
+            except Exception:
+                pass
 
         if immediate:
             self._on_fade_finished()

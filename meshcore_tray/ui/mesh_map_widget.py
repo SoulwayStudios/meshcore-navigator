@@ -5,7 +5,7 @@ import html
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from meshcore_tray.config import AppConfig
 
@@ -7257,6 +7257,34 @@ class MeshMapWidget(QWidget):
                 self.los_controls.move(10, self.floating_controls.height() + 16)
             self.los_controls.raise_()
 
+    def run_js(self, script: str, callback: Optional[Callable] = None):
+        """Safely executes JavaScript in the WebEngine view if ready.
+
+        When callback is None, ensures the script terminates with 'void 0;'
+        so that Chromium's V8 engine evaluates to 'undefined' and skips
+        recursively serializing complex or circular JavaScript objects
+        (such as Leaflet L.Map instances) across Mojo IPC into Python.
+        """
+        if not (WEBENGINE_AVAILABLE and hasattr(self, "web_view") and getattr(self, "_page_ready", False)):
+            return
+        if not hasattr(self.web_view, "page"):
+            return
+        page = self.web_view.page()
+        if not page:
+            return
+        try:
+            if callback is None:
+                trimmed = script.strip()
+                if not trimmed.endswith(";"):
+                    trimmed += ";"
+                if not trimmed.endswith("void 0;"):
+                    trimmed += " void 0;"
+                page.runJavaScript(trimmed)
+            else:
+                page.runJavaScript(script, callback)
+        except Exception as e:
+            logger.warning(f"Error executing run_js: {e}")
+
     def moveEvent(self, event):
         super().moveEvent(event)
         self._connect_screen_listener()
@@ -7266,8 +7294,7 @@ class MeshMapWidget(QWidget):
         super().showEvent(event)
         self._connect_screen_listener()
         self._start_renderer_watchdog()
-        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and getattr(self, "_page_ready", False):
-            self.web_view.page().runJavaScript("if (typeof map !== 'undefined') map.invalidateSize(false);")
+        self.run_js("if (typeof map !== 'undefined') map.invalidateSize(false);")
 
     def _connect_screen_listener(self):
         try:
@@ -7299,8 +7326,7 @@ class MeshMapWidget(QWidget):
 
     def _on_debounced_map_resize(self):
         self._geometry_in_motion = False
-        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and getattr(self, "_page_ready", False):
-            self.web_view.page().runJavaScript("if (typeof map !== 'undefined' && map) map.invalidateSize(false);")
+        self.run_js("if (typeof map !== 'undefined' && map) map.invalidateSize(false);")
         if getattr(self, "_initial_loading_active", False):
             if hasattr(self, "_stagger_timer") and not self._stagger_timer.isActive():
                 self._stagger_timer.start(100)
@@ -7321,14 +7347,13 @@ class MeshMapWidget(QWidget):
 
         if self._stagger_stage == 2:
             # Stage 2 complete: Viewport geometry is now settled
-            if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
-                if self.config and hasattr(self.config.meshcore, "map_center_lat") and self.config.meshcore.map_center_lat is not None and self.config.meshcore.map_center_lon is not None:
-                    z = self.config.meshcore.map_zoom or 8
-                    lon = ((float(self.config.meshcore.map_center_lon) + 180.0) % 360.0 + 360.0) % 360.0 - 180.0
-                    lat = max(-85.0, min(85.0, float(self.config.meshcore.map_center_lat)))
-                    self.web_view.page().runJavaScript(f"map.setView([{lat}, {lon}], {z}); window._initialViewSet = true; map.invalidateSize(false);")
-                else:
-                    self.web_view.page().runJavaScript("if (typeof map !== 'undefined' && map) map.invalidateSize(false);")
+            if self.config and hasattr(self.config.meshcore, "map_center_lat") and self.config.meshcore.map_center_lat is not None and self.config.meshcore.map_center_lon is not None:
+                z = self.config.meshcore.map_zoom or 8
+                lon = ((float(self.config.meshcore.map_center_lon) + 180.0) % 360.0 + 360.0) % 360.0 - 180.0
+                lat = max(-85.0, min(85.0, float(self.config.meshcore.map_center_lat)))
+                self.run_js(f"map.setView([{lat}, {lon}], {z}); window._initialViewSet = true; map.invalidateSize(false);")
+            else:
+                self.run_js("if (typeof map !== 'undefined' && map) map.invalidateSize(false);")
 
             fading = getattr(self.config.meshcore, "node_freshness_fading", True) if self.config else True
             self.set_freshness_fading(fading)
@@ -7580,9 +7605,8 @@ class MeshMapWidget(QWidget):
             self.btn_path_modes.setChecked(show_pm)
             self.btn_path_modes.setStyleSheet(self._btn_style(active=show_pm))
             self.btn_path_modes.blockSignals(False)
-            if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
-                pm_str = "true" if show_pm else "false"
-                self.web_view.page().runJavaScript(f"setPathModesVisible({pm_str});")
+            pm_str = "true" if show_pm else "false"
+            self.run_js(f"setPathModesVisible({pm_str});")
         if hasattr(self, "btn_orbitals"):
             show_orb = getattr(cfg.meshcore, "map_show_companion_orbitals", False)
             self.btn_orbitals.blockSignals(True)
@@ -7626,15 +7650,14 @@ class MeshMapWidget(QWidget):
 
         base_layer = getattr(self.config, "map_base_layer", "canvas") if self.config else "canvas"
         if base_layer == "topo":
-            self.web_view.page().runJavaScript("if (window.setBaseMapLayer) window.setBaseMapLayer('topo');")
+            self.run_js("if (window.setBaseMapLayer) window.setBaseMapLayer('topo');")
 
         if getattr(self, "_pending_neighbors_payload", None):
             try:
                 p = self._pending_neighbors_payload
                 self._pending_neighbors_payload = None
                 js_payload = json.dumps(p)
-                if hasattr(self, "web_view") and hasattr(self.web_view, "page"):
-                    self.web_view.page().runJavaScript(f"drawRepeaterNeighbors({js_payload});")
+                self.run_js(f"drawRepeaterNeighbors({js_payload});")
             except Exception as e:
                 logger.warning(f"Error drawing pending repeater neighbors on map load: {e}")
 
@@ -7665,9 +7688,8 @@ class MeshMapWidget(QWidget):
                 self.config.save()
             except Exception:
                 pass
-        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
-            pm_str = "true" if visible else "false"
-            self.web_view.page().runJavaScript(f"setPathModesVisible({pm_str});")
+        pm_str = "true" if visible else "false"
+        self.run_js(f"setPathModesVisible({pm_str});")
 
     def _on_orbitals_toggle(self):
         visible = self.btn_orbitals.isChecked()
@@ -7679,9 +7701,8 @@ class MeshMapWidget(QWidget):
             except Exception:
                 pass
         docked_data = self.storage.get_docked_companions() if (self.storage and visible) else {}
-        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
-            orb_str = "true" if visible else "false"
-            self.web_view.page().runJavaScript(f"setCompanionOrbitalsVisible({orb_str}, {json.dumps(docked_data)});")
+        orb_str = "true" if visible else "false"
+        self.run_js(f"setCompanionOrbitalsVisible({orb_str}, {json.dumps(docked_data)});")
         self.refresh_map_data()
 
     def _on_scopes_toggle(self):
@@ -7706,9 +7727,9 @@ class MeshMapWidget(QWidget):
                 logger.error(f"Error fetching repeaters by scope: {e}")
                 scope_data = {}
             js_data = json.dumps(scope_data)
-            self.web_view.page().runJavaScript(f"setScopeOverlaysVisible(true, {js_data});")
+            self.run_js(f"setScopeOverlaysVisible(true, {js_data});")
         else:
-            self.web_view.page().runJavaScript("setScopeOverlaysVisible(false, {});")
+            self.run_js("setScopeOverlaysVisible(false, {});")
 
     def _on_node_scope_changed(self, node_id: str, scope_name: str):
         """Called from Leaflet when operator changes or removes/excludes a repeater from scope."""
@@ -7727,8 +7748,7 @@ class MeshMapWidget(QWidget):
             self.tropo_service.fetch_forecast(offset_hours=0)
         else:
             self.btn_tropo.setText("📡 Tropo")
-            if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
-                self.web_view.page().runJavaScript("clearTropoLayer();")
+            self.run_js("clearTropoLayer();")
 
     def _on_bridge_tropo_stepped(self, delta_hours: int):
         self.btn_tropo.setText("📡 Tropo (fetching...)")
@@ -7746,9 +7766,8 @@ class MeshMapWidget(QWidget):
         self.btn_tropo.setStyleSheet(self._btn_style(active=True))
         if hasattr(self, "watcher_status"):
             self.watcher_status.setText(f"📡 <b>Tropo:</b> Loaded {display_label} ({filename})")
-        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
-            payload = json.dumps({"grid": grid_dict, "filename": filename, "label": display_label})
-            self.web_view.page().runJavaScript(f"window.onTropoDataReady({payload});")
+        payload = json.dumps({"grid": grid_dict, "filename": filename, "label": display_label})
+        self.run_js(f"window.onTropoDataReady({payload});")
 
     def _on_tropo_forecast_error(self, err_msg: str):
         self.btn_tropo.setText("📡 Tropo")
@@ -7756,8 +7775,7 @@ class MeshMapWidget(QWidget):
         self.btn_tropo.setStyleSheet(self._btn_style(active=False))
         if hasattr(self, "watcher_status"):
             self.watcher_status.setText(f"⚠️ <b>Tropo Error:</b> {err_msg}")
-        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
-            self.web_view.page().runJavaScript("clearTropoLayer();")
+        self.run_js("clearTropoLayer();")
 
     def _on_adsb_toggle(self, checked: Optional[bool] = None):
         if checked is None:
@@ -7798,9 +7816,8 @@ class MeshMapWidget(QWidget):
                 self.adsb_service.set_target_from_local_or_default(local_lat, local_lon, alias=local_alias)
 
         self.adsb_service.set_enabled(self.show_adsb)
-        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
-            vis_str = "true" if self.show_adsb else "false"
-            self.web_view.page().runJavaScript(f"setAdsbVisible({vis_str});")
+        vis_str = "true" if self.show_adsb else "false"
+        self.run_js(f"setAdsbVisible({vis_str});")
 
     def set_adsb_target(self, node_id: str, alias: str, lat: float, lon: float, radius_nm: int = 50):
         """Sets the center point for ADS-B queries to a specific node."""
@@ -7812,8 +7829,7 @@ class MeshMapWidget(QWidget):
                 self.config.save()
             except Exception:
                 pass
-        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
-            self.web_view.page().runJavaScript("if (window.clearAdsbForRetarget) window.clearAdsbForRetarget();")
+        self.run_js("if (window.clearAdsbForRetarget) window.clearAdsbForRetarget();")
         self.adsb_service.set_target(node_id, alias, lat, lon, radius_nm)
         if not self.show_adsb:
             self.set_adsb(True)
@@ -7849,9 +7865,8 @@ class MeshMapWidget(QWidget):
 
     def _on_adsb_photo_received(self, hex_code: str, photo_info: dict):
         """Delivers photo metadata back to Leaflet map tooltip."""
-        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
-            info_json = json.dumps(photo_info or {})
-            self.web_view.page().runJavaScript(f"if (window.onAircraftPhotoReady) window.onAircraftPhotoReady('{hex_code}', {info_json});")
+        info_json = json.dumps(photo_info or {})
+        self.run_js(f"if (window.onAircraftPhotoReady) window.onAircraftPhotoReady('{hex_code}', {info_json});")
 
     def _on_bridge_reset_adsb_target(self):
         """Reset ADS-B target back to local node."""
@@ -7870,24 +7885,19 @@ class MeshMapWidget(QWidget):
             self.adsb_service.refresh()
 
     def _on_adsb_flights_updated(self, payload: dict):
-        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
-            payload_json = json.dumps(payload)
-            self.web_view.page().runJavaScript(f"onAdsbDataReady({payload_json});")
+        self.run_js(f"onAdsbDataReady({json.dumps(payload)});")
 
     def center_map_at(self, lat: float, lon: float):
         """Smoothly pans the map to center at the specified coordinates."""
-        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
-            self.web_view.page().runJavaScript(f"map.panTo([{lat}, {lon}]);")
+        self.run_js(f"map.panTo([{lat}, {lon}]);")
 
     def zoom_in_at(self, lat: float, lon: float):
         """Pans and zooms in one level at the specified coordinates."""
-        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
-            self.web_view.page().runJavaScript(f"map.setView([{lat}, {lon}], Math.min(map.getMaxZoom(), map.getZoom() + 1));")
+        self.run_js(f"map.setView([{lat}, {lon}], Math.min(map.getMaxZoom(), map.getZoom() + 1));")
 
     def zoom_out(self):
         """Zooms out one level."""
-        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
-            self.web_view.page().runJavaScript("map.setZoom(Math.max(map.getMinZoom(), map.getZoom() - 1));")
+        self.run_js("map.setZoom(Math.max(map.getMinZoom(), map.getZoom() - 1));")
 
     def _context_monitor_adsb(self, lat: float, lon: float, qth: str):
         """Sets the ADS-B radar monitoring center to the clicked coordinate."""
@@ -7915,8 +7925,7 @@ class MeshMapWidget(QWidget):
     def _context_drop_temporary_pin(self, lat: float, lon: float, qth: str):
         """Drops a visual waypoint pin marker on the map."""
         label = f"Pin {qth}"
-        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
-            self.web_view.page().runJavaScript(f"if (window.dropTemporaryPin) window.dropTemporaryPin({lat}, {lon}, '{label}');")
+        self.run_js(f"if (window.dropTemporaryPin) window.dropTemporaryPin({lat}, {lon}, '{label}');")
         self._notify_user(f"📌 Dropped waypoint pin at {lat:.4f}, {lon:.4f} ({qth})")
 
     def _context_clear_traces_and_pins(self):
@@ -7928,8 +7937,7 @@ class MeshMapWidget(QWidget):
             self.btn_toggle_los.setChecked(False)
         if hasattr(self, "btn_profile_path"):
             self.btn_profile_path.setChecked(False)
-        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
-            self.web_view.page().runJavaScript("if (window.clearTemporaryPin) window.clearTemporaryPin(); if (window.clearViewshedOverlay) window.clearViewshedOverlay(); if (window.clearP2PLine) window.clearP2PLine();")
+        self.run_js("if (window.clearTemporaryPin) window.clearTemporaryPin(); if (window.clearViewshedOverlay) window.clearViewshedOverlay(); if (window.clearP2PLine) window.clearP2PLine();")
         if hasattr(self, "elevation_profile_dock"):
             self.elevation_profile_dock.hide()
         self._notify_user("🧹 Cleared visualised routes, repeater neighbors, and waypoint pins")
@@ -7969,14 +7977,6 @@ class MeshMapWidget(QWidget):
                 p.statusBar().showMessage(text, 4000)
         except Exception:
             pass
-
-    def run_js(self, script: str):
-        """Safely executes JavaScript in the WebEngine view if ready."""
-        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
-            try:
-                self.web_view.page().runJavaScript(script)
-            except Exception as e:
-                logger.warning(f"Error executing run_js: {e}")
 
     def _get_active_observer_coords(self) -> tuple[float, float, str]:
         """Resolves observer coordinates for viewshed / path profiling."""
@@ -8417,10 +8417,8 @@ class MeshMapWidget(QWidget):
             else:
                 self.watcher_status.setText("⚡ <b>Watcher:</b> Listening for live RF packet paths...")
 
-        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
-            act_str = "true" if self.activity_heatmap_active else "false"
-            data_json = json.dumps(data)
-            self.web_view.page().runJavaScript(f"setActivityHeatmap({act_str}, {self.activity_timeframe_hours}, {data_json});")
+        act_str = "true" if self.activity_heatmap_active else "false"
+        self.run_js(f"setActivityHeatmap({act_str}, {self.activity_timeframe_hours}, {json.dumps(data)});")
 
     def _on_bridge_activity_timeframe_changed(self, hours: int):
         self.set_activity_heatmap(True, timeframe_hours=hours)
@@ -8447,15 +8445,13 @@ class MeshMapWidget(QWidget):
         if hasattr(self, "watcher_status") and self.show_thunderstorm:
             self.watcher_status.setText("🌩️ <b>Thunderstorms:</b> Live RainViewer radar & Blitzortung lightning active")
 
-        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
-            vis_str = "true" if self.show_thunderstorm else "false"
-            meta_json = json.dumps(self.thunderstorm_service.latest_radar or {})
-            self.web_view.page().runJavaScript(f"setThunderstormVisible({vis_str}, {meta_json});")
+        vis_str = "true" if self.show_thunderstorm else "false"
+        meta_json = json.dumps(self.thunderstorm_service.latest_radar or {})
+        self.run_js(f"setThunderstormVisible({vis_str}, {meta_json});")
 
     def _on_thunderstorm_radar_updated(self, radar_meta: dict):
-        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready and self.show_thunderstorm:
-            meta_json = json.dumps(radar_meta)
-            self.web_view.page().runJavaScript(f"updateThunderstormRadar({meta_json});")
+        if self.show_thunderstorm:
+            self.run_js(f"updateThunderstormRadar({json.dumps(radar_meta)});")
 
     def _on_bridge_thunderstorm_toggled(self, enabled: bool):
         self.set_thunderstorm(enabled)
@@ -8483,8 +8479,7 @@ class MeshMapWidget(QWidget):
             self.space_weather_service.start_polling(interval_min=poll_int)
         else:
             self.space_weather_service.stop_polling()
-            if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
-                self.web_view.page().runJavaScript("clearSpaceWeatherLayer();")
+            self.run_js("clearSpaceWeatherLayer();")
 
     def _on_space_weather_updated(self, payload: dict):
         if not getattr(self, "show_space_weather", False):
@@ -8493,9 +8488,7 @@ class MeshMapWidget(QWidget):
         kp_status = payload.get("kp_status", "")
         if hasattr(self, "watcher_status"):
             self.watcher_status.setText(f"🌌 <b>Space Weather:</b> Kp {kp:.1f} ({kp_status})")
-        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
-            payload_json = json.dumps(payload)
-            self.web_view.page().runJavaScript(f"window.onSpaceWeatherReady({payload_json});")
+        self.run_js(f"window.onSpaceWeatherReady({json.dumps(payload)});")
 
     def _on_space_weather_loading(self, msg: str):
         if getattr(self, "show_space_weather", False) and hasattr(self, "watcher_status"):
@@ -8527,19 +8520,17 @@ class MeshMapWidget(QWidget):
         if hasattr(self, "watcher_status"):
             self.watcher_status.setText(f"[{t_str}] 🔍 <b>Previewing:</b> {path.sender_name or path.sender_id} ➔ {hops_str}")
 
-        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
-            js_coords = json.dumps(route_coords)
-            meta = {
-                "sender": path.sender_name or path.sender_id,
-                "hops": path.hop_nodes or [],
-                "route_type": path.route_type or "FLOOD"
-            }
-            self.web_view.page().runJavaScript(f"previewPacketPath({js_coords}, {json.dumps(meta)});")
+        js_coords = json.dumps(route_coords)
+        meta = {
+            "sender": path.sender_name or path.sender_id,
+            "hops": path.hop_nodes or [],
+            "route_type": path.route_type or "FLOOD"
+        }
+        self.run_js(f"previewPacketPath({js_coords}, {json.dumps(meta)});")
 
     def clear_preview_packet_path(self):
         """Clears the temporary on-hover path preview."""
-        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
-            self.web_view.page().runJavaScript("clearPreviewPacketPath();")
+        self.run_js("clearPreviewPacketPath();")
         if hasattr(self, "watcher_status") and not self.activity_heatmap_active and not self.show_thunderstorm:
             self.watcher_status.setText("⚡ <b>Watcher:</b> Listening for live RF packet paths...")
 
@@ -8549,9 +8540,8 @@ class MeshMapWidget(QWidget):
             self.btn_age_fade.blockSignals(True)
             self.btn_age_fade.setChecked(bool(enabled))
             self.btn_age_fade.blockSignals(False)
-        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
-            fading_str = "true" if enabled else "false"
-            self.web_view.page().runJavaScript(f"setFreshnessFading({fading_str});")
+        fading_str = "true" if enabled else "false"
+        self.run_js(f"setFreshnessFading({fading_str});")
 
     def _on_floating_age_fade_clicked(self):
         enabled = self.btn_age_fade.isChecked()
@@ -8698,7 +8688,7 @@ class MeshMapWidget(QWidget):
                 "roomServerHover": getattr(app_colors, "map_room_server_hover_color", "#FF55FF"),
                 "dotSize": getattr(app_colors, "map_dot_size", 6.4)
             }
-            self.web_view.page().runJavaScript(f"setMapColors({json.dumps(theme_dict)});")
+            self.run_js(f"setMapColors({json.dumps(theme_dict)});")
 
             # Sync ADS-B color mode and customized color thresholds
             adsb_colors = {
@@ -8717,7 +8707,7 @@ class MeshMapWidget(QWidget):
                 "dist_far": getattr(app_colors, "adsb_dist_far", "#00FF00"),
             }
             mode = getattr(app_colors, "adsb_color_mode", "altitude")
-            self.web_view.page().runJavaScript(f"if (window.setAdsbColorConfig) window.setAdsbColorConfig('{mode}', {json.dumps(adsb_colors)});\nif (window.renderAdsbLegend) window.renderAdsbLegend();")
+            self.run_js(f"if (window.setAdsbColorConfig) window.setAdsbColorConfig('{mode}', {json.dumps(adsb_colors)});\nif (window.renderAdsbLegend) window.renderAdsbLegend();")
 
     def _on_bridge_node_clicked(self, node_id: str):
         self._reset_watchdog_activity()
@@ -8725,8 +8715,7 @@ class MeshMapWidget(QWidget):
         self.node_selected.emit(node_id)
 
     def _on_center_clicked(self):
-        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
-            self.web_view.page().runJavaScript("centerOnAll();")
+        self.run_js("centerOnAll();")
 
     def center_on_node(self, node_id: str, lat: Optional[float] = None, lon: Optional[float] = None, alias: str = ""):
         """Centers map on a specific node coordinates, opening its popup or pulsing marker."""
@@ -8741,22 +8730,21 @@ class MeshMapWidget(QWidget):
                 self.watcher_status.setText(f"⚠️ Node '{alias or node_id}' has no GPS coordinates.")
             return False
 
-        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
-            clean_alias = (alias or node_id).replace("'", "\\'")
-            clean_id = node_id.replace("'", "\\'")
-            js_code = f"""
-                (function() {{
-                    if (typeof map !== 'undefined') {{
-                        map.setView([{lat}, {lon}], 14);
-                        if (typeof markers !== 'undefined' && markers['{clean_id}']) {{
-                            markers['{clean_id}'].openPopup();
-                        }} else if (typeof pulseOriginNode === 'function') {{
-                            pulseOriginNode([{lat}, {lon}], '{clean_id}', '{clean_alias}');
-                        }}
+        clean_alias = (alias or node_id).replace("'", "\\'")
+        clean_id = node_id.replace("'", "\\'")
+        js_code = f"""
+            (function() {{
+                if (typeof map !== 'undefined') {{
+                    map.setView([{lat}, {lon}], 14);
+                    if (typeof markers !== 'undefined' && markers['{clean_id}']) {{
+                        markers['{clean_id}'].openPopup();
+                    }} else if (typeof pulseOriginNode === 'function') {{
+                        pulseOriginNode([{lat}, {lon}], '{clean_id}', '{clean_alias}');
                     }}
-                }})();
-            """
-            self.web_view.page().runJavaScript(js_code)
+                }}
+            }})();
+        """
+        self.run_js(js_code)
         if hasattr(self, "watcher_status"):
             self.watcher_status.setText(f"📍 Centered map on: {alias or node_id} ({lat:.4f}, {lon:.4f})")
         return True
@@ -8793,9 +8781,8 @@ class MeshMapWidget(QWidget):
                 self.config.save()
             except Exception:
                 pass
-        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
-            pm_str = "true" if visible else "false"
-            self.web_view.page().runJavaScript(f"setPathModesVisible({pm_str});")
+        pm_str = "true" if visible else "false"
+        self.run_js(f"setPathModesVisible({pm_str});")
 
     def set_orbitals(self, visible: bool):
         self.show_companion_orbitals = visible
@@ -9000,17 +8987,16 @@ class MeshMapWidget(QWidget):
                             "alias": n.alias
                         })
 
-        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
-            js_nodes = json.dumps(nodes_data)
-            js_links = json.dumps(links_data)
-            self.web_view.page().runJavaScript(f"setNodes({js_nodes});")
-            self.web_view.page().runJavaScript(f"setRfLinks({js_links});")
-            is_orb_active = getattr(self, "show_companion_orbitals", False) or (hasattr(self, "btn_orbitals") and self.btn_orbitals.isChecked())
-            orb_active_str = "true" if is_orb_active else "false"
-            js_docked = json.dumps(docked_data)
-            self.web_view.page().runJavaScript(f"setCompanionOrbitalsVisible({orb_active_str}, {js_docked});")
-            if hasattr(self, "btn_scopes") and self.btn_scopes.isChecked():
-                self._update_scope_overlays()
+        js_nodes = json.dumps(nodes_data)
+        js_links = json.dumps(links_data)
+        self.run_js(f"setNodes({js_nodes});")
+        self.run_js(f"setRfLinks({js_links});")
+        is_orb_active = getattr(self, "show_companion_orbitals", False) or (hasattr(self, "btn_orbitals") and self.btn_orbitals.isChecked())
+        orb_active_str = "true" if is_orb_active else "false"
+        js_docked = json.dumps(docked_data)
+        self.run_js(f"setCompanionOrbitalsVisible({orb_active_str}, {js_docked});")
+        if hasattr(self, "btn_scopes") and self.btn_scopes.isChecked():
+            self._update_scope_overlays()
 
     def _on_packet_path_traced(self, path: PacketPathInfo):
         """Displays traced multi-hop packet trajectory on the map."""
@@ -9033,7 +9019,7 @@ class MeshMapWidget(QWidget):
         if len(route_coords) < 2:
             return
 
-        if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and (self.show_paths or self.show_rf_links) and self._page_ready:
+        if self.show_paths or self.show_rf_links:
             js_coords = json.dumps(route_coords)
             js_meta = json.dumps({
                 "hops": len(route_coords) - 1,
@@ -9042,7 +9028,7 @@ class MeshMapWidget(QWidget):
                 "sender_name": path.sender_name,
                 "color": "orange"
             })
-            self.web_view.page().runJavaScript(f"drawPacketPath({js_coords}, {js_meta});")
+            self.run_js(f"drawPacketPath({js_coords}, {js_meta});")
 
     def _get_local_coordinates(self) -> List[float]:
         """Resolves latitude & longitude of the local radio receiver (home station)."""
@@ -9154,26 +9140,24 @@ class MeshMapWidget(QWidget):
                 "is_incoming": True,
                 "color": "green"
             })
-            self.web_view.page().runJavaScript(f"drawPacketPath({js_coords}, {js_meta});")
+            self.run_js(f"drawPacketPath({js_coords}, {js_meta});")
         elif sender_coord:
             # Fallback: pulse origin node if only sender is known
             js_coord = json.dumps(sender_coord)
             js_id = json.dumps(msg.sender_id)
             js_name = json.dumps(display_name)
-            self.web_view.page().runJavaScript(f"pulseOriginNode({js_coord}, {js_id}, {js_name});")
+            self.run_js(f"pulseOriginNode({js_coord}, {js_id}, {js_name});")
 
     def clear_visualised_path(self):
         """Clears any currently visualised dotted message path and repeater highlights from the map."""
         self._active_visualise_msg = None
-        if hasattr(self, "web_view") and self._page_ready:
-            self.web_view.page().runJavaScript("clearVisualisedPath();")
+        self.run_js("clearVisualisedPath();")
         if hasattr(self, "watcher_status"):
             self.watcher_status.setText("⚡ <b>Watcher:</b> Listening for live RF packet paths...")
 
     def clear_repeater_neighbors(self):
         """Clears repeater neighbours overlay from the map."""
-        if hasattr(self, "web_view") and self._page_ready:
-            self.web_view.page().runJavaScript("clearRepeaterNeighbors();")
+        self.run_js("clearRepeaterNeighbors();")
         if hasattr(self, "watcher_status"):
             self.watcher_status.setText("⚡ <b>Watcher:</b> Listening for live RF packet paths...")
 
@@ -9247,9 +9231,9 @@ class MeshMapWidget(QWidget):
             "neighbors": resolved_neighbors
         }
 
-        if hasattr(self, "web_view") and self._page_ready:
+        if getattr(self, "_page_ready", False):
             js_payload = json.dumps(payload)
-            self.web_view.page().runJavaScript(f"drawRepeaterNeighbors({js_payload});")
+            self.run_js(f"drawRepeaterNeighbors({js_payload});")
         else:
             self._pending_neighbors_payload = payload
 
@@ -9568,7 +9552,7 @@ class MeshMapWidget(QWidget):
                 "home_name": home_alias,
                 "repeaters": repeaters_info
             })
-            self.web_view.page().runJavaScript(f"drawVisualisedMessagePath({js_segments}, {js_meta});")
+            self.run_js(f"drawVisualisedMessagePath({js_segments}, {js_meta});")
 
     def cleanup(self):
         """Stops background polling timers and detaches WebEngine page cleanly."""

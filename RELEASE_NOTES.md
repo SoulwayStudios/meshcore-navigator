@@ -4,7 +4,26 @@
 
 ---
 
-## 🌟 What's New in v0.5.0
+## 🌟 What's New in v0.6.0
+ 
+### 🚀 Headline Feature: Asynchronous Startup Version Checker & Release Notifier
+- **Automatic GitHub Release Checks**: On launch, MeshCore Navigator checks the official GitHub repository releases in the background. It is completely non-blocking with a strict 4-second timeout and rate-limit caching, ensuring zero impact on startup performance even when offline.
+- **Interactive Splash Screen Update Prompt**:
+  - When an update is detected, the splash screen pauses auto-dismissal and displays an update card with the new version badge and release title.
+  - Direct **"📥 Download Update"** button opens the GitHub release download page in your default browser.
+  - **"Remind Later"** button lets you bypass the update prompt and continue immediately into the app.
+  - When up-to-date or offline, the splash screen auto-dismisses smoothly as usual (1.8s + map ready).
+- **Fallback Top Notification Banner**: If the splash screen is disabled in user preferences, a slim, dismissable update banner appears directly above the main chat and map view.
+- **Manual Checks in Settings**: Added a dedicated **"🚀 Software Updates & Releases"** card in the Settings → About tab. Check for updates on demand with live status indicators and direct links to release notes.
+- **Configurable**: Easily toggle automated launch checks under Settings → General / Startup.
+
+### 🛡️ Leaflet Map Resize & Chromium IPC Crash Hardening
+- **Eliminated Map Maximize Freeze**: Fixed a critical crash where maximizing or resizing the map window with dense overlays active (such as Tropospheric Ducting forecasts) caused Chromium V8 to lock up at 100% CPU attempting to serialize the entire cyclic Leaflet `L.Map` object graph across the Mojo IPC bridge.
+- **Centralized `run_js()` Execution**: All fire-and-forget JavaScript evaluations now safely append `void 0;`, ensuring sub-5ms viewport resizes and zero memory leakage.
+
+---
+
+## 📦 Previous Highlights (v0.5.0)
 
 ### 🏢 Headline Feature: Room Servers (BBS & Mesh Chatrooms)
 - **3rd Dedicated Node Type**: MeshCore Room Servers are now first-class citizens alongside Companions and Repeaters across telemetry decoding, database models, and user interfaces.

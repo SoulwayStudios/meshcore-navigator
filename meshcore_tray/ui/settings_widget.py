@@ -14,6 +14,7 @@ from meshcore_tray import __version__, __coffee_url__
 from meshcore_tray.config import AppConfig
 from meshcore_tray.core.event_bus import bus, EventType
 from meshcore_tray.drivers.meshcore_driver import MeshCoreDriver
+from meshcore_tray.core.version_checker import VersionChecker, ReleaseInfo, GITHUB_RELEASES_PAGE
 
 logger = logging.getLogger("meshcore_tray.settings_widget")
 
@@ -927,6 +928,11 @@ class SettingsWidget(QWidget):
         self.chk_show_splash.setChecked(getattr(self.config, "show_splash_screen", True))
         self.chk_show_splash.setToolTip("When unchecked, the app launches directly to the map view without the full-screen splash cover.")
         startup_card.add_widget(self.chk_show_splash)
+
+        self.chk_check_updates = QCheckBox("Check for application updates on launch")
+        self.chk_check_updates.setChecked(getattr(self.config, "check_updates_on_startup", True))
+        self.chk_check_updates.setToolTip("When enabled, the app checks GitHub releases asynchronously on launch and alerts you if a newer version is available.")
+        startup_card.add_widget(self.chk_check_updates)
         layout.addWidget(startup_card)
 
         # Chat & Avatar Settings Card
@@ -1772,9 +1778,97 @@ class SettingsWidget(QWidget):
         coffee_row.addStretch()
         card_about.add_layout(coffee_row)
 
+        # Software Updates Card
+        card_updates = SettingsCard("🚀 Software Updates & Releases")
+
+        self.lbl_update_ver = QLabel(f"<b>Installed Version:</b> v{__version__}")
+        self.lbl_update_ver.setStyleSheet("font-size: 13px; color: #E2E8F0;")
+        card_updates.add_widget(self.lbl_update_ver)
+
+        self.lbl_update_status = QLabel("Click 'Check for Updates' to query the latest GitHub releases.")
+        self.lbl_update_status.setWordWrap(True)
+        self.lbl_update_status.setStyleSheet("font-size: 12px; color: #94A3B8; margin-top: 4px; margin-bottom: 8px;")
+        self.lbl_update_status.setOpenExternalLinks(True)
+        card_updates.add_widget(self.lbl_update_status)
+
+        updates_row = QHBoxLayout()
+        self.btn_check_updates = QPushButton("🔍 Check for Updates")
+        self.btn_check_updates.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_check_updates.setFixedHeight(36)
+        self.btn_check_updates.setStyleSheet("""
+            QPushButton {
+                background-color: #0284C7;
+                color: #FFFFFF;
+                border: 1px solid #38BDF8;
+                border-radius: 6px;
+                padding: 6px 16px;
+                font-size: 12px;
+                font-weight: 700;
+            }
+            QPushButton:hover {
+                background-color: #0369A1;
+            }
+            QPushButton:disabled {
+                background-color: #334155;
+                color: #64748B;
+                border-color: #475569;
+            }
+        """)
+        self.btn_check_updates.clicked.connect(self._on_check_updates_clicked)
+        updates_row.addWidget(self.btn_check_updates)
+
+        self.btn_all_releases = QPushButton("🌐 View GitHub Releases")
+        self.btn_all_releases.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_all_releases.setFixedHeight(36)
+        self.btn_all_releases.setStyleSheet("""
+            QPushButton {
+                background-color: #1E293B;
+                color: #38BDF8;
+                border: 1px solid #0284C7;
+                border-radius: 6px;
+                padding: 6px 16px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #0369A1;
+                color: #FFFFFF;
+            }
+        """)
+        self.btn_all_releases.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(GITHUB_RELEASES_PAGE)))
+        updates_row.addWidget(self.btn_all_releases)
+        updates_row.addStretch()
+        card_updates.add_layout(updates_row)
+
         layout.addWidget(card_about)
+        layout.addWidget(card_updates)
         layout.addStretch()
         return self.tab_about
+
+    def _on_check_updates_clicked(self):
+        """Triggers manual version check against GitHub releases API."""
+        self.lbl_update_status.setText("Connecting to GitHub to check for updates...")
+        self.btn_check_updates.setEnabled(False)
+        checker = VersionChecker.get_instance()
+        checker.check_finished.connect(self._on_manual_version_check_finished)
+        checker.check_for_updates(force=True)
+
+    def _on_manual_version_check_finished(self, is_newer: bool, info: Optional[Any], error_msg: str):
+        self.btn_check_updates.setEnabled(True)
+        try:
+            VersionChecker.get_instance().check_finished.disconnect(self._on_manual_version_check_finished)
+        except Exception:
+            pass
+
+        if is_newer and info:
+            self.lbl_update_status.setText(
+                f"🎉 <b>Update Available: v{info.version}</b> ({info.name})<br>"
+                f"<a style='color: #38BDF8; text-decoration: underline;' href='{info.html_url}'>Click here to download the latest release on GitHub</a>"
+            )
+        elif error_msg:
+            self.lbl_update_status.setText(f"⚠️ {error_msg}")
+        else:
+            self.lbl_update_status.setText(f"✓ You are running the latest version of MeshCore Navigator (v{__version__}).")
 
     # --- Save & Apply Handler ---
     def _apply_settings(self, close_on_finish: bool = True):
@@ -1905,6 +1999,9 @@ class SettingsWidget(QWidget):
 
         if hasattr(self, "chk_show_splash"):
             self.config.show_splash_screen = self.chk_show_splash.isChecked()
+
+        if hasattr(self, "chk_check_updates"):
+            self.config.check_updates_on_startup = self.chk_check_updates.isChecked()
 
         if hasattr(self, "chk_show_chat_avatars"):
             self.config.show_chat_avatars = self.chk_show_chat_avatars.isChecked()

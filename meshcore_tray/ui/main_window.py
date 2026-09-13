@@ -4,8 +4,8 @@ import asyncio
 import logging
 from pathlib import Path
 from typing import Optional
-from PyQt6.QtCore import Qt, QPoint, QTimer
-from PyQt6.QtGui import QIcon
+from PyQt6.QtCore import Qt, QPoint, QTimer, QUrl
+from PyQt6.QtGui import QIcon, QDesktopServices
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QSplitter,
     QLabel, QPushButton, QFrame, QStackedWidget, QMenu, QApplication
@@ -29,6 +29,7 @@ from meshcore_tray.ui.repeaters_view import RepeatersViewWidget
 from meshcore_tray.ui.heard_floods_view import HeardFloodsWidget
 from meshcore_tray.ui.splash_overlay import SplashOverlay
 from meshcore_tray.ui.avatar_generator import set_global_avatar_style
+from meshcore_tray.core.version_checker import VersionChecker, ReleaseInfo
 
 logger = logging.getLogger("meshcore_tray.main_window")
 
@@ -247,9 +248,22 @@ class MainWindow(QMainWindow):
         self.settings_view.close_requested.connect(self._close_settings)
         self.main_stack.addWidget(self.settings_view)  # Index 3: Settings View
 
-        main_layout.addWidget(self.main_stack, 1)
+        # Wrap main stack with a vertical container to host dismissable update notifications
+        content_container = QWidget()
+        content_layout = QVBoxLayout(content_container)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(0)
+
+        self.update_banner = self._create_update_banner()
+        content_layout.addWidget(self.update_banner)
+        content_layout.addWidget(self.main_stack, 1)
+
+        main_layout.addWidget(content_container, 1)
         self._update_freshness_btn_state()
         self._update_dock_favorites()
+
+        # Connect version checker for fallback notification (when splash is disabled or already dismissed)
+        VersionChecker.get_instance().update_available.connect(self._on_update_available)
 
         # Splash / Loading Mask Overlay
         if getattr(self.config, "show_splash_screen", True):
@@ -261,6 +275,83 @@ class MainWindow(QMainWindow):
                 self.mesh_map.map_ready.connect(self.splash_overlay.on_map_ready)
         else:
             self.splash_overlay = None
+            if getattr(self.config, "check_updates_on_startup", True):
+                VersionChecker.get_instance().check_for_updates()
+
+    def _create_update_banner(self) -> QFrame:
+        """Creates a subtle, modern update notification banner above the main view."""
+        banner = QFrame()
+        banner.setObjectName("appUpdateBanner")
+        banner.setStyleSheet("""
+            QFrame#appUpdateBanner {
+                background-color: #0C4A6E;
+                border-bottom: 1.5px solid #0284C7;
+            }
+            QLabel {
+                color: #F0F9FF;
+                font-size: 12px;
+            }
+        """)
+        layout = QHBoxLayout(banner)
+        layout.setContentsMargins(14, 6, 14, 6)
+        layout.setSpacing(12)
+
+        self.update_banner_lbl = QLabel()
+        layout.addWidget(self.update_banner_lbl, 1)
+
+        self.update_banner_dl_btn = QPushButton("📥 Download Update")
+        self.update_banner_dl_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.update_banner_dl_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #0284C7;
+                color: #FFFFFF;
+                border: 1px solid #38BDF8;
+                border-radius: 4px;
+                padding: 4px 14px;
+                font-size: 11px;
+                font-weight: 700;
+            }
+            QPushButton:hover {
+                background-color: #0369A1;
+            }
+        """)
+        layout.addWidget(self.update_banner_dl_btn)
+
+        close_btn = QPushButton("✕")
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_btn.setFixedSize(22, 22)
+        close_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                color: #94A3B8;
+                border: none;
+                font-size: 13px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                color: #FFFFFF;
+            }
+        """)
+        close_btn.clicked.connect(banner.hide)
+        layout.addWidget(close_btn)
+
+        banner.hide()
+        return banner
+
+    def _on_update_available(self, release_info: ReleaseInfo):
+        """Displays fallback update banner if the splash overlay is not actively showing it."""
+        if self.splash_overlay is not None and self.splash_overlay.isVisible():
+            return
+        self.update_banner_lbl.setText(
+            f"🚀 <b>Update Available:</b> MeshCore Navigator <b>v{release_info.version}</b> is now available!"
+        )
+        self.update_banner_dl_btn.setText(f"📥 Download v{release_info.version}")
+        try:
+            self.update_banner_dl_btn.clicked.disconnect()
+        except Exception:
+            pass
+        self.update_banner_dl_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(release_info.html_url)))
+        self.update_banner.show()
 
     def _on_splash_dismissed(self):
         self.splash_overlay = None
@@ -891,6 +982,10 @@ class MainWindow(QMainWindow):
                 self.mesh_map.cleanup()
             except Exception as e:
                 logger.debug(f"Map cleanup note: {e}")
+        try:
+            VersionChecker.get_instance().stop(100)
+        except Exception:
+            pass
 
     def closeEvent(self, event):
         """Handles window close. If tray is active and quit is not forced, hide to tray."""
