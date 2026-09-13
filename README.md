@@ -108,18 +108,18 @@ Fetches real-time NOAA GFS atmospheric refractivity index forecasts directly fro
 
 ### 🌐 Regional Scopes & Repeater Boundaries
 
-Visualises active regional frequency scopes and channel allocations with dynamic convex hull boundary polygons. Groups repeaters across regional backbones with dedicated neon color accents and live repeater counts:
+Visualises active regional frequency scopes and channel allocations with dynamic convex hull boundary polygons. Groups repeaters across regional backbones with dedicated neon color accents and live repeater counts. The screenshot below shows the different scopes that i have added into the system at the moment. The scopes should automatically grow and be picked up over time:
 
 ![Real Live Regional Scopes Overlay](docs/assets/screenshots/06_map_uk_scopes_overlay.png)
 
-- **`#ioi` (186 repeaters)** — Island of Ireland (Celtic Lime)
-- **`#gb-nwk` (119 repeaters)** — North West / Manchester / Lancashire (Emerald Green)
-- **`#sco` (62 repeaters)** — Scotland (Scottish Blue)
-- **`#gb-cum` (45 repeaters)** — Cumbria & Lake District (Electric Cyan)
-- **`#gb-nth` (37 repeaters)** — Northern England / Yorkshire (Vivid Magenta)
-- **`#cax` (9 repeaters)** — Carlisle & Border (Royal Indigo)
-- **`#iom` (4 repeaters)** — Isle of Man (Warm Amber)
-
+- **`#ioi` (186 repeaters)** — Island of Ireland (Lime)
+- **`#gb-nwk` (119 repeaters)** — North West / Manchester / Lancashire (Emerald)
+- **`#sco` (62 repeaters)** — Scotland (Blue)
+- **`#gb-cum` (45 repeaters)** — Cumbria & Lake District (Cyan)
+- **`#gb-nth` (37 repeaters)** — Northern England / Yorkshire (Magenta)
+- **`#cax` (9 repeaters)** — Carlisle & Border (Indigo)
+- **`#iom` (4 repeaters)** — Isle of Man (Amber)
+All these data points are just indicative of the screenshot above and were pulled from the data.
 ---
 
 ### ⛈️ Thunderstorm Doppler Radar & Lightning Strikes
