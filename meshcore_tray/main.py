@@ -112,13 +112,12 @@ def main():
     setup_app_logging(debug=args.debug)
 
     import os
+    if "QT_QPA_PLATFORM" not in os.environ:
+        os.environ["QT_QPA_PLATFORM"] = "xcb"
     if "QTWEBENGINE_CHROMIUM_FLAGS" not in os.environ:
-        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
-            "--no-sandbox "
-            "--ozone-platform-hint=auto "
-            "--enable-features=UseOzonePlatform,WaylandWindowDecorations "
-            "--disable-gpu-watchdog"
-        )
+        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--no-sandbox"
+    logger.info(f"Effective QTWEBENGINE_CHROMIUM_FLAGS: {os.environ.get('QTWEBENGINE_CHROMIUM_FLAGS')}")
+    logger.info(f"Session QPA platform: {os.environ.get('QT_QPA_PLATFORM')}")
 
     from PyQt6.QtCore import Qt, QCoreApplication
     QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)

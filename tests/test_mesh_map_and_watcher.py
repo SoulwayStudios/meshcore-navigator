@@ -1466,5 +1466,41 @@ def test_logging_system_and_map_watchdog(tmp_path, monkeypatch):
     widget._check_renderer_watchdog()
     assert widget._watchdog_unanswered == 0  # cleared during grace period
 
+    # 5. Verify watchdog inflight probe bounding and token discrimination
+    monkeypatch.setattr(widget, "isVisible", lambda: True)
+    if widget.window():
+        monkeypatch.setattr(widget.window(), "isVisible", lambda: True)
+        monkeypatch.setattr(widget.window(), "isMinimized", lambda: False)
+
+    widget._initial_loading_active = False
+    widget._geometry_in_motion = False
+    widget._watchdog_grace_until = 0.0
+    widget._watchdog_probe_inflight = True
+    widget._watchdog_probe_token = 42
+    widget._watchdog_unanswered = 1
+    widget._check_renderer_watchdog()
+    assert widget._watchdog_unanswered == 2  # increments without issuing duplicate probe
+
+    # Stale pong with wrong token is ignored
+    widget._on_watchdog_pong(2, token=99)
+    assert widget._watchdog_probe_inflight is True
+    assert widget._watchdog_unanswered == 2
+
+    # Matching pong clears unanswered count and inflight flag
+    widget._on_watchdog_pong(2, token=42)
+    assert widget._watchdog_probe_inflight is False
+    assert widget._watchdog_unanswered == 0
+
+    # 6. Verify recovery deadline monitoring when _page_ready is False
+    widget._page_ready = False
+    widget._recovery_in_progress = True
+    widget._recovery_start_time = time.time() - 20.0  # past 15s deadline
+    widget._recovery_attempts = 1
+    recovery_forced = []
+    widget._force_fresh_page_recovery = lambda: recovery_forced.append(True)
+    widget._check_renderer_watchdog()
+    assert len(recovery_forced) == 1
+    assert widget._recovery_attempts == 2
+
 
 

@@ -7387,22 +7387,56 @@ class MeshMapWidget(QWidget):
         self._watchdog_unanswered = 0
 
     def _check_renderer_watchdog(self):
-        if not (WEBENGINE_AVAILABLE and hasattr(self, "web_view") and getattr(self, "_page_ready", False)):
+        if not (WEBENGINE_AVAILABLE and hasattr(self, "web_view")):
             return
+
+        # If page is currently marked unready, monitor recovery deadline rather than silencing checks
+        if not getattr(self, "_page_ready", False):
+            if getattr(self, "_recovery_in_progress", False):
+                now = time.time()
+                recovery_start = getattr(self, "_recovery_start_time", 0.0)
+                if now - recovery_start > 15.0:
+                    attempts = getattr(self, "_recovery_attempts", 0) + 1
+                    self._recovery_attempts = attempts
+                    if attempts <= 3:
+                        logger.warning(
+                            f"WebEngine page recovery deadline exceeded (attempt {attempts}/3). "
+                            "Forcing fresh LoggingWebEnginePage..."
+                        )
+                        self._recovery_start_time = now
+                        self._force_fresh_page_recovery()
+                    else:
+                        logger.error("WebEngine page recovery exceeded maximum retry budget (3 attempts).")
+                        self._recovery_in_progress = False
+            return
+
         if getattr(self, "_geometry_in_motion", False) or getattr(self, "_initial_loading_active", False):
             self._watchdog_unanswered = 0
+            self._watchdog_probe_inflight = False
             return
         win = self.window()
         if win and (win.isMinimized() or not win.isVisible()):
             self._watchdog_unanswered = 0
+            self._watchdog_probe_inflight = False
             return
         if not self.isVisible():
             self._watchdog_unanswered = 0
+            self._watchdog_probe_inflight = False
             return
         now = time.time()
         if now < getattr(self, "_watchdog_grace_until", 0.0):
             self._watchdog_unanswered = 0
+            self._watchdog_probe_inflight = False
             return
+
+        # Bound probe concurrency: don't stack probes if previous is still unanswered
+        if getattr(self, "_watchdog_probe_inflight", False):
+            self._watchdog_unanswered += 1
+        else:
+            self._watchdog_probe_inflight = True
+            self._watchdog_probe_token = getattr(self, "_watchdog_probe_token", 0) + 1
+
+        token = getattr(self, "_watchdog_probe_token", 0)
 
         # Require 10 consecutive unanswered pings outside grace period (100 seconds of complete silence)
         if self._watchdog_unanswered >= 10:
@@ -7411,17 +7445,39 @@ class MeshMapWidget(QWidget):
                 "Triggering graceful view recovery..."
             )
             self._watchdog_unanswered = 0
+            self._watchdog_probe_inflight = False
             self._page_ready = False
+            self._recovery_in_progress = True
+            self._recovery_start_time = time.time()
+            self._recovery_attempts = 1
+
+            # Forcibly terminate the hung renderer process so RAM is freed and Qt catches termination cleanly
+            try:
+                page = self.web_view.page() if hasattr(self, "web_view") else None
+                pid = page.renderProcessPid() if (page and hasattr(page, "renderProcessPid")) else 0
+                if pid and pid > 0:
+                    logger.warning(f"Terminating unresponsive WebEngine renderer PID {pid} to force clean recovery...")
+                    import os, signal
+                    os.kill(pid, signal.SIGKILL)
+                    # When killed, Qt emits renderProcessTerminated which schedules _recover_web_view_after_termination
+                    return
+            except Exception as e:
+                logger.warning(f"Could not kill unresponsive renderer PID: {e}")
+
             self._recover_web_view_after_termination()
             return
 
-        self._watchdog_unanswered += 1
         try:
-            self.web_view.page().runJavaScript("1 + 1;", lambda res: self._on_watchdog_pong(res))
+            self.web_view.page().runJavaScript("1 + 1;", lambda res, t=token: self._on_watchdog_pong(res, t))
         except Exception as e:
+            self._watchdog_probe_inflight = False
             logger.warning(f"Error issuing watchdog ping to WebEngine: {e}")
 
-    def _on_watchdog_pong(self, result):
+    def _on_watchdog_pong(self, result, token=None):
+        if token is not None and token != getattr(self, "_watchdog_probe_token", None):
+            # Ignore stale response from earlier probe cycle
+            return
+        self._watchdog_probe_inflight = False
         if result == 2:
             self._watchdog_unanswered = 0
 
@@ -7452,21 +7508,27 @@ class MeshMapWidget(QWidget):
                         return
                     except Exception as e:
                         logger.warning(f"Could not perform soft recovery on existing page: {e}")
-                try:
-                    new_channel = QWebChannel(self.web_view)
-                    new_channel.registerObject("pyBridge", self.bridge)
-                    new_page = LoggingWebEnginePage(self.web_view)
-                    new_page.setWebChannel(new_channel)
-                    self.channel = new_channel
-                    self.web_page = new_page
-                    self.web_view.setPage(new_page)
-                    if hasattr(new_page, "renderProcessTerminated"):
-                        new_page.renderProcessTerminated.connect(self._on_render_process_terminated)
-                    self.web_view.setHtml(get_leaflet_html(), QUrl("http://localhost"))
-                except Exception as e:
-                    logger.warning(f"Could not attach fresh LoggingWebEnginePage on recovery: {e}")
+                self._force_fresh_page_recovery()
         except Exception as e:
             logger.error(f"Failed recovering web view: {e}")
+
+    def _force_fresh_page_recovery(self):
+        """Forces attachment of a clean LoggingWebEnginePage and re-registers the WebChannel."""
+        if not hasattr(self, "web_view"):
+            return
+        try:
+            new_channel = QWebChannel(self.web_view)
+            new_channel.registerObject("pyBridge", self.bridge)
+            new_page = LoggingWebEnginePage(self.web_view)
+            new_page.setWebChannel(new_channel)
+            self.channel = new_channel
+            self.web_page = new_page
+            self.web_view.setPage(new_page)
+            if hasattr(new_page, "renderProcessTerminated"):
+                new_page.renderProcessTerminated.connect(self._on_render_process_terminated)
+            self.web_view.setHtml(get_leaflet_html(), QUrl("http://localhost"))
+        except Exception as e:
+            logger.warning(f"Could not attach fresh LoggingWebEnginePage on recovery: {e}")
 
     def _btn_style(self, active: bool) -> str:
         if active:
@@ -7542,10 +7604,21 @@ class MeshMapWidget(QWidget):
         if not ok:
             logger.warning("Leaflet map load failed in WebEngine.")
             self._initial_loading_active = False
+            if getattr(self, "_failed_recovery_retries", 0) < 1:
+                self._failed_recovery_retries = getattr(self, "_failed_recovery_retries", 0) + 1
+                logger.info("Retrying recovery with fresh LoggingWebEnginePage and WebChannel...")
+                QTimer.singleShot(300, self._force_fresh_page_recovery)
+                return
+            self._failed_recovery_retries = 0
+            self._recovery_in_progress = False
             if hasattr(self, "reforming_overlay"):
                 self.reforming_overlay.hide_reforming()
             return
 
+        self._failed_recovery_retries = 0
+        self._recovery_in_progress = False
+        self._recovery_attempts = 0
+        self._watchdog_probe_inflight = False
         self._page_ready = True
         self._watchdog_unanswered = 0
         self._connect_screen_listener()

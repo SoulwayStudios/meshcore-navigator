@@ -7,6 +7,20 @@ and this project follows semantic versioning with automated build increments:
 - **Patch (+0.0.1)**: Routine bug fixes, UI adjustments, maintenance, and regular GitHub commits.
 - **Minor (+0.1.0)**: Substantial new features and architectural additions.
 
+## [0.5.1] - 2026-09-13
+
+### Fixed & Hardened
+- **XWayland Graphics Pipeline Decoupling (`QT_QPA_PLATFORM=xcb`)**:
+  - Defaults Qt platform abstraction to `xcb` on Linux Wayland setups, bypassing QtWebEngine Wayland subsurface presentation conflicts while preserving full NVIDIA RTX hardware acceleration.
+  - Eliminates Ozone Wayland buffer negotiation conflicts while maintaining native 1:1 crisp display resolution across multi-monitor configurations.
+- **Watchdog Recovery State Machine & Deadlock Prevention**:
+  - Decoupled `_page_ready` status from watchdog heartbeat execution. When a recovery reload is triggered, the watchdog actively tracks a 15-second recovery deadline with up to 3 bounded retry attempts instead of exiting early and remaining permanently silenced.
+  - Bounded probe concurrency using incremental tokens (`_watchdog_probe_inflight`), preventing stacked evaluations during transient slowdowns and ignoring stale callbacks.
+  - Renderer PID targeting: Ensures only the specific hung WebEngine renderer process is terminated on timeout, freeing memory immediately for a clean reload.
+- **Launcher Flag Preservation & Startup Logging**:
+  - `run.sh` and `install.sh` wrap default environment variables in empty checks (`if [ -z ... ]`), ensuring custom user test flags are strictly preserved across desktop and terminal launches.
+  - `main.py` now logs effective `QTWEBENGINE_CHROMIUM_FLAGS` and active session `QT_QPA_PLATFORM` on startup for complete diagnostics transparency.
+
 ## [0.5.0] - 2026-09-13
 
 ### Added & Enhanced

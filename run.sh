@@ -9,8 +9,11 @@ if [ -f "$SCRIPT_DIR/venv/bin/activate" ]; then
 fi
 
 export PYTHONPATH="$SCRIPT_DIR:$SCRIPT_DIR/vendor/pixoo/src:$SCRIPT_DIR/vendor/meshcore_py/src:$PYTHONPATH"
+if [ -z "$QT_QPA_PLATFORM" ]; then
+    export QT_QPA_PLATFORM=xcb
+fi
 if [ -z "$QTWEBENGINE_CHROMIUM_FLAGS" ]; then
-    export QTWEBENGINE_CHROMIUM_FLAGS="--no-sandbox --ozone-platform-hint=auto --enable-features=UseOzonePlatform,WaylandWindowDecorations --disable-gpu-watchdog"
+    export QTWEBENGINE_CHROMIUM_FLAGS="--no-sandbox"
 fi
 
 exec python3 -m meshcore_tray.main "$@"
