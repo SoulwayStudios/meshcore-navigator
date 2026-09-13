@@ -113,9 +113,17 @@ def main():
 
     import os
     if "QT_QPA_PLATFORM" not in os.environ:
-        os.environ["QT_QPA_PLATFORM"] = "xcb"
+        os.environ["QT_QPA_PLATFORM"] = "wayland;xcb"
     if "QTWEBENGINE_CHROMIUM_FLAGS" not in os.environ:
         os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--no-sandbox"
+    if "__GLX_VENDOR_LIBRARY_NAME" not in os.environ and sys.platform.startswith("linux"):
+        import subprocess
+        try:
+            res = subprocess.run(["nvidia-smi"], capture_output=True, text=True, timeout=1.5)
+            if "mismatch" in (res.stderr or "").lower() or "mismatch" in (res.stdout or "").lower():
+                os.environ["__GLX_VENDOR_LIBRARY_NAME"] = "mesa"
+        except Exception:
+            pass
     logger.info(f"Effective QTWEBENGINE_CHROMIUM_FLAGS: {os.environ.get('QTWEBENGINE_CHROMIUM_FLAGS')}")
     logger.info(f"Session QPA platform: {os.environ.get('QT_QPA_PLATFORM')}")
 

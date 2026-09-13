@@ -4,7 +4,25 @@
 
 ---
 
-## 🌟 What's New in v0.6.0
+## 🌟 What's New in v0.6.1
+
+### ⛰️ RF Line-of-Sight (LOS) Viewshed & Fresnel Zone Elevation Profiling
+- **Real-Time Terrain Elevation Cross-Sections**: Perform high-precision point-to-point RF propagation surveys directly from the interactive map.
+- **Fresnel Zone Ray Tracing**: Accurately computes Line-of-Sight ray trajectories and the 1st Fresnel Zone ellipse (60% and 100% clearance thresholds) across digital elevation terrain.
+- **Antenna Height Presets**: Adjustable transmitter and receiver antenna elevations (**Ground 2m**, **Rooftop 8m**, **Mast 15m**) with live clearance/incursion margin reporting.
+- **Radial LOS Viewshed Coverage**: Radial line-of-sight coverage simulation up to 25 km around repeaters and stations.
+
+### 📡 Interactive Repeater Neighbor Topology Mapping
+- **Radiating RF Links**: Click **"View Neighbors on Map"** in the Repeater Command Console to draw real-time RF propagation lines to all heard repeater stations.
+- **Per-Link Signal Metrics**: Displays floating SNR badges (`-9.0 dB`, `-11.5 dB`, etc.) and radar pulse rings directly on the tactical map.
+
+### 🛡️ Linux Display Server & NVIDIA Driver Mismatch Resilience
+- **Native Wayland + XCB Fallback**: Default display platform updated to `wayland;xcb` for native Wayland compositing without XWayland context confusion.
+- **Automatic NVIDIA Mismatch Safeguard**: Detects when package upgrades have installed newer NVIDIA user libraries before a system reboot, dynamically routing GLX context creation through Mesa (`__GLX_VENDOR_LIBRARY_NAME=mesa`) to prevent `GLOzone not found for unknown` crashes while keeping hardware acceleration fully active.
+
+---
+
+## 📦 Previous Highlights (v0.6.0)
  
 ### 🚀 Headline Feature: Asynchronous Startup Version Checker & Release Notifier
 - **Automatic GitHub Release Checks**: On launch, MeshCore Navigator checks the official GitHub repository releases in the background. It is completely non-blocking with a strict 4-second timeout and rate-limit caching, ensuring zero impact on startup performance even when offline.
