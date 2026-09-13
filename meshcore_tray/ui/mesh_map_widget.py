@@ -466,6 +466,11 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
         }
         .animated-path-flow {
             animation: flowTowardsHome 1.6s linear infinite !important;
+            pointer-events: none !important;
+        }
+        .path-hit-corridor {
+            pointer-events: stroke !important;
+            cursor: pointer;
         }
 
         /* Pure vibrant orange for regular repeaters with luminous glow */
@@ -2204,6 +2209,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             orbitalRepeater: '#FFD335'
         };
         var visualisedPathLayer = null;
+        var visualisedSvgRenderer = L.svg({ padding: 0.5 });
         var visualisedHighlightMarkers = [];
         var neighborsOverlayLayer = null;
         var orbitalLayerGroup = L.layerGroup().addTo(map);
@@ -4125,6 +4131,8 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             }
             if (meta.home_coord) {
                 nodeChain.push({ name: meta.home_name, coords: meta.home_coord, is_known: true });
+            } else if (meta.home_name) {
+                nodeChain.push({ name: meta.home_name, coords: null, is_known: false });
             }
             var segs = [];
             var lastIdx = null;
@@ -4302,16 +4310,6 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 var isNoGps = !isPhantom && !!seg.is_no_gps;
                 var isUnk = !isPhantom && !isNoGps && !!seg.is_unknown;
 
-                // Broad transparent hit-area (28px wide corridor) for effortless hovering anywhere near the line
-                var hitPoly = L.polyline(seg.coords, {
-                    weight: 28,
-                    opacity: 0.0001,
-                    color: '#000000',
-                    lineCap: 'round',
-                    lineJoin: 'round',
-                    interactive: true
-                }).addTo(visualisedPathLayer);
-
                 // Outer subtle glow / contrast halo (white backing for black line on dark map, matching color otherwise)
                 var isBlack = (segCol && (segCol.toLowerCase() === '#000000' || segCol.toLowerCase() === '#000' || segCol.toLowerCase() === 'black'));
                 var glowCol = isBlack ? '#FFFFFF' : segCol;
@@ -4319,6 +4317,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 var glowWidth = isBlack ? 5.5 : 7;
 
                 var glowPoly = L.polyline(seg.coords, {
+                    renderer: visualisedSvgRenderer,
                     color: glowCol,
                     weight: glowWidth,
                     opacity: glowOpacity,
@@ -4329,6 +4328,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
 
                 // Dotted animated line flowing in packet transmission direction (period = 20px)
                 var poly = L.polyline(seg.coords, {
+                    renderer: visualisedSvgRenderer,
                     color: segCol,
                     weight: 3.5,
                     dashArray: (isUnk || isNoGps || isPhantom) ? '6, 14' : '8, 12',
@@ -4337,6 +4337,18 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     lineCap: 'round',
                     lineJoin: 'round',
                     interactive: false
+                }).addTo(visualisedPathLayer);
+
+                // Broad transparent hit-area (28px wide corridor) for effortless hovering anywhere near the line
+                var hitPoly = L.polyline(seg.coords, {
+                    renderer: visualisedSvgRenderer,
+                    weight: 28,
+                    opacity: 0.0001,
+                    color: '#000000',
+                    className: 'path-hit-corridor',
+                    lineCap: 'round',
+                    lineJoin: 'round',
+                    interactive: true
                 }).addTo(visualisedPathLayer);
 
                 var tipText = '';
@@ -4987,10 +4999,12 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             if (!coords || coords.length < 2) return;
             var latlngs = coords.map(function(c) { return [c[0], c[1]]; });
             previewPathLayer = L.polyline(latlngs, {
+                renderer: visualisedSvgRenderer,
                 color: '#C084FC',
                 weight: 4,
                 opacity: 0.95,
-                dashArray: '6, 6',
+                dashArray: '8, 12',
+                className: 'animated-path-flow',
                 lineCap: 'round',
                 lineJoin: 'round',
                 pane: 'overlayPane',
@@ -9433,8 +9447,23 @@ class MeshMapWidget(QWidget):
                     "ref_name": r_name_ref
                 })
 
-        # 3. Resolve Receiver Coordinate (Always terminates at Home Node)
-        receiver_coord = self._get_local_coordinates()
+        # 3. Resolve Receiver Coordinate (Always terminates at Home Node for incoming, or Recipient Node for outgoing)
+        receiver_coord = None
+        receiver_display = home_alias
+        if msg.is_outgoing:
+            receiver_display = f"@{msg.recipient_name or 'Recipient'}"
+            if msg.recipient_id and self.storage:
+                recip_contact = (
+                    self.storage.get_best_contact_for_hop(msg.recipient_id, ref_lat=home_lat, ref_lon=home_lon)
+                    or self.storage.get_contact(msg.recipient_id)
+                    or self.storage.get_contact(msg.recipient_name)
+                )
+                if recip_contact and recip_contact.latitude and recip_contact.longitude:
+                    receiver_coord = [recip_contact.latitude, recip_contact.longitude]
+                    receiver_display = f"@{recip_contact.alias}"
+        else:
+            receiver_coord = self._get_local_coordinates()
+            receiver_display = home_alias
 
         # 4. Assemble Transmission Line Segments
         path_color = "#FF00FF"
@@ -9465,7 +9494,9 @@ class MeshMapWidget(QWidget):
             })
 
         if receiver_coord:
-            node_chain.append({"name": home_alias, "coords": receiver_coord, "is_known": True})
+            node_chain.append({"name": receiver_display, "coords": receiver_coord, "is_known": True})
+        elif msg.is_outgoing:
+            node_chain.append({"name": receiver_display, "coords": None, "is_known": False})
 
         route_segments = []
         last_loc_idx = None
@@ -9525,7 +9556,8 @@ class MeshMapWidget(QWidget):
         phant_str = f", {phantom_count} phantom" if phantom_count > 0 else ""
         rep_summary = f"{len(repeaters_info)} repeaters ({known_count} known{amb_str}{phant_str}, {unknown_count} unknown)" if repeaters_info else "Direct (0 repeaters)"
         if hasattr(self, "watcher_status"):
-            self.watcher_status.setText(f"📍 <b>Path:</b> {sender_display} ➔ [{rep_summary}] ➔ 🏠 {home_alias}")
+            target_icon = "🎯" if msg.is_outgoing else "🏠"
+            self.watcher_status.setText(f"📍 <b>Path:</b> {sender_display} ➔ [{rep_summary}] ➔ {target_icon} {receiver_display}")
 
         # 7. Push to Leaflet
         if hasattr(self, "web_view"):
@@ -9549,7 +9581,7 @@ class MeshMapWidget(QWidget):
                 "phantom_color": phantom_path_color,
                 "unknown_color": unknown_path_color,
                 "no_gps_color": no_gps_path_color,
-                "home_name": home_alias,
+                "home_name": receiver_display,
                 "repeaters": repeaters_info
             })
             self.run_js(f"drawVisualisedMessagePath({js_segments}, {js_meta});")

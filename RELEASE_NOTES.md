@@ -4,7 +4,17 @@
 
 ---
 
-## 🌟 What's New in v0.6.1
+## 🌟 What's New in v0.6.2
+
+### 💫 Hardware-Accelerated Transmission Path Dot Animation
+- **Restored Dotted Path Animation**: Resolved an issue where vector paths rendered into the HTML5 Canvas bitmap buffer, leaving CSS keyframes inactive. Initialized a dedicated Leaflet SVG renderer (`visualisedSvgRenderer`) so the dotted lines smoothly animate along transmission paths.
+- **Directional Flow to Message Recipient**: Verified coordinate vertices and SVG `stroke-dashoffset` periods so that transmission dots flow continuously forward from the transmitter through intermediate hops directly to the recipient node without stutter or jump.
+- **Wider Hover Corridor**: Added a 28px transparent hit zone with `pointer-events: stroke` ensuring effortless hovering and instant tooltip inspection along any part of the route.
+- **Outgoing Message Recipient Targeting**: Outgoing message visualisations now properly resolve the destination contact's coordinates and name, routing from the local station forward to the target recipient.
+
+---
+
+## 📦 Previous Highlights (v0.6.1)
 
 ### ⛰️ RF Line-of-Sight (LOS) Viewshed & Fresnel Zone Elevation Profiling
 - **Real-Time Terrain Elevation Cross-Sections**: Perform high-precision point-to-point RF propagation surveys directly from the interactive map.

@@ -1562,5 +1562,63 @@ def test_run_js_void_discard_hardening(qapp, tmp_path):
     assert resize_call.endswith("void 0;")
 
 
+def test_visualise_message_path_outgoing_and_svg_animation(qapp, tmp_path):
+    """Verifies that outgoing messages route towards recipient and SVG renderer is wired for dot animation."""
+    from unittest.mock import MagicMock, patch
+    from meshcore_tray.storage import Storage
+    from meshcore_tray.core.models import NodeContact
+
+    db_path = tmp_path / "test_outgoing_path.db"
+    storage = Storage(db_path)
+    storage.save_contact(NodeContact(
+        node_id="recip_node_1",
+        alias="RemoteRecipient",
+        latitude=55.1234,
+        longitude=-2.5678,
+        snr_db=8.5
+    ))
+
+    with patch("meshcore_tray.ui.mesh_map_widget.WEBENGINE_AVAILABLE", False):
+        widget = MeshMapWidget(storage=storage)
+    widget._page_ready = True
+    mock_page = MagicMock()
+    widget.web_view = MagicMock()
+    widget.web_view.page.return_value = mock_page
+
+    # Outgoing message
+    out_msg = MessageEnvelope(
+        id="m_out_1",
+        sender_id="local",
+        sender_name="M7NCY",
+        channel="Direct",
+        text="Outgoing test",
+        is_outgoing=True,
+        recipient_id="recip_node_1",
+        recipient_name="RemoteRecipient",
+        metadata={"route_type": "DIRECT"}
+    )
+
+    widget.visualise_message_path(out_msg)
+
+    assert mock_page.runJavaScript.called
+    call_arg = mock_page.runJavaScript.call_args[0][0]
+    assert "drawVisualisedMessagePath" in call_arg
+    assert "RemoteRecipient" in call_arg
+    assert "55.1234" in call_arg  # Recipient latitude
+    assert "-2.5678" in call_arg  # Recipient longitude
+    assert "🎯" in widget.watcher_status.text()
+    assert "@RemoteRecipient" in widget.watcher_status.text()
+
+    # Also verify the map HTML contains the SVG renderer and animated-path-flow CSS
+    from meshcore_tray.ui.mesh_map_widget import get_leaflet_html
+    html = get_leaflet_html()
+    assert "visualisedSvgRenderer = L.svg" in html
+    assert "renderer: visualisedSvgRenderer" in html
+    assert "flowTowardsHome" in html
+    assert "animated-path-flow" in html
+    assert "stroke-dashoffset: -40" in html
+
+
+
 
 
