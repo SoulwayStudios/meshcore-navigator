@@ -220,7 +220,9 @@ def test_leaflet_html_javascript_clean_syntax():
     """Verify LEAFLET_HTML_TEMPLATE loads in WebEngine in isolated process with zero JS syntax/runtime errors."""
     import subprocess
     import sys
+    import os
     script = """
+import os
 import sys
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QEventLoop, QTimer
@@ -229,7 +231,8 @@ from PyQt6.QtWebEngineCore import QWebEnginePage
 from PyQt6.QtWebChannel import QWebChannel
 from meshcore_tray.ui.mesh_map_widget import get_leaflet_html, WebBridge
 
-app = QApplication(sys.argv)
+args = ["test", "-platform", "offscreen"] if os.environ.get("QT_QPA_PLATFORM") == "offscreen" else sys.argv
+app = QApplication(args)
 view = QWebEngineView()
 bridge = WebBridge()
 channel = QWebChannel()
@@ -255,7 +258,12 @@ if errors:
     print('JS_ERRORS:', errors)
     sys.exit(1)
 """
-    res = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
+    env = dict(os.environ)
+    if env.get("QT_QPA_PLATFORM") == "offscreen":
+        env.pop("DISPLAY", None)
+        env.pop("WAYLAND_DISPLAY", None)
+        env["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu --no-sandbox"
+    res = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, env=env)
     assert res.returncode == 0, f"JS check failed:\nSTDOUT: {res.stdout}\nSTDERR: {res.stderr}"
 
 
@@ -664,7 +672,9 @@ def test_adsb_map_rendering_and_memory_optimization():
     # Verify WebEngine execution under simulated load and window maximize
     import subprocess
     import sys
+    import os
     script = """
+import os
 import sys
 import json
 from PyQt6.QtWidgets import QApplication
@@ -674,7 +684,8 @@ from PyQt6.QtWebEngineCore import QWebEnginePage
 from PyQt6.QtWebChannel import QWebChannel
 from meshcore_tray.ui.mesh_map_widget import get_leaflet_html, WebBridge
 
-app = QApplication(sys.argv)
+args = ["test", "-platform", "offscreen"] if os.environ.get("QT_QPA_PLATFORM") == "offscreen" else sys.argv
+app = QApplication(args)
 view = QWebEngineView()
 bridge = WebBridge()
 channel = QWebChannel()
@@ -716,7 +727,12 @@ loop.exec()
 assert len(errors) == 0, f'JS errors: {errors}'
 print('SUCCESS_ADSB_OPTIMIZATION_TEST')
 """
-    proc = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
+    env = dict(os.environ)
+    if env.get("QT_QPA_PLATFORM") == "offscreen":
+        env.pop("DISPLAY", None)
+        env.pop("WAYLAND_DISPLAY", None)
+        env["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu --no-sandbox"
+    proc = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, env=env)
     assert proc.returncode == 0, f"Process failed: {proc.stderr}"
     assert "SUCCESS_ADSB_OPTIMIZATION_TEST" in proc.stdout
 

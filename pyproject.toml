@@ -26,6 +26,7 @@ dependencies = [
     "requests>=2.31.0",
     "meshcore>=2.3.0",
     "pixoo>=0.9.0",
+    "packaging>=23.0",
 ]
 
 [project.scripts]

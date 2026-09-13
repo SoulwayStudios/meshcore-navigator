@@ -171,6 +171,12 @@ class VersionChecker(QObject):
                     self.update_available.emit(info)
                 return
 
+        # Avoid spawning network workers during automated test suites unless explicitly flagged
+        import os
+        if os.environ.get("MESHCORE_TEST_MODE") == "1" and not getattr(self, "_allow_test_network", False):
+            logger.debug("Skipping version check worker in test mode.")
+            return
+
         # Avoid spawning concurrent workers
         if self._worker is not None and self._worker.isRunning():
             logger.debug("Version check worker already in flight, skipping duplicate.")

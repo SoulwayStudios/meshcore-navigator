@@ -42,7 +42,7 @@ jobs:
       - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install PyQt6 PyQt6-WebEngine qasync pyserial pillow requests pytest pytest-asyncio
+          pip install PyQt6 PyQt6-WebEngine qasync pyserial pillow requests packaging pytest pytest-asyncio
           pip install -e ./vendor/pixoo
           pip install -e ./vendor/meshcore_py
 
@@ -101,7 +101,7 @@ jobs:
       - name: Install Dependencies & PyInstaller
         run: |
           python -m pip install --upgrade pip
-          pip install PyQt6 PyQt6-WebEngine qasync pyserial pillow requests pyinstaller
+          pip install PyQt6 PyQt6-WebEngine qasync pyserial pillow requests packaging pyinstaller
           pip install -e ./vendor/pixoo
           pip install -e ./vendor/meshcore_py
 

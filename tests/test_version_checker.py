@@ -172,6 +172,7 @@ def test_version_checker_caching():
         assert received[0][1].version == "0.6.0"
 
     # Expire cache and check that worker is started
+    checker._allow_test_network = True
     checker._last_checked_at = datetime.now(timezone.utc) - timedelta(hours=2)
     with patch.object(VersionCheckWorker, "start") as mock_start:
         checker.check_for_updates(force=False)
