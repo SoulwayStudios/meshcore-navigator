@@ -456,4 +456,37 @@ def test_leaflet_popup_delete_button_and_activity_scaling():
     assert "node.is_room_server" in html
 
 
+def test_room_server_context_menu(qapp, tmp_path, monkeypatch):
+    """Verifies that right-clicking a room server builds the QMenu and actions cleanly."""
+    storage = Storage(tmp_path / "rooms_menu.db")
+    cfg = AppConfig()
+    view = RoomServersViewWidget(storage=storage, config=cfg)
+    r1 = NodeContact("!rm1", "Cumbria Room Server [Room]", is_room_server=True, is_favorite=True, latitude=54.5, longitude=-3.2)
+    storage.save_contact(r1)
+    view.reload_rooms()
+    assert view.list_widget.count() >= 1
+
+    menu_built = []
+    from PyQt6.QtWidgets import QMenu
+    def fake_exec(self, *args, **kwargs):
+        menu_built.append(self)
+        return None
+    monkeypatch.setattr(QMenu, "exec", fake_exec)
+
+    rect = view.list_widget.visualItemRect(view.list_widget.item(0))
+    pos = rect.center()
+    view._show_room_context_menu(pos)
+
+    assert len(menu_built) == 1
+    actions = [a.text() for a in menu_built[0].actions()]
+    assert any("Remove from Favorites" in a for a in actions)
+    assert any("Show on Map" in a for a in actions)
+    assert any("Track ADS-B" in a for a in actions)
+    assert any("Enter / Edit Password" in a for a in actions)
+    assert any("Copy Node ID" in a for a in actions)
+    assert any("Copy Alias" in a for a in actions)
+    assert any("Remove Room Server" in a for a in actions)
+
+
+
 

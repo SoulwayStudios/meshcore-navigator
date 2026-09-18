@@ -4,7 +4,21 @@
 
 ---
 
-## 🌟 What's New in v0.7.0
+## 🌟 What's New in v0.7.1
+
+### 🛠️ Bug Fix: Room Server Context Menu
+- **Resolved Right-Click Crash in Room Servers View**: Fixed a missing import (`NameError: name 'QMenu' is not defined` and `QApplication`) in [room_servers_view.py](file:///home/nicky/.gemini/antigravity-ide/scratch/meshcore-pixoo-tray/meshcore_tray/ui/room_servers_view.py).
+- Right-clicking any room server entry now cleanly displays the full action menu:
+  - ⭐ **Add to / Remove from Favorites**
+  - 🗺️ **Show on Map**
+  - ✈️ **Track ADS-B Around Room Server**
+  - 🔑 **Enter / Edit Password...**
+  - 📋 **Copy Node ID / Alias**
+  - 🗑️ **Remove Room Server**
+
+---
+
+## 📦 Previous Highlights (v0.7.0)
 
 ### 🪟 Out-of-the-Box Windows Standalone Binary Fix
 - **Platform Plugin Initialization Fix**: Resolved a critical issue where Windows executables failed to initialize Qt's platform plugin without manual PowerShell environment variables (`QT_QPA_PLATFORM=windows` or `-platform windows`).

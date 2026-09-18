@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "meshcore-navigator"
-version = "0.7.0"
+version = "0.7.1"
 description = "MESHCORE NAVIGATOR - MeshCore Desktop Station, Live Map & Matrix Integration"
 readme = "README.md"
 license = { text = "GPL-3.0-or-later" }

@@ -7,6 +7,12 @@ and this project follows semantic versioning with automated build increments:
 - **Patch (+0.0.1)**: Routine bug fixes, UI adjustments, maintenance, and regular GitHub commits.
 - **Minor (+0.1.0)**: Substantial new features and architectural additions.
 
+## [0.7.1] - 2026-09-18
+
+### Fixed
+- **Room Server List Right-Click Context Menu**:
+  - Resolved `NameError: name 'QMenu' is not defined` and missing `QApplication` import in [meshcore_tray/ui/room_servers_view.py](file:///home/nicky/.gemini/antigravity-ide/scratch/meshcore-pixoo-tray/meshcore_tray/ui/room_servers_view.py) when right-clicking room server entries to favorite, show on map, copy node ID/alias, or edit credentials.
+
 ## [0.7.0] - 2026-09-18
 
 ### Fixed & Hardened

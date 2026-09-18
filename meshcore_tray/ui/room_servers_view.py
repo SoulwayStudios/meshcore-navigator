@@ -12,7 +12,7 @@ from PyQt6.QtCore import Qt, pyqtSignal, QSize
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QFrame, QPushButton, QCheckBox,
-    QScrollArea, QTextEdit, QSizePolicy
+    QScrollArea, QTextEdit, QSizePolicy, QMenu, QApplication
 )
 
 from meshcore_tray.config import AppConfig
