@@ -1074,8 +1074,9 @@ class MeshCoreDriver(BaseRadioDriver):
                 if not is_valid_alias(raw_alias) and existing and is_valid_alias(existing.alias):
                     alias = existing.alias
 
-                is_rep = bool(c.get("type") == 2)
-                is_room = bool(c.get("type") == 3 or is_room_server_contact(c) or (existing.is_room_server if existing else False))
+                has_creds = self.storage.has_room_credentials(pubkey[:12]) if (self.storage and hasattr(self.storage, "has_room_credentials")) else False
+                is_room = bool(c.get("type") == 3 or c.get("adv_type") == 3 or is_room_server_contact(c) or is_room_server_contact({"alias": alias, "node_id": pubkey[:12]}) or (existing.is_room_server if existing else False) or has_creds)
+                is_rep = bool(c.get("type") == 2) and not is_room
                 last_seen = ""
                 last_adv = c.get("last_advert") or c.get("lastmod")
                 if last_adv:
@@ -1188,9 +1189,10 @@ class MeshCoreDriver(BaseRadioDriver):
                     alias = c_exist.alias
 
 
-            is_rep = bool(c.get("type") == 2)
             c_exist = self.storage.get_contact(pubkey[:12]) if self.storage else None
-            is_room = bool(c.get("type") == 3 or is_room_server_contact(c) or (c_exist.is_room_server if c_exist else False))
+            has_creds = self.storage.has_room_credentials(pubkey[:12]) if (self.storage and hasattr(self.storage, "has_room_credentials")) else False
+            is_room = bool(c.get("type") == 3 or c.get("adv_type") == 3 or is_room_server_contact(c) or is_room_server_contact({"alias": alias, "node_id": pubkey[:12]}) or (c_exist.is_room_server if c_exist else False) or has_creds)
+            is_rep = bool(c.get("type") == 2) and not is_room
             is_fav = bool(self.config and (alias in self.config.favorites or pubkey in self.config.favorites))
             lat_raw = c.get("adv_lat") or c.get("latitude")
             lon_raw = c.get("adv_lon") or c.get("longitude")
@@ -1276,7 +1278,17 @@ class MeshCoreDriver(BaseRadioDriver):
 
             # Protect existing coordinates if any
             c_exist = self.storage.get_contact(pubkey[:12]) if self.storage else None
-            is_room = bool(raw.get("type") == 3 or (c and c.get("type") == 3) or is_room_server_contact({"alias": alias}) or (c_exist.is_room_server if c_exist else False))
+            has_creds = self.storage.has_room_credentials(pubkey[:12]) if (self.storage and hasattr(self.storage, "has_room_credentials")) else False
+            is_room = bool(
+                raw.get("type") == 3
+                or raw.get("adv_type") == 3
+                or (c and (c.get("type") == 3 or c.get("adv_type") == 3))
+                or is_room_server_contact({"alias": alias, "node_id": pubkey[:12]})
+                or (c_exist.is_room_server if c_exist else False)
+                or has_creds
+            )
+            if is_room:
+                is_rep = False
             if c_exist and c_exist.latitude is not None and c_exist.longitude is not None:
                 if not is_valid_alias(adv_name):
                     lat = c_exist.latitude
@@ -1440,7 +1452,17 @@ class MeshCoreDriver(BaseRadioDriver):
                         adv_lat = data.get("adv_lat")
                         adv_lon = data.get("adv_lon")
                         adv_type = data.get("adv_type", 1)
-                        is_rep = bool(adv_type == 2)
+                        has_creds = bool(self.storage and hasattr(self.storage, "has_room_credentials") and self.storage.has_room_credentials(node_id))
+                        is_room = bool(
+                            adv_type == 3 or
+                            is_room_server_contact({"alias": alias, "node_id": node_id}) or
+                            (existing.is_room_server if existing else False) or
+                            has_creds
+                        )
+                        if is_room:
+                            is_rep = False
+                        else:
+                            is_rep = bool(adv_type == 2)
 
                         # Detect corrupt phantom shifted duplicates in OTA adverts
                         if is_rep or (alias and "rep" in alias.lower()) or (alias and alias.startswith("noc-")):
@@ -1477,14 +1499,13 @@ class MeshCoreDriver(BaseRadioDriver):
 
                                     if self.storage:
                                         fav = existing.is_favorite if existing else bool(self.config and self.config.is_user_favorite(node_id, alias))
-                                        is_room = bool(is_room_server_contact({"alias": alias}) or (existing.is_room_server if existing else False))
                                         contact = NodeContact(
                                             node_id=node_id,
                                             alias=alias,
                                             is_favorite=fav,
                                             last_seen=datetime.now(timezone.utc).isoformat(),
                                             public_key=adv_key.lower(),
-                                            is_repeater=is_rep or (existing.is_repeater if existing else False),
+                                            is_repeater=is_rep or (existing.is_repeater if (existing and not is_room) else False),
                                             is_room_server=is_room,
                                             latitude=lat if lat is not None else (existing.latitude if existing else None),
                                             longitude=lon if lon is not None else (existing.longitude if existing else None),
@@ -1517,14 +1538,13 @@ class MeshCoreDriver(BaseRadioDriver):
 
                             if self.storage:
                                 fav = existing.is_favorite if existing else bool(self.config and self.config.is_user_favorite(node_id, alias))
-                                is_room = bool(is_room_server_contact({"alias": alias}) or (existing.is_room_server if existing else False))
                                 contact = NodeContact(
                                     node_id=node_id,
                                     alias=alias,
                                     is_favorite=fav,
                                     last_seen=datetime.now(timezone.utc).isoformat(),
                                     public_key=adv_key.lower(),
-                                    is_repeater=is_rep or (existing.is_repeater if existing else False),
+                                    is_repeater=is_rep or (existing.is_repeater if (existing and not is_room) else False),
                                     is_room_server=is_room,
                                     latitude=lat if lat is not None else (existing.latitude if existing else None),
                                     longitude=lon if lon is not None else (existing.longitude if existing else None),
@@ -1720,10 +1740,12 @@ class MeshCoreDriver(BaseRadioDriver):
             raw = self._extract_payload(event_data)
             text = str(raw.get("text", raw.get("msg", raw.get("payload", "")))).strip()
             src = str(raw.get("src", raw.get("pubkey_prefix", "")))
+            if not src and hasattr(self, "_last_cmd_target_id") and self._last_cmd_target_id:
+                src = self._last_cmd_target_id
             if not text:
                 return
             contact = self.storage.get_contact(src) if (src and self.storage) else None
-            sender_name = contact.alias if contact else (src or "Repeater")
+            sender_name = contact.alias if contact else (getattr(self, "_last_cmd_alias", None) or src or "Repeater")
             sender_id = contact.node_id if contact else src
 
             msg = MessageEnvelope(
@@ -2023,6 +2045,7 @@ class MeshCoreDriver(BaseRadioDriver):
     async def _async_send_repeater_cmd(self, dst_pubkey: str, command: str, repeater_id: str = ""):
         try:
             target_id = repeater_id or dst_pubkey[:12]
+            self._last_cmd_target_id = target_id
             safe_log_cmd = "!login [REDACTED]" if command.strip().lower().startswith("!login") else command
             logger.info(f"Processing repeater command for {target_id}: {safe_log_cmd}")
             if not self.client or not hasattr(self.client, "commands"):
@@ -2043,6 +2066,7 @@ class MeshCoreDriver(BaseRadioDriver):
                 c_store = self.storage.get_contact(target_id)
                 if c_store:
                     alias = c_store.alias
+            self._last_cmd_alias = alias
 
             cmd_lower = command.lower().strip()
 

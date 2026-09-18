@@ -112,8 +112,37 @@ def main():
     setup_app_logging(debug=args.debug)
 
     import os
-    if "QT_QPA_PLATFORM" not in os.environ:
-        os.environ["QT_QPA_PLATFORM"] = "wayland;xcb"
+    if sys.platform.startswith("win"):
+        plat = os.environ.get("QT_QPA_PLATFORM", "")
+        if not plat or "wayland" in plat.lower() or "xcb" in plat.lower():
+            os.environ["QT_QPA_PLATFORM"] = "windows"
+    elif sys.platform.startswith("darwin"):
+        if "QT_QPA_PLATFORM" not in os.environ:
+            os.environ["QT_QPA_PLATFORM"] = "cocoa"
+    else:
+        if "QT_QPA_PLATFORM" not in os.environ:
+            os.environ["QT_QPA_PLATFORM"] = "wayland;xcb"
+
+    if getattr(sys, "frozen", False):
+        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+        base_dir = getattr(sys, "_MEIPASS", exe_dir)
+        plugin_candidates = [
+            os.path.join(base_dir, "PyQt6", "Qt6", "plugins"),
+            os.path.join(base_dir, "Qt6", "plugins"),
+            os.path.join(base_dir, "plugins"),
+            os.path.join(exe_dir, "PyQt6", "Qt6", "plugins"),
+            os.path.join(exe_dir, "Qt6", "plugins"),
+            os.path.join(exe_dir, "plugins"),
+            os.path.join(exe_dir, "_internal", "PyQt6", "Qt6", "plugins"),
+            os.path.join(exe_dir, "_internal", "Qt6", "plugins"),
+        ]
+        from PyQt6.QtCore import QCoreApplication
+        for cand in plugin_candidates:
+            if os.path.isdir(cand):
+                QCoreApplication.addLibraryPath(cand)
+                if "QT_PLUGIN_PATH" not in os.environ:
+                    os.environ["QT_PLUGIN_PATH"] = cand
+
     if "QTWEBENGINE_CHROMIUM_FLAGS" not in os.environ:
         os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--no-sandbox"
     if "__GLX_VENDOR_LIBRARY_NAME" not in os.environ and sys.platform.startswith("linux"):

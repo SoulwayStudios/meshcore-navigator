@@ -37,21 +37,36 @@ def fetch_rainviewer_metadata() -> Optional[Dict]:
         with urllib.request.urlopen(req, timeout=5.0) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             host = data.get("host") or "https://tilecache.rainviewer.com"
-            past = data.get("radar", {}).get("past", [])
-            nowcast = data.get("radar", {}).get("nowcast", [])
+            radar_sec = data.get("radar", {})
+            past = radar_sec.get("past", [])
+            nowcast = radar_sec.get("nowcast", [])
+            all_frames = []
+            for f in past:
+                if isinstance(f, dict) and "path" in f:
+                    all_frames.append({
+                        "path": f["path"],
+                        "time": f.get("time", 0),
+                        "is_nowcast": False
+                    })
+            for f in nowcast:
+                if isinstance(f, dict) and "path" in f:
+                    all_frames.append({
+                        "path": f["path"],
+                        "time": f.get("time", 0),
+                        "is_nowcast": True
+                    })
 
-            latest_frame = None
-            if past:
-                latest_frame = past[-1]
-            elif nowcast:
-                latest_frame = nowcast[0]
+            # Default to latest recorded past frame, or first nowcast
+            latest_frame = past[-1] if past else (nowcast[0] if nowcast else None)
+            default_idx = max(0, len(past) - 1) if past else 0
 
             if latest_frame and "path" in latest_frame:
                 return {
                     "host": host,
                     "path": latest_frame["path"],
                     "time": latest_frame.get("time", 0),
-                    "frames": past[-6:] if past else [],
+                    "frames": all_frames if all_frames else past[-6:],
+                    "default_idx": default_idx,
                     "updated_at": datetime.now(timezone.utc).isoformat()
                 }
     except Exception as e:

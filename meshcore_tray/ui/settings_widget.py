@@ -1692,6 +1692,66 @@ class SettingsWidget(QWidget):
         card_gate.add_layout(port_row)
         layout.addWidget(card_gate)
 
+        # Satellite Tracking Card
+        card_sat = SettingsCard("🛰️ Satellite Tracking (CelesTrak & SGP4)")
+        sat_cfg = getattr(self.config, "satellites", None)
+        self.chk_sat_enabled = QCheckBox("Enable Satellite Tracking Layer")
+        self.chk_sat_enabled.setChecked(sat_cfg.enabled if sat_cfg else False)
+        card_sat.add_widget(self.chk_sat_enabled)
+
+        self.chk_sat_footprints = QCheckBox("Show Line-of-Sight Horizon Footprints on Map")
+        self.chk_sat_footprints.setChecked(sat_cfg.show_footprints if sat_cfg else True)
+        card_sat.add_widget(self.chk_sat_footprints)
+
+        self.chk_sat_tracks = QCheckBox("Show 90-minute Orbital Projection Ground Tracks")
+        self.chk_sat_tracks.setChecked(sat_cfg.show_ground_tracks if sat_cfg else True)
+        card_sat.add_widget(self.chk_sat_tracks)
+
+        sat_int_row = QHBoxLayout()
+        lbl_sint = QLabel("TLE Refresh Interval (hours):")
+        lbl_sint.setFixedWidth(200)
+        sat_int_row.addWidget(lbl_sint)
+        self.sat_interval_spin = QSpinBox()
+        self.sat_interval_spin.setRange(1, 168)
+        self.sat_interval_spin.setValue(sat_cfg.update_interval_hours if sat_cfg else 24)
+        sat_int_row.addWidget(self.sat_interval_spin, 1)
+        card_sat.add_layout(sat_int_row)
+
+        sat_el_row = QHBoxLayout()
+        lbl_sel = QLabel("Minimum Pass Elevation (°):")
+        lbl_sel.setFixedWidth(200)
+        sat_el_row.addWidget(lbl_sel)
+        self.sat_min_el_spin = QSpinBox()
+        self.sat_min_el_spin.setRange(0, 89)
+        self.sat_min_el_spin.setValue(sat_cfg.min_pass_elevation_deg if sat_cfg else 10)
+        sat_el_row.addWidget(self.sat_min_el_spin, 1)
+        card_sat.add_layout(sat_el_row)
+
+        grp_box = QVBoxLayout()
+        grp_lbl = QLabel("Tracked Satellite Groups:")
+        grp_lbl.setStyleSheet("font-weight: bold; color: #E5E7EB; margin-top: 4px;")
+        grp_box.addWidget(grp_lbl)
+
+        active_grps = sat_cfg.active_groups if sat_cfg else ["stations", "amateur", "weather"]
+        self.chk_sat_stations = QCheckBox("Space Stations (ISS, Tiangong CSS)")
+        self.chk_sat_stations.setChecked("stations" in active_grps)
+        grp_box.addWidget(self.chk_sat_stations)
+
+        self.chk_sat_amateur = QCheckBox("Amateur Radio Repeaters & Transponders (SO-50, AO-91, RS-44)")
+        self.chk_sat_amateur.setChecked("amateur" in active_grps)
+        grp_box.addWidget(self.chk_sat_amateur)
+
+        self.chk_sat_weather = QCheckBox("Weather & Earth Observation (NOAA 15/18/19, Meteor-M2)")
+        self.chk_sat_weather.setChecked("weather" in active_grps)
+        grp_box.addWidget(self.chk_sat_weather)
+
+        self.chk_sat_cubesat = QCheckBox("Cubesats & LoRa (TinyGS, FOSSASAT)")
+        self.chk_sat_cubesat.setChecked("cubesat" in active_grps)
+        grp_box.addWidget(self.chk_sat_cubesat)
+        card_sat.add_layout(grp_box)
+
+        layout.addWidget(card_sat)
+
         layout.addStretch()
         return self.tab_gateway
 
@@ -1996,6 +2056,20 @@ class SettingsWidget(QWidget):
 
         self.config.gateway.http_bridge_enabled = self.chk_gate.isChecked()
         self.config.gateway.http_port = self.gate_port_spin.value()
+
+        if hasattr(self, "chk_sat_enabled"):
+            self.config.satellites.enabled = self.chk_sat_enabled.isChecked()
+            self.config.satellites.show_footprints = self.chk_sat_footprints.isChecked()
+            self.config.satellites.show_ground_tracks = self.chk_sat_tracks.isChecked()
+            self.config.satellites.update_interval_hours = self.sat_interval_spin.value()
+            self.config.satellites.min_pass_elevation_deg = self.sat_min_el_spin.value()
+
+            grps = []
+            if self.chk_sat_stations.isChecked(): grps.append("stations")
+            if self.chk_sat_amateur.isChecked(): grps.append("amateur")
+            if self.chk_sat_weather.isChecked(): grps.append("weather")
+            if self.chk_sat_cubesat.isChecked(): grps.append("cubesat")
+            self.config.satellites.active_groups = grps or ["stations", "amateur"]
 
         if hasattr(self, "chk_show_splash"):
             self.config.show_splash_screen = self.chk_show_splash.isChecked()

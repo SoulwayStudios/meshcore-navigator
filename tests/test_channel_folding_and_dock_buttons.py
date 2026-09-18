@@ -160,17 +160,12 @@ def test_dms_and_repeaters_background_matches_channel_list(app, tmp_path):
 
 
 def test_scope_selector_vertical_layout_in_html_template():
-    """Verifies that the scope filter bar is styled vertically on the left side of the map in the slate grey scheme."""
+    """Verifies that the scope filter bar is styled vertically on the left side of the map in the unified dark grey scheme."""
     from meshcore_tray.ui.mesh_map_widget import LEAFLET_HTML_TEMPLATE
     assert ".scope-filter-bar {" in LEAFLET_HTML_TEMPLATE
     assert "flex-direction: column;" in LEAFLET_HTML_TEMPLATE
-    assert "left: 10px;" in LEAFLET_HTML_TEMPLATE
-    assert "top: 50px;" in LEAFLET_HTML_TEMPLATE
-    assert "background: rgba(34, 35, 39, 0.95);" in LEAFLET_HTML_TEMPLATE
-    assert "border: 1px solid #414143;" in LEAFLET_HTML_TEMPLATE
-    assert "background: #2B2F38;" in LEAFLET_HTML_TEMPLATE
+    assert "map-overlay-panel" in LEAFLET_HTML_TEMPLATE
     assert "overflow-y: auto;" in LEAFLET_HTML_TEMPLATE
-    assert "overflow-x: hidden;" in LEAFLET_HTML_TEMPLATE
     assert "scope-pill-name" in LEAFLET_HTML_TEMPLATE
 
 

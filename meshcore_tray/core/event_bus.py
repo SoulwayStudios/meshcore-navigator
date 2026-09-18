@@ -31,6 +31,9 @@ class EventType:
     READ_STATE_UPDATED = "read_state_updated"
     VISUALISE_MESSAGE_PATH = "visualise_message_path"
     CLEAR_VISUALISED_PATHS = "clear_visualised_paths"
+    SATELLITES_UPDATED = "satellites_updated"
+    SATELLITE_PASS_ALERT = "satellite_pass_alert"
+    CONTACT_DELETED = "contact_deleted"
 
 
 class EventBus:

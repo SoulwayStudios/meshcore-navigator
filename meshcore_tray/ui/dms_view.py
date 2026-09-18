@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
 )
 
 from meshcore_tray.config import AppConfig
-from meshcore_tray.core.models import NodeContact, MessageEnvelope
+from meshcore_tray.core.models import NodeContact, MessageEnvelope, is_room_server_contact
 from meshcore_tray.core.event_bus import bus, EventType
 from meshcore_tray.ui.chat_widget import ChatWidget
 from meshcore_tray.ui.composer import PowerComposer
@@ -436,7 +436,7 @@ class DMsViewWidget(QWidget):
             if is_rep:
                 continue  # Repeaters live in the Repeaters view
 
-            is_room = "[room]" in (c.alias or "").lower() or "[server]" in (c.alias or "").lower()
+            is_room = getattr(c, "is_room_server", False) or is_room_server_contact(c)
             is_fav = bool(c.is_favorite or (self.config and self.config.is_user_favorite(c.node_id, c.alias or "")))
 
             if is_fav:

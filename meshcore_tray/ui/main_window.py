@@ -8,7 +8,8 @@ from PyQt6.QtCore import Qt, QPoint, QTimer, QUrl
 from PyQt6.QtGui import QIcon, QDesktopServices
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QSplitter,
-    QLabel, QPushButton, QFrame, QStackedWidget, QMenu, QApplication
+    QLabel, QPushButton, QFrame, QStackedWidget, QMenu, QApplication,
+    QSystemTrayIcon
 )
 
 from meshcore_tray import __app_name__, __version__
@@ -26,6 +27,7 @@ from meshcore_tray.ui.nav_dock import NavDockWidget
 from meshcore_tray.ui.dms_view import DMsViewWidget
 from meshcore_tray.ui.room_servers_view import RoomServersViewWidget
 from meshcore_tray.ui.repeaters_view import RepeatersViewWidget
+from meshcore_tray.ui.satellites_view import SatellitesViewWidget
 from meshcore_tray.ui.heard_floods_view import HeardFloodsWidget
 from meshcore_tray.ui.splash_overlay import SplashOverlay
 from meshcore_tray.ui.avatar_generator import set_global_avatar_style
@@ -95,6 +97,7 @@ class MainWindow(QMainWindow):
         self.nav_dock.layer_toggled.connect(self._on_dock_layer_toggled)
         self.nav_dock.radio_connect_requested.connect(self._on_radio_connect_requested)
         self.nav_dock.contact_selected.connect(self._on_contact_selected)
+        self.nav_dock.satellite_selected.connect(self._on_favorite_satellite_selected)
         main_layout.addWidget(self.nav_dock)
 
         # Compatibility handles for companion node and state
@@ -194,6 +197,10 @@ class MainWindow(QMainWindow):
             self.mesh_map.set_rf_links(True)
         self.mesh_map.setMinimumWidth(280)
         self.mesh_map.node_selected.connect(self._on_contact_selected)
+        self.mesh_map.search_node_id_toggled.connect(
+            lambda active: self.map_layer_dock.set_layer_active("search_node_id", active)
+        )
+        self.mesh_map.lightning_proximity_alert.connect(self._on_lightning_proximity_alert)
         self.nav_dock.node_filter_changed.connect(self.mesh_map.set_node_filter_mode)
         self.main_splitter.addWidget(self.mesh_map)
         self.main_splitter.splitterMoved.connect(lambda pos, idx: self.mesh_map.pause_geometry_motion())
@@ -241,12 +248,18 @@ class MainWindow(QMainWindow):
         self.repeaters_view.show_on_map_requested.connect(self._on_show_contact_on_map)
         self.repeaters_view.track_adsb_requested.connect(self._on_track_node_adsb)
         self.repeaters_view.switch_to_chat_requested.connect(lambda: self.nav_dock.switch_view("main"))
-        self.main_stack.addWidget(self.repeaters_view) # Index 2: Repeaters View
+        self.main_stack.addWidget(self.repeaters_view) # Index 3: Repeaters View
+
+        # --- VIEW: Satellites & Spacecraft ---
+        self.satellites_view = SatellitesViewWidget(storage=self.storage, config=self.config)
+        self.satellites_view.show_on_map_requested.connect(self._on_show_satellite_on_map)
+        self.satellites_view.favorite_toggled.connect(lambda nid, fav: self._update_dock_favorites())
+        self.main_stack.addWidget(self.satellites_view) # Index 4: Satellites View
 
         # --- VIEW 4: Settings View (Embedded full-width view) ---
         self.settings_view = SettingsWidget(config=self.config, storage=self.storage, radio_driver=self.radio_driver, parent=self)
         self.settings_view.close_requested.connect(self._close_settings)
-        self.main_stack.addWidget(self.settings_view)  # Index 3: Settings View
+        self.main_stack.addWidget(self.settings_view)  # Index 5: Settings View
 
         # Wrap main stack with a vertical container to host dismissable update notifications
         content_container = QWidget()
@@ -384,9 +397,13 @@ class MainWindow(QMainWindow):
                 is_fav = bool(c.is_favorite or (c.node_id in fav_users) or (c.alias and c.alias in fav_users))
                 if is_fav:
                     favorites.append(c)
+            # Include favorite satellites
+            if hasattr(self.storage, "get_favorite_satellites"):
+                fav_sats = self.storage.get_favorite_satellites()
+                favorites.extend(fav_sats)
             self.nav_dock.update_favorite_contacts(favorites)
         except Exception as e:
-            logger.warning(f"Error updating dock favorite contacts: {e}")
+            logger.warning(f"Error updating dock favorites: {e}")
 
     def _on_nav_view_changed(self, view_name: str):
         if view_name == "main":
@@ -416,6 +433,11 @@ class MainWindow(QMainWindow):
                 self.sidebar.setVisible(False)
             self.repeaters_view.reload_repeaters()
             self.main_stack.setCurrentWidget(self.repeaters_view)
+        elif view_name == "satellites":
+            if hasattr(self, "sidebar"):
+                self.sidebar.setVisible(False)
+            self.satellites_view.reload_satellites()
+            self.main_stack.setCurrentWidget(self.satellites_view)
 
     def _on_dock_layer_toggled(self, layer_key: str, is_active: bool):
         if not hasattr(self, "mesh_map"):
@@ -440,6 +462,11 @@ class MainWindow(QMainWindow):
             self.mesh_map.set_los_view_active(is_active)
         elif layer_key == "space_weather":
             self.mesh_map.set_space_weather(is_active)
+        elif layer_key == "satellites":
+            self.mesh_map.set_satellites(is_active)
+        elif layer_key == "search_node_id":
+            if hasattr(self.mesh_map, "set_search_node_id"):
+                self.mesh_map.set_search_node_id(is_active)
         elif layer_key == "age_fade":
             if self.config and hasattr(self.config, "meshcore"):
                 self.config.meshcore.node_freshness_fading = is_active
@@ -449,6 +476,20 @@ class MainWindow(QMainWindow):
                     pass
             self.mesh_map.set_freshness_fading(is_active)
             self._update_freshness_btn_state()
+
+    def _on_lightning_proximity_alert(self, distance_mi: float, bearing_deg: int):
+        """Displays desktop/tray notification for nearby lightning strikes within 25 miles."""
+        logger.warning(f"Lightning proximity alert: strike {distance_mi:.1f} mi away at {bearing_deg}°")
+        if getattr(self, "_tray_icon", None) and self._tray_icon.isVisible():
+            try:
+                self._tray_icon.showMessage(
+                    "⚡ Thunderstorm Proximity Alert",
+                    f"Lightning strike detected {distance_mi:.1f} mi away (bearing {bearing_deg}°).",
+                    QSystemTrayIcon.MessageIcon.Warning,
+                    6000,
+                )
+            except Exception as e:
+                logger.debug(f"Failed to show proximity tray message: {e}")
 
     def _on_visualise_packet_path_info(self, path):
         """Highlights a selected packet path on the map and centers on the originator."""
@@ -681,6 +722,19 @@ class MainWindow(QMainWindow):
             self.repeaters_view.set_active_repeater(contact)
         else:
             self._on_dm_requested(contact_id)
+
+    def _on_favorite_satellite_selected(self, norad_id: str):
+        self.nav_dock.switch_view("satellites")
+        if hasattr(self, "satellites_view"):
+            self.satellites_view.select_satellite(norad_id)
+
+    def _on_show_satellite_on_map(self, norad_id: str):
+        self.nav_dock.switch_view("main")
+        if hasattr(self, "map_layer_dock") and hasattr(self.map_layer_dock, "btn_satellites"):
+            if not self.map_layer_dock.btn_satellites.isChecked():
+                self.map_layer_dock.btn_satellites.setChecked(True)
+        if hasattr(self, "mesh_map"):
+            self.mesh_map.select_satellite(norad_id)
 
     def _on_send_repeater_command(self, repeater_id: str, command: str):
         if self.radio_driver:

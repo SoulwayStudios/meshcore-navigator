@@ -14,7 +14,7 @@ import time
 from PyQt6.QtCore import QObject, Qt, QUrl, pyqtSignal, pyqtSlot, QTimer, QPoint, QEvent
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
-    QButtonGroup, QComboBox, QFrame, QHBoxLayout, QLabel, QMenu, QProgressBar,
+    QAbstractItemView, QButtonGroup, QComboBox, QFrame, QHBoxLayout, QLabel, QMenu, QProgressBar,
     QPushButton, QSplitter, QVBoxLayout, QWidget, QApplication
 )
 
@@ -54,6 +54,7 @@ from meshcore_tray.core.thunderstorm_service import ThunderstormService
 from meshcore_tray.core.elevation_service import ElevationService
 from meshcore_tray.core.viewshed_service import ViewshedService
 from meshcore_tray.core.space_weather_service import SpaceWeatherService
+from meshcore_tray.core.satellite_service import SatelliteService
 from meshcore_tray.ui.elevation_profile_widget import ElevationProfileWidget
 
 STATIC_VENDOR_DIR = Path(__file__).parent / "static" / "vendor"
@@ -79,6 +80,7 @@ def get_leaflet_html() -> str:
             f"<script>{_load_vendor_asset('leaflet.js')}</script>\n"
             f"<script>{_load_vendor_asset('d3.v4.min.js')}</script>\n"
             f"<script>{_load_vendor_asset('d3-contour.min.js')}</script>\n"
+            f"<script>{_load_vendor_asset('satellite.min.js')}</script>\n"
         )
         html = LEAFLET_HTML_TEMPLATE.replace("<!-- __VENDOR_STYLES__ -->", vendor_css)
         html = html.replace("<!-- __VENDOR_SCRIPTS__ -->", vendor_js)
@@ -247,34 +249,54 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             color: #FFFFFF;
         }
 
-        /* Shared Unified Floating Overlay Panels Style */
+        /* Global Discord-Dark Scrollbar for all overlay panels & lists */
+        ::-webkit-scrollbar {
+            width: 5px;
+            height: 5px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #1E1F22;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #383A40;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #4E5058;
+        }
+
+        /* Shared Unified Floating Overlay Panels Style (Satellite Tracker Theme) */
         .map-overlay-panel {
-            background: rgba(18, 21, 28, 0.94) !important;
+            background: rgba(30, 31, 34, 0.96) !important;
             backdrop-filter: blur(12px) !important;
             -webkit-backdrop-filter: blur(12px) !important;
-            border: 1px solid rgba(255, 255, 255, 0.14) !important;
-            border-radius: 10px !important;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.65), 0 0 1px rgba(255, 255, 255, 0.2) !important;
+            border: 1px solid #383A40 !important;
+            border-radius: 8px !important;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.65) !important;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
             user-select: none;
             transition: box-shadow 0.2s ease, border-color 0.2s ease;
+            box-sizing: border-box;
+            overflow: hidden;
         }
         .map-overlay-panel:hover, .map-overlay-panel.active-drag {
-            border-color: rgba(96, 165, 250, 0.55) !important;
-            box-shadow: 0 12px 36px rgba(0, 0, 0, 0.8), 0 0 14px rgba(56, 189, 248, 0.2) !important;
+            border-color: #5865F2 !important;
+            box-shadow: 0 12px 36px rgba(0, 0, 0, 0.8), 0 0 12px rgba(88, 101, 242, 0.25) !important;
         }
         .map-overlay-header {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 6px 10px;
+            padding: 6px 10px 4px 10px;
             cursor: move;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-            background: rgba(255, 255, 255, 0.03);
-            border-top-left-radius: 9px;
-            border-top-right-radius: 9px;
+            border-bottom: 1px solid #383A40;
+            background: rgba(255, 255, 255, 0.02);
+            border-top-left-radius: 7px;
+            border-top-right-radius: 7px;
             gap: 8px;
             user-select: none;
+            flex-shrink: 0;
         }
         .map-overlay-header:active {
             cursor: grabbing;
@@ -289,12 +311,12 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
         }
         .map-drag-handle-grip:hover {
             opacity: 0.95;
-            color: #38BDF8;
+            color: #5865F2;
         }
 
         .floating-route-panel {
             position: absolute;
-            top: 12px;
+            top: 60px;
             left: 12px;
             width: 290px;
             max-width: calc(100% - 24px);
@@ -599,6 +621,15 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             box-shadow: 0 0 8px var(--room-server-color, #FF00FF);
         }
 
+        /* Phantom repeater nodes: black dot with slate-gray border and dark shadow */
+        .node-dot-phantom {
+            width: var(--dot-size-repeater);
+            height: var(--dot-size-repeater);
+            background: #000000 !important;
+            border: 1.5px solid #4B5563 !important;
+            box-shadow: 0 0 6px rgba(0, 0, 0, 0.9) !important;
+        }
+
         /* Hover animations when mouse enters the 20px hitbox */
         .node-marker-wrap:hover .node-dot {
             transform: scale(3.0);
@@ -607,6 +638,12 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
         .node-marker-wrap:hover .node-dot-repeater {
             background: var(--repeater-hover-color) !important;
             box-shadow: 0 0 10px var(--repeater-hover-color);
+        }
+        .node-marker-wrap:hover .node-dot-phantom {
+            transform: scale(2.8) !important;
+            background: #000000 !important;
+            border: 2px solid #9CA3AF !important;
+            box-shadow: 0 0 12px rgba(0, 0, 0, 1.0) !important;
         }
         .node-marker-wrap:hover .node-dot-companion {
             background: var(--companion-hover-color) !important;
@@ -810,187 +847,277 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
         .leaflet-bar a:last-child {
             border-bottom: none !important;
         }
-        /* Floating Path Mode Legend */
+        /* Floating Path Mode Legend - Portrait Card */
         .path-mode-legend {
             position: absolute;
             bottom: 24px;
             left: 12px;
-            padding: 8px 12px;
+            width: 250px;
+            padding: 8px 10px 6px 10px;
             font-size: 11px;
             color: #E5E7EB;
             z-index: 1000;
             display: none;
             pointer-events: auto;
             user-select: none;
+            flex-direction: column;
+            gap: 6px;
         }
-        .path-legend-item {
-            display: inline-flex;
+        .path-mode-row {
+            display: flex;
             align-items: center;
-            margin-right: 12px;
-            font-weight: 500;
+            justify-content: space-between;
+            background: #2B2D31;
+            border: 1px solid #383A40;
+            border-radius: 5px;
+            padding: 5px 8px;
+            gap: 8px;
+            transition: border-color 0.15s ease, background 0.15s ease;
         }
-        .path-legend-item:last-child {
-            margin-right: 0;
+        .path-mode-row:hover {
+            border-color: #4E5058;
+            background: #313338;
+        }
+        .path-mode-left {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            min-width: 0;
         }
         .path-legend-dot {
             width: 8px;
             height: 8px;
             border-radius: 50%;
-            margin-right: 6px;
-            display: inline-block;
+            flex-shrink: 0;
         }
-        /* Floating Tropo Legend Panel */
+        .path-mode-info {
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+        }
+        .path-mode-name {
+            font-size: 10px;
+            font-weight: 700;
+            color: #F2F3F5;
+            white-space: nowrap;
+        }
+        .path-mode-desc {
+            font-size: 8px;
+            color: #949BA4;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .path-stat-badge {
+            background: #111214;
+            border: 1px solid #383A40;
+            border-radius: 8px;
+            padding: 1px 6px;
+            font-size: 9px;
+            font-weight: 600;
+            color: #DBDEE1;
+            flex-shrink: 0;
+            min-width: 18px;
+            text-align: center;
+        }
+        .path-options-bar {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding-top: 4px;
+            border-top: 1px solid #383A40;
+            margin-top: 2px;
+        }
+        .path-chk-label {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 9.5px;
+            color: #B5BAC1;
+            cursor: pointer;
+        }
+
+        /* Floating Tropo Legend Panel - Portrait Card */
         .tropo-legend-panel {
             position: absolute;
             bottom: 24px;
             right: 12px;
-            padding: 10px 14px;
+            width: 250px;
+            padding: 8px 10px 6px 10px;
             font-size: 11px;
             color: #E5E7EB;
             z-index: 1000;
             display: none;
             user-select: none;
-            min-width: 250px;
+            flex-direction: column;
+            gap: 6px;
         }
         .tropo-legend-header {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            margin-bottom: 8px;
-            gap: 8px;
+            border-bottom: 1px solid #383A40;
+            padding-bottom: 4px;
+            flex-shrink: 0;
         }
         .tropo-legend-title {
             font-weight: 700;
             font-size: 11px;
-            color: #93C5FD;
+            color: #F2F3F5;
             display: flex;
             align-items: center;
-            gap: 4px;
+            gap: 6px;
+            text-transform: uppercase;
         }
         .tropo-stepper {
-            display: inline-flex;
+            display: flex;
             align-items: center;
-            background: #1F2430;
-            border: 1px solid #374151;
+            justify-content: space-between;
+            background: #111214;
+            border: 1px solid #383A40;
             border-radius: 4px;
             padding: 2px 4px;
             gap: 6px;
+            width: 100%;
+            box-sizing: border-box;
         }
         .tropo-step-btn {
             background: transparent;
             border: none;
-            color: #9CA3AF;
+            color: #949BA4;
             cursor: pointer;
             font-size: 10px;
-            padding: 2px 5px;
+            padding: 2px 6px;
             border-radius: 3px;
             line-height: 1;
         }
         .tropo-step-btn:hover {
-            background: #374151;
+            background: #2B2D31;
             color: #FFFFFF;
         }
         .tropo-time-label {
             font-size: 10px;
             font-weight: 600;
-            color: #F3F4F6;
+            color: #F2F3F5;
             white-space: nowrap;
         }
         .tropo-legend-close {
             background: transparent;
             border: none;
-            color: #9CA3AF;
+            color: #949BA4;
             cursor: pointer;
             font-size: 14px;
+            font-weight: bold;
             line-height: 1;
-            padding: 2px 4px;
+            padding: 0 2px;
         }
         .tropo-legend-close:hover {
-            color: #EF4444;
+            color: #FFFFFF;
         }
-        .tropo-scale-bar {
+        .tropo-tier-list {
             display: flex;
-            height: 10px;
-            border-radius: 4px;
-            overflow: hidden;
-            margin-bottom: 4px;
-            border: 1px solid #374151;
+            flex-direction: column;
+            gap: 3px;
         }
-        .tropo-scale-step {
-            flex: 1;
-            height: 100%;
-        }
-        .tropo-scale-labels {
+        .tropo-tier-item {
             display: flex;
+            align-items: center;
             justify-content: space-between;
-            font-size: 9px;
-            color: #9CA3AF;
-            margin-bottom: 6px;
+            background: #2B2D31;
+            border: 1px solid #383A40;
+            border-radius: 4px;
+            padding: 3px 6px;
+            font-size: 9.5px;
+        }
+        .tropo-tier-left {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .tropo-tier-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 2px;
+            flex-shrink: 0;
+        }
+        .tropo-tier-name {
+            color: #F2F3F5;
+            font-weight: 600;
+        }
+        .tropo-tier-range {
+            color: #949BA4;
+            font-size: 8.5px;
+            font-family: monospace;
         }
         .tropo-legend-footer {
-            font-size: 9px;
-            color: #6B7280;
+            font-size: 8.5px;
+            color: #64748B;
             text-align: right;
-            border-top: 1px solid #282E3D;
+            border-top: 1px solid #383A40;
             padding-top: 4px;
-            margin-top: 4px;
+            margin-top: 2px;
         }
+
+        /* Floating Scope Filter Bar - Portrait Card */
         .scope-filter-bar {
             position: absolute;
-            top: 50px;
-            left: 10px;
+            top: 60px;
+            left: 12px;
             z-index: 1000;
-            background: rgba(34, 35, 39, 0.95);
-            border: 1px solid #414143;
-            padding: 8px 10px;
+            padding: 8px 10px 6px 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            user-select: none;
+            width: 220px;
+            max-height: calc(100% - 120px);
+            box-sizing: border-box;
+        }
+        .scope-filter-title {
+            font-size: 11px;
+            font-weight: 700;
+            color: #F2F3F5;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .scope-options-bar {
             display: flex;
             flex-direction: column;
             gap: 4px;
-            user-select: none;
-            width: 155px;
-            max-height: calc(100% - 120px);
-            overflow-y: auto;
-            overflow-x: hidden;
+            background: #2B2D31;
+            border: 1px solid #383A40;
+            border-radius: 4px;
+            padding: 4px 6px;
         }
-        .scope-filter-bar::-webkit-scrollbar {
-            width: 4px;
-        }
-        .scope-filter-bar::-webkit-scrollbar-track {
-            background: transparent;
-        }
-        .scope-filter-bar::-webkit-scrollbar-thumb {
-            background: #414143;
-            border-radius: 2px;
-        }
-        .scope-filter-bar::-webkit-scrollbar-thumb:hover {
-            background: #60687A;
-        }
-        .scope-filter-title {
-            font-size: 10px;
-            font-weight: 700;
-            color: #9CA3AF;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            padding: 2px 2px 4px 2px;
-            border-bottom: 1px solid #414143;
-            margin-bottom: 2px;
-            white-space: nowrap;
+        .scope-chk-label {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 9.5px;
+            color: #B5BAC1;
+            cursor: pointer;
         }
         .scope-pills-container {
             display: flex;
             flex-direction: column;
             gap: 3px;
+            overflow-y: auto;
+            max-height: 240px;
+            padding-right: 2px;
         }
         .scope-pill {
-            background: #2B2F38;
-            border: 1px solid #414143;
-            color: #E5E7EB;
-            font-size: 11px;
+            background: #2B2D31;
+            border: 1px solid #383A40;
+            color: #DBDEE1;
+            font-size: 10px;
             font-weight: 600;
-            padding: 4px 7px;
-            border-radius: 6px;
+            padding: 3px 6px;
+            border-radius: 4px;
             cursor: pointer;
-            transition: background 0.15s ease, border-color 0.15s ease;
+            transition: background 0.12s ease, border-color 0.12s ease;
             white-space: nowrap;
             display: flex;
             align-items: center;
@@ -998,15 +1125,14 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             gap: 6px;
         }
         .scope-pill:hover {
-            background: #353A45;
-            border-color: #60687A;
+            background: #35373C;
             color: #FFFFFF;
+            border-color: #4E5058;
         }
         .scope-pill.active {
-            background: #464C5A;
-            border-color: #60687A;
+            background: #35373C;
+            border-color: #5865F2;
             color: #FFFFFF;
-            box-shadow: none;
         }
         .scope-pill-name {
             overflow: hidden;
@@ -1014,12 +1140,12 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             white-space: nowrap;
         }
         .scope-pill-count {
-            background: #1C1C1E;
+            background: #111214;
             border: 1px solid #383A40;
             border-radius: 8px;
             padding: 1px 5px;
             font-size: 9px;
-            color: #9CA3AF;
+            color: #949BA4;
             flex-shrink: 0;
             margin-left: auto;
         }
@@ -1034,9 +1160,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             pointer-events: none;
         }
         .scope-btn {
-            background: rgba(255, 255, 255, 0.08);
-            color: #D1D5DB;
-            border: 1px solid rgba(255, 255, 255, 0.18);
+            background: #2B2D31;
+            color: #DBDEE1;
+            border: 1px solid #383A40;
             border-radius: 4px;
             padding: 3px 7px;
             font-size: 10px;
@@ -1046,160 +1172,382 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             white-space: nowrap;
         }
         .scope-btn:hover {
-            background: rgba(255, 255, 255, 0.18);
+            background: #35373C;
             color: #FFFFFF;
-            border-color: rgba(255, 255, 255, 0.35);
+            border-color: #4E5058;
         }
-        .scope-btn.exclude-scope-btn:hover {
-            background: rgba(239, 68, 68, 0.25);
-            color: #FCA5A5;
-            border-color: rgba(239, 68, 68, 0.5);
-        }
-        .scope-btn.restore-scope-btn {
-            background: rgba(16, 185, 129, 0.15);
-            color: #6EE7B7;
-            border-color: rgba(16, 185, 129, 0.3);
-        }
-        .scope-btn.restore-scope-btn:hover {
-            background: rgba(16, 185, 129, 0.28);
-            color: #A7F3D0;
-            border-color: rgba(16, 185, 129, 0.6);
-        }
-        .scope-btn.apply-scope-btn {
-            background: #2563EB;
-            color: #FFFFFF;
-            border-color: #3B82F6;
-        }
-        .scope-btn.apply-scope-btn:hover {
-            background: #1D4ED8;
-        }
-        /* Floating Activity Heatmap Bar over Map */
+
+        /* Floating Activity Heatmap - Portrait Card */
         .activity-heatmap-bar {
             position: absolute;
-            bottom: 72px;
+            bottom: 24px;
             left: 12px;
             z-index: 1000;
-            padding: 6px 12px;
+            width: 250px;
+            padding: 8px 10px 6px 10px;
             display: flex;
-            align-items: center;
-            gap: 8px;
+            flex-direction: column;
+            gap: 6px;
             user-select: none;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            box-sizing: border-box;
         }
         .activity-bar-title {
             font-size: 11px;
-            font-weight: bold;
-            color: #FBBF24;
-            white-space: nowrap;
-        }
-        .activity-btn-group {
-            display: flex;
-            gap: 4px;
-            background: rgba(0, 0, 0, 0.35);
-            padding: 2px;
-            border-radius: 5px;
-            border: 1px solid #374151;
-        }
-        .activity-tf-btn {
-            background: transparent;
-            color: #9CA3AF;
-            border: none;
-            border-radius: 4px;
-            padding: 3px 8px;
-            font-size: 10.5px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.15s ease;
-        }
-        .activity-tf-btn:hover {
-            color: #FFFFFF;
-            background: rgba(255, 255, 255, 0.1);
-        }
-        .activity-tf-btn.active {
-            background: #5865F2;
-            color: #FFFFFF;
-            font-weight: bold;
-        }
-        .activity-legend {
+            font-weight: 700;
+            color: #F2F3F5;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
             display: flex;
             align-items: center;
             gap: 6px;
+        }
+        .activity-btn-group {
+            display: flex;
+            background: #111214;
+            border: 1px solid #383A40;
+            border-radius: 6px;
+            padding: 2px;
+            gap: 2px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .activity-tf-btn {
+            flex: 1;
+            background: transparent;
+            color: #949BA4;
+            border: none;
+            border-radius: 4px;
+            padding: 3px 2px;
+            font-size: 9px;
+            font-weight: 600;
+            cursor: pointer;
+            text-align: center;
+            transition: all 0.15s ease;
+        }
+        .activity-tf-btn:hover {
+            color: #DBDEE1;
+            background: #2B2D31;
+        }
+        .activity-tf-btn.active {
+            background: #35373C;
+            color: #FFFFFF;
+            font-weight: 700;
+        }
+        .act-options-bar {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            background: #2B2D31;
+            border: 1px solid #383A40;
+            border-radius: 4px;
+            padding: 4px 6px;
+        }
+        .act-chk-label {
+            display: flex;
+            align-items: center;
+            gap: 5px;
             font-size: 9.5px;
-            color: #9CA3AF;
-            border-left: 1px solid #374151;
-            padding-left: 8px;
+            color: #B5BAC1;
+            cursor: pointer;
+        }
+        .act-peak-card {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: #111214;
+            border: 1px solid #383A40;
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 9px;
+        }
+        .activity-legend {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            background: #1E1F22;
+            border: 1px solid #383A40;
+            border-radius: 4px;
+            padding: 4px 6px;
         }
         .act-leg-item {
             display: flex;
             align-items: center;
-            gap: 3px;
+            justify-content: space-between;
+            font-size: 9.5px;
+            color: #DBDEE1;
+            padding: 1px 0;
         }
         .act-dot {
-            width: 7px;
-            height: 7px;
+            width: 6px;
+            height: 6px;
             border-radius: 50%;
             display: inline-block;
+            margin-right: 5px;
         }
         .activity-bar-close {
             background: transparent;
             border: none;
-            color: #9CA3AF;
+            color: #949BA4;
             font-size: 14px;
             font-weight: bold;
             cursor: pointer;
-            padding: 0 4px;
+            padding: 0 2px;
             line-height: 1;
         }
         .activity-bar-close:hover {
             color: #FFFFFF;
         }
 
-        /* Floating Thunderstorm Panel */
+        /* Floating Thunderstorm & Radar Panel - Portrait Card */
         .thunderstorm-panel {
             position: absolute;
-            top: 215px;
+            top: 12px;
             right: 12px;
             z-index: 1000;
-            border: 1px solid rgba(56, 189, 248, 0.5) !important;
-            padding: 8px 12px;
+            width: 270px;
+            padding: 8px 10px 6px 10px;
             display: flex;
             flex-direction: column;
-            gap: 4px;
+            gap: 6px;
             user-select: none;
-            width: 220px;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            box-sizing: border-box;
         }
         .thunderstorm-header {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            border-bottom: 1px solid #374151;
+            border-bottom: 1px solid #383A40;
             padding-bottom: 4px;
+            flex-shrink: 0;
         }
         .thunderstorm-title {
             font-size: 11px;
-            font-weight: bold;
-            color: #38BDF8;
+            font-weight: 700;
+            color: #F2F3F5;
             display: flex;
             align-items: center;
             gap: 6px;
+            text-transform: uppercase;
         }
-        .thunderstorm-sub {
+        .thunder-stepper {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: #111214;
+            border: 1px solid #383A40;
+            border-radius: 4px;
+            padding: 2px 4px;
+            gap: 6px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .thunder-step-btn {
+            background: transparent;
+            border: none;
+            color: #949BA4;
+            cursor: pointer;
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 3px;
+            line-height: 1;
+        }
+        .thunder-step-btn:hover {
+            background: #2B2D31;
+            color: #FFFFFF;
+        }
+        .thunder-time-label {
             font-size: 9.5px;
-            color: #9CA3AF;
+            font-weight: 600;
+            color: #F2F3F5;
+            white-space: nowrap;
+        }
+        .thunder-nearest-card {
+            background: #2B2D31;
+            border: 1px solid #383A40;
+            border-radius: 5px;
+            padding: 6px 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+        }
+        .thunder-jump-btn {
+            background: #5865F2;
+            border: none;
+            border-radius: 4px;
+            color: #FFFFFF;
+            font-size: 9.5px;
+            font-weight: 600;
+            padding: 3px 6px;
+            cursor: pointer;
             margin-top: 2px;
+            transition: background 0.15s;
+        }
+        .thunder-jump-btn:hover {
+            background: #4752C4;
+        }
+        .thunder-proximity-badge {
+            background: rgba(239, 68, 68, 0.2);
+            border: 1px solid #EF4444;
+            color: #FCA5A5;
+            font-size: 9px;
+            font-weight: 700;
+            border-radius: 4px;
+            padding: 3px 6px;
+            text-align: center;
+            animation: pulse-border 1.5s infinite;
+        }
+        @keyframes pulse-border {
+            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+            70% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+        .thunder-stat-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4px;
+        }
+        .thunder-stat-box {
+            background: #111214;
+            border: 1px solid #383A40;
+            border-radius: 4px;
+            padding: 4px 6px;
+            text-align: center;
+        }
+        .thunder-stat-label {
+            font-size: 8px;
+            color: #949BA4;
+            text-transform: uppercase;
+        }
+        .thunder-stat-val {
+            font-size: 11px;
+            font-weight: 700;
+            color: #F2F3F5;
         }
         .thunderstorm-close-btn {
             background: transparent;
             border: none;
-            color: #9CA3AF;
+            color: #949BA4;
             font-size: 14px;
             font-weight: bold;
             cursor: pointer;
             line-height: 1;
+            padding: 0 2px;
         }
         .thunderstorm-close-btn:hover {
             color: #FFFFFF;
+        }
+
+        /* Floating Search Node IDs Panel - Portrait Card */
+        .search-node-id-panel {
+            position: absolute;
+            top: 60px;
+            left: 12px;
+            z-index: 1000;
+            width: 275px;
+            padding: 8px 10px 6px 10px;
+            display: none;
+            flex-direction: column;
+            gap: 6px;
+            user-select: none;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            box-sizing: border-box;
+        }
+        .search-node-input {
+            width: 100%;
+            box-sizing: border-box;
+            background: #111214;
+            border: 1px solid #383A40;
+            border-radius: 4px;
+            color: #F2F3F5;
+            font-family: monospace;
+            font-size: 11px;
+            padding: 5px 8px;
+            outline: none;
+            transition: border-color 0.15s, box-shadow 0.15s;
+        }
+        .search-node-input:focus {
+            border-color: #23A55A;
+            box-shadow: 0 0 6px rgba(35, 165, 90, 0.4);
+        }
+        .search-node-status {
+            font-size: 9px;
+            color: #949BA4;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 2px;
+        }
+        .search-node-results {
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+            max-height: 220px;
+            overflow-y: auto;
+            padding-right: 2px;
+        }
+        .search-node-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: #2B2D31;
+            border: 1px solid #383A40;
+            border-radius: 4px;
+            padding: 4px 7px;
+            cursor: pointer;
+            transition: all 0.12s ease;
+        }
+        .search-node-item:hover {
+            background: #35373C;
+            border-color: #23A55A;
+        }
+        .search-node-id-mono {
+            font-family: monospace;
+            font-weight: 700;
+            color: #23A55A;
+            font-size: 11px;
+        }
+        .search-node-meta {
+            font-size: 8.5px;
+            color: #949BA4;
+        }
+
+        /* Node Popup Green Node ID & Copy Button */
+        .node-popup-id-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 6px;
+            background: #111214;
+            border: 1px solid #383A40;
+            border-radius: 4px;
+            padding: 3px 6px;
+        }
+        .node-popup-id-mono {
+            font-family: monospace;
+            font-size: 11px;
+            font-weight: 700;
+            color: #23A55A;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .node-popup-copy-btn {
+            background: #2B2D31;
+            border: 1px solid #383A40;
+            border-radius: 3px;
+            color: #DBDEE1;
+            font-size: 9px;
+            font-weight: 600;
+            padding: 1px 5px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .node-popup-copy-btn:hover {
+            background: #383A40;
+            color: #FFFFFF;
+            border-color: #23A55A;
         }
 
         /* Floating Space Weather & Aurora Panel */
@@ -1835,6 +2183,349 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             transform-origin: 100px 100px;
             animation: radar-sweep-spin 5s linear infinite;
         }
+
+        /* Floating Satellite Tracking Panel */
+        .sat-panel {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            z-index: 1000;
+            padding: 8px 10px 4px 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            user-select: none;
+            width: 280px;
+            min-height: 200px;
+            max-height: 90vh;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            overflow: hidden;
+            box-sizing: border-box;
+            background: rgba(30, 31, 34, 0.96) !important;
+            border: 1px solid #383A40 !important;
+            border-radius: 8px !important;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.65) !important;
+        }
+        .sat-content-body {
+            overflow: hidden;
+            flex: 1;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            padding-right: 2px;
+        }
+        .sat-resize-handle {
+            height: 10px;
+            width: 100%;
+            cursor: ns-resize;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-top: 2px;
+            padding-bottom: 2px;
+            flex-shrink: 0;
+        }
+        .sat-resize-handle:hover .sat-resize-grip-line {
+            background-color: #5865F2;
+        }
+        .sat-resize-grip-line {
+            width: 36px;
+            height: 3px;
+            border-radius: 1.5px;
+            background-color: #4E5058;
+            transition: background-color 0.15s ease;
+        }
+        .sat-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid #383A40;
+            padding-bottom: 4px;
+            flex-shrink: 0;
+        }
+        .sat-title {
+            font-size: 11px;
+            font-weight: 700;
+            color: #F2F3F5;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .sat-close-btn {
+            background: transparent;
+            border: none;
+            color: #949BA4;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            padding: 0 2px;
+            line-height: 1;
+        }
+        .sat-close-btn:hover {
+            color: #FFFFFF;
+        }
+        .sat-refresh-btn {
+            background: #2B2D31;
+            border: 1px solid #383A40;
+            border-radius: 4px;
+            color: #DBDEE1;
+            font-size: 11px;
+            cursor: pointer;
+            padding: 2px 6px;
+            line-height: 1;
+        }
+        .sat-refresh-btn:hover {
+            background: #35373C;
+            color: #FFFFFF;
+        }
+        .sat-group-bar {
+            display: flex;
+            background: #111214;
+            border: 1px solid #383A40;
+            border-radius: 6px;
+            padding: 2px;
+            gap: 2px;
+            flex-shrink: 0;
+        }
+        .sat-group-pill {
+            flex: 1;
+            background: transparent;
+            border: none;
+            border-radius: 4px;
+            color: #949BA4;
+            font-size: 9px;
+            font-weight: 600;
+            padding: 3px 2px;
+            cursor: pointer;
+            text-align: center;
+            transition: all 0.15s ease;
+        }
+        .sat-group-pill:hover {
+            color: #DBDEE1;
+            background: #2B2D31;
+        }
+        .sat-group-pill.active {
+            background: #35373C;
+            color: #FFFFFF;
+            font-weight: 700;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+        }
+        .sat-search-input {
+            background: #111214;
+            border: 1px solid #383A40;
+            border-radius: 4px;
+            color: #DBDEE1;
+            font-size: 10px;
+            padding: 4px 6px;
+            outline: none;
+            width: 100%;
+            box-sizing: border-box;
+            flex-shrink: 0;
+        }
+        .sat-search-input:focus {
+            border-color: #5865F2;
+        }
+        .sat-quick-list {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            flex: 1 1 auto;
+            min-height: 90px;
+            overflow-y: auto;
+            background: #1E1F22;
+            border: 1px solid #383A40;
+            border-radius: 4px;
+            padding: 2px;
+        }
+        .sat-item-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 3px 6px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 10px;
+            color: #DBDEE1;
+            transition: background 0.12s;
+        }
+        .sat-item-row:hover {
+            background: #35373C;
+            color: #FFFFFF;
+        }
+        .sat-item-row.selected {
+            background: #35373C;
+            border-left: 2.5px solid #5865F2;
+            color: #FFFFFF;
+            font-weight: 600;
+        }
+        .sat-in-view-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #23A55A;
+            box-shadow: 0 0 6px #23A55A;
+            margin-right: 4px;
+            display: inline-block;
+        }
+        .sat-below-horizon-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #4E5058;
+            margin-right: 4px;
+            display: inline-block;
+        }
+        .sat-telemetry-card {
+            background: #2B2D31;
+            border: 1px solid #383A40;
+            border-radius: 6px;
+            padding: 6px 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            font-size: 10px;
+            flex-shrink: 0;
+            max-height: 220px;
+            overflow-y: auto;
+        }
+        .sat-telem-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid #383A40;
+            padding-bottom: 3px;
+        }
+        .sat-telem-name {
+            font-weight: 700;
+            color: #F2F3F5;
+            font-size: 11px;
+        }
+        .sat-pass-badge {
+            font-size: 9px;
+            padding: 1px 5px;
+            border-radius: 3px;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+        .sat-pass-badge.in-view {
+            background: rgba(35, 165, 90, 0.2);
+            border: 1px solid #23A55A;
+            color: #23A55A;
+            box-shadow: 0 0 6px rgba(35, 165, 90, 0.4);
+        }
+        .sat-pass-badge.below {
+            background: rgba(78, 80, 88, 0.25);
+            border: 1px solid #4E5058;
+            color: #949BA4;
+        }
+        .sat-grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4px 8px;
+            font-size: 9.5px;
+        }
+        .sat-metric-label {
+            color: #949BA4;
+            font-size: 8.5px;
+            text-transform: uppercase;
+        }
+        .sat-metric-val {
+            color: #F2F3F5;
+            font-weight: 600;
+            font-family: monospace;
+        }
+        .sat-freq-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 9px;
+            margin-top: 2px;
+        }
+        .sat-freq-table th {
+            text-align: left;
+            color: #949BA4;
+            border-bottom: 1px solid #383A40;
+            padding: 2px 0;
+            font-size: 8px;
+            text-transform: uppercase;
+        }
+        .sat-freq-table td {
+            padding: 2px 0;
+            color: #DBDEE1;
+        }
+        .sat-doppler-pos {
+            color: #23A55A;
+            font-family: monospace;
+            font-weight: 600;
+        }
+        .sat-doppler-neg {
+            color: #F23F43;
+            font-family: monospace;
+            font-weight: 600;
+        }
+        .sat-options-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 9px;
+            color: #949BA4;
+            padding-top: 4px;
+            border-top: 1px solid #383A40;
+            margin-top: auto;
+            flex-shrink: 0;
+        }
+        .sat-marker {
+            cursor: pointer;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .sat-marker-icon {
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            box-shadow: 0 0 8px rgba(0, 0, 0, 0.8);
+            transition: transform 0.15s;
+        }
+        .sat-marker:hover .sat-marker-icon, .sat-marker.selected .sat-marker-icon {
+            transform: scale(1.25);
+        }
+        .sat-marker-stations .sat-marker-icon {
+            background: #0284C7;
+            border: 1.5px solid #38BDF8;
+            box-shadow: 0 0 10px #38BDF8;
+        }
+        .sat-marker-amateur .sat-marker-icon {
+            background: #059669;
+            border: 1.5px solid #34D399;
+            box-shadow: 0 0 10px #34D399;
+        }
+        .sat-marker-weather .sat-marker-icon {
+            background: #D97706;
+            border: 1.5px solid #FBBF24;
+            box-shadow: 0 0 10px #FBBF24;
+        }
+        .sat-marker-cubesat .sat-marker-icon {
+            background: #7C3AED;
+            border: 1.5px solid #A855F7;
+            box-shadow: 0 0 10px #A855F7;
+        }
+        .sat-marker-label {
+            font-size: 8.5px;
+            font-weight: 700;
+            color: #FFFFFF;
+            text-shadow: 0 1px 3px #000000, 0 0 4px #000000;
+            white-space: nowrap;
+            margin-top: 1px;
+            pointer-events: none;
+        }
     </style>
 </head>
 <body>
@@ -1862,48 +2553,190 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
         </div>
         <div id="adsb-legend-container"></div>
     </div>
+    <!-- Floating Satellite Tracker Panel -->
+    <div id="satellite-panel" class="sat-panel map-overlay-panel" style="display: none;">
+        <div class="sat-header map-overlay-header" id="satellite-drag-handle">
+            <span class="sat-title"><span class="map-drag-handle-grip">⠿</span>🛰️ SATELLITE TRACKER <span id="sat-count-badge" class="scope-pill-count">0</span></span>
+            <div style="display: flex; align-items: center; gap: 4px;">
+                <button class="sat-refresh-btn" onclick="if (window.pyBridge && window.pyBridge.on_satellite_refresh) window.pyBridge.on_satellite_refresh()" title="Sync CelesTrak TLEs">↺</button>
+                <button class="sat-close-btn" onclick="if (window.pyBridge && window.pyBridge.on_satellite_toggled) window.pyBridge.on_satellite_toggled(false)" title="Close Satellite Layer">×</button>
+            </div>
+        </div>
+        <div class="sat-content-body">
+            <div class="sat-group-bar">
+                <button id="sat-grp-all" class="sat-group-pill active" onclick="setSatelliteGroupFilter('all')">All</button>
+                <button id="sat-grp-stations" class="sat-group-pill" onclick="setSatelliteGroupFilter('stations')">Stations</button>
+                <button id="sat-grp-amateur" class="sat-group-pill" onclick="setSatelliteGroupFilter('amateur')">Amateur</button>
+                <button id="sat-grp-weather" class="sat-group-pill" onclick="setSatelliteGroupFilter('weather')">Weather</button>
+                <button id="sat-grp-cubesat" class="sat-group-pill" onclick="setSatelliteGroupFilter('cubesat')">Cubesats</button>
+            </div>
+            <input type="text" id="sat-search-input" class="sat-search-input" placeholder="Filter satellite or NORAD ID..." oninput="filterSatellites(this.value)" />
+            <div id="sat-quick-list" class="sat-quick-list"></div>
+            <div id="sat-telemetry-box" class="sat-telemetry-card" style="display: none;">
+                <div class="sat-telem-header">
+                    <span id="sat-telem-name" class="sat-telem-name">--</span>
+                    <span id="sat-pass-badge" class="sat-pass-badge below">BELOW HORIZON</span>
+                </div>
+                <div class="sat-grid-2">
+                    <div>
+                        <div class="sat-metric-label">Sub-Sat Lat/Lon</div>
+                        <div id="sat-telem-latlon" class="sat-metric-val">--°, --°</div>
+                    </div>
+                    <div>
+                        <div class="sat-metric-label">Altitude / Speed</div>
+                        <div id="sat-telem-alt-spd" class="sat-metric-val">-- km • -- km/s</div>
+                    </div>
+                    <div>
+                        <div class="sat-metric-label">Azimuth / Elevation</div>
+                        <div id="sat-telem-az-el" class="sat-metric-val">--° • --°</div>
+                    </div>
+                    <div>
+                        <div class="sat-metric-label">Slant Range</div>
+                        <div id="sat-telem-range" class="sat-metric-val">-- km</div>
+                    </div>
+                </div>
+                <div id="sat-freqs-container"></div>
+                <div style="display: flex; justify-content: flex-end; margin-top: 2px;">
+                    <button class="adsb-reset-btn" onclick="centerOnSelectedSatellite()" style="margin: 0; font-size: 8.5px; padding: 2px 6px;">🎯 Center on Satellite</button>
+                </div>
+            </div>
+            <div class="sat-options-bar">
+                <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                    <input type="checkbox" id="sat-chk-footprint" checked onchange="toggleSatFootprint(this.checked)" /> Horizon Footprint
+                </label>
+                <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                    <input type="checkbox" id="sat-chk-track" checked onchange="toggleSatGroundTrack(this.checked)" /> 90m Orbit Track
+                </label>
+            </div>
+        </div>
+        <div id="satellite-resize-handle" class="sat-resize-handle" title="Drag to resize vertically">
+            <div class="sat-resize-grip-line"></div>
+        </div>
+    </div>
     <div id="scope-filter-bar" class="scope-filter-bar map-overlay-panel" style="display: none;">
         <div class="map-overlay-header" id="scope-filter-drag-handle" style="margin: -8px -10px 4px -10px; padding: 4px 8px;">
             <div class="scope-filter-title" style="border-bottom:none; margin:0; padding:0; display:flex; align-items:center; gap:4px;"><span class="map-drag-handle-grip">⠿</span>🌐 Scopes</div>
             <button class="tropo-legend-close" onclick="document.getElementById('scope-filter-bar').style.display='none'" title="Hide Scopes" style="font-size:12px; padding:0 2px;">×</button>
         </div>
+        <div class="scope-options-bar">
+            <label class="scope-chk-label">
+                <input type="checkbox" id="scope-chk-prune" onchange="toggleScopePrune(this.checked)" /> 🧹 Prune Empty (0 nodes)
+            </label>
+            <label class="scope-chk-label">
+                <input type="checkbox" id="scope-chk-highlight" onchange="toggleScopeHighlight(this.checked)" /> ✨ Highlight Scopes
+            </label>
+        </div>
         <div id="scope-pills-container" class="scope-pills-container"></div>
     </div>
     <div id="orbital-tactical-tooltip" class="orbital-tactical-tooltip"></div>
-    <div id="path-mode-legend" class="path-mode-legend map-overlay-panel">
-        <div class="map-overlay-header" id="path-mode-drag-handle" style="margin: -8px -12px 6px -12px; padding: 4px 8px; cursor: move; border-bottom: 1px solid rgba(255,255,255,0.08);">
-            <span style="font-size: 10px; font-weight: 700; color: #94A3B8; display: flex; align-items: center; gap: 4px;"><span class="map-drag-handle-grip">⠿</span>Path Modes</span>
+    <div id="path-mode-legend" class="path-mode-legend map-overlay-panel" style="display: none;">
+        <div class="map-overlay-header" id="path-mode-drag-handle" style="margin: -8px -10px 4px -10px; padding: 4px 8px; cursor: move;">
+            <span style="font-size: 11px; font-weight: 700; color: #F2F3F5; display: flex; align-items: center; gap: 4px;"><span class="map-drag-handle-grip">⠿</span>🧭 PATH MODES</span>
+            <button class="tropo-legend-close" onclick="document.getElementById('path-mode-legend').style.display='none'" title="Close Path Modes" style="font-size: 12px; padding: 0 2px;">×</button>
         </div>
-        <span class="path-legend-item"><span class="path-legend-dot" style="background: #EF4444; box-shadow: 0 0 6px #EF4444;"></span>1-Byte Path</span>
-        <span class="path-legend-item" title="Multibyte Path (2-Byte)"><span class="path-legend-dot" style="background: #00D2FF; box-shadow: 0 0 6px #00D2FF;"></span>2-Byte Path</span>
-        <span class="path-legend-item" title="Multibyte Path (3-Byte)"><span class="path-legend-dot" style="background: #00FF7F; box-shadow: 0 0 6px #00FF7F;"></span>3-Byte Path</span>
-        <span class="path-legend-item"><span class="path-legend-dot" style="background: #6B7280;"></span>Direct / Flood</span>
+        <div class="path-mode-row">
+            <div class="path-mode-left">
+                <span class="path-legend-dot" style="background: #EF4444; box-shadow: 0 0 6px #EF4444;"></span>
+                <div class="path-mode-info">
+                    <span class="path-mode-name">1-Byte Path</span>
+                    <span class="path-mode-desc">Direct next-hop single byte ID</span>
+                </div>
+            </div>
+            <span id="path-count-1byte" class="path-stat-badge">--</span>
+        </div>
+        <div class="path-mode-row">
+            <div class="path-mode-left">
+                <span class="path-legend-dot" style="background: #00D2FF; box-shadow: 0 0 6px #00D2FF;"></span>
+                <div class="path-mode-info">
+                    <span class="path-mode-name">2-Byte Path</span>
+                    <span class="path-mode-desc">Extended dual-byte address hash</span>
+                </div>
+            </div>
+            <span id="path-count-2byte" class="path-stat-badge">--</span>
+        </div>
+        <div class="path-mode-row">
+            <div class="path-mode-left">
+                <span class="path-legend-dot" style="background: #00FF7F; box-shadow: 0 0 6px #00FF7F;"></span>
+                <div class="path-mode-info">
+                    <span class="path-mode-name">3-Byte Multibyte Path</span>
+                    <span class="path-mode-desc">Multi-hop 3-byte routing identifier</span>
+                </div>
+            </div>
+            <span id="path-count-3byte" class="path-stat-badge">--</span>
+        </div>
+        <div class="path-mode-row">
+            <div class="path-mode-left">
+                <span class="path-legend-dot" style="background: #6B7280;"></span>
+                <div class="path-mode-info">
+                    <span class="path-mode-name">Direct / Flood</span>
+                    <span class="path-mode-desc">Broadcast or unrouted packet</span>
+                </div>
+            </div>
+            <span id="path-count-direct" class="path-stat-badge">--</span>
+        </div>
+        <div class="path-options-bar">
+            <label class="path-chk-label">
+                <input type="checkbox" id="chk-path-vectors" checked onchange="togglePathVectors(this.checked)" /> Show Link Direction Vectors
+            </label>
+            <label class="path-chk-label">
+                <input type="checkbox" id="chk-path-multihop" onchange="togglePathMultihop(this.checked)" /> Multi-hop Paths Only
+            </label>
+        </div>
     </div>
     <div id="tropo-legend-panel" class="tropo-legend-panel map-overlay-panel">
         <div class="tropo-legend-header map-overlay-header" id="tropo-drag-handle">
-            <span class="tropo-legend-title"><span class="map-drag-handle-grip">⠿</span>📡 Tropo Ducting Forecast</span>
-            <div class="tropo-stepper">
-                <button class="tropo-step-btn" onclick="if (window.pyBridge && window.pyBridge.on_tropo_stepped) window.pyBridge.on_tropo_stepped(-3)" title="Previous 3h">◀</button>
-                <span id="tropo-time-label" class="tropo-time-label">--:-- UTC</span>
-                <button class="tropo-step-btn" onclick="if (window.pyBridge && window.pyBridge.on_tropo_stepped) window.pyBridge.on_tropo_stepped(3)" title="Next 3h">▶</button>
-            </div>
+            <span class="tropo-legend-title"><span class="map-drag-handle-grip">⠿</span>📡 TROPO FORECAST</span>
             <button class="tropo-legend-close" onclick="if (window.pyBridge && window.pyBridge.on_tropo_toggled) window.pyBridge.on_tropo_toggled(false)" title="Close Tropo Overlay">×</button>
         </div>
-        <div class="tropo-scale-bar">
-            <span class="tropo-scale-step" style="background: MediumOrchid;" title="Marginal (43-55)"></span>
-            <span class="tropo-scale-step" style="background: purple;" title="Fair (55-60)"></span>
-            <span class="tropo-scale-step" style="background: #10B981;" title="Moderate (60-70)"></span>
-            <span class="tropo-scale-step" style="background: #FBBF24;" title="Good (70-90)"></span>
-            <span class="tropo-scale-step" style="background: #EF4444;" title="Strong (90-110)"></span>
-            <span class="tropo-scale-step" style="background: #FFFFFF;" title="Extreme (>110)"></span>
+        <div class="tropo-stepper">
+            <button class="tropo-step-btn" onclick="if (window.pyBridge && window.pyBridge.on_tropo_stepped) window.pyBridge.on_tropo_stepped(-3)" title="Previous 3h">◀</button>
+            <span id="tropo-time-label" class="tropo-time-label">--:-- UTC</span>
+            <button class="tropo-step-btn" onclick="if (window.pyBridge && window.pyBridge.on_tropo_stepped) window.pyBridge.on_tropo_stepped(3)" title="Next 3h">▶</button>
         </div>
-        <div class="tropo-scale-labels">
-            <span>Marginal</span>
-            <span>Fair</span>
-            <span>Moderate</span>
-            <span>Good</span>
-            <span>Strong</span>
-            <span>Extreme</span>
+        <div class="tropo-scale-bar" style="height: 4px; border-radius: 2px; margin: 4px 0 6px 0; background: linear-gradient(to right, #C084FC, #8B5CF6, #10B981, #FBBF24, #EF4444, #FFFFFF);"></div>
+        <div class="tropo-tier-list">
+            <div class="tropo-tier-item">
+                <div class="tropo-tier-left">
+                    <span class="tropo-tier-dot" style="background: #FFFFFF; box-shadow: 0 0 6px #FFFFFF;"></span>
+                    <span class="tropo-tier-name">Extreme</span>
+                </div>
+                <span class="tropo-tier-range">>110</span>
+            </div>
+            <div class="tropo-tier-item">
+                <div class="tropo-tier-left">
+                    <span class="tropo-tier-dot" style="background: #EF4444; box-shadow: 0 0 5px #EF4444;"></span>
+                    <span class="tropo-tier-name">Strong</span>
+                </div>
+                <span class="tropo-tier-range">90 - 110</span>
+            </div>
+            <div class="tropo-tier-item">
+                <div class="tropo-tier-left">
+                    <span class="tropo-tier-dot" style="background: #FBBF24; box-shadow: 0 0 5px #FBBF24;"></span>
+                    <span class="tropo-tier-name">Good</span>
+                </div>
+                <span class="tropo-tier-range">70 - 90</span>
+            </div>
+            <div class="tropo-tier-item">
+                <div class="tropo-tier-left">
+                    <span class="tropo-tier-dot" style="background: #10B981; box-shadow: 0 0 5px #10B981;"></span>
+                    <span class="tropo-tier-name">Moderate</span>
+                </div>
+                <span class="tropo-tier-range">60 - 70</span>
+            </div>
+            <div class="tropo-tier-item">
+                <div class="tropo-tier-left">
+                    <span class="tropo-tier-dot" style="background: #8B5CF6;"></span>
+                    <span class="tropo-tier-name">Fair</span>
+                </div>
+                <span class="tropo-tier-range">55 - 60</span>
+            </div>
+            <div class="tropo-tier-item">
+                <div class="tropo-tier-left">
+                    <span class="tropo-tier-dot" style="background: #C084FC;"></span>
+                    <span class="tropo-tier-name">Marginal</span>
+                </div>
+                <span class="tropo-tier-range">43 - 55</span>
+            </div>
         </div>
         <div class="tropo-legend-footer">
             <span>NOAA GFS Refractivity Index • F5LEN</span>
@@ -1921,21 +2754,33 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
     </div>
     <!-- Floating Node Activity Heatmap Bar -->
     <div id="activity-heatmap-bar" class="activity-heatmap-bar map-overlay-panel" style="display: none;">
-        <div class="map-overlay-header" id="activity-heatmap-drag-handle" style="margin:0; padding:0 4px; border:none; background:transparent;">
-            <div class="activity-bar-title"><span class="map-drag-handle-grip">⠿</span>🔥 Node Activity</div>
+        <div class="map-overlay-header" id="activity-heatmap-drag-handle" style="margin: -8px -10px 4px -10px; padding: 4px 8px;">
+            <div class="activity-bar-title"><span class="map-drag-handle-grip">⠿</span>🔥 NODE ACTIVITY</div>
+            <button class="activity-bar-close" onclick="closeActivityHeatmap()" title="Close Activity Heatmap">×</button>
         </div>
         <div class="activity-btn-group">
             <button id="act-btn-1h" class="activity-tf-btn active" onclick="setActivityTimeframe(1)">1 hour</button>
             <button id="act-btn-6h" class="activity-tf-btn" onclick="setActivityTimeframe(6)">6 hours</button>
             <button id="act-btn-24h" class="activity-tf-btn" onclick="setActivityTimeframe(24)">24 hours</button>
         </div>
-        <div class="activity-legend">
-            <span class="act-leg-item"><span class="act-dot" style="background: #10B981;"></span>Low</span>
-            <span class="act-leg-item"><span class="act-dot" style="background: #FACC15;"></span>Med</span>
-            <span class="act-leg-item"><span class="act-dot" style="background: #FB923C;"></span>High</span>
-            <span class="act-leg-item"><span class="act-dot" style="background: #EF4444;"></span>V.High</span>
+        <div class="act-options-bar">
+            <label class="act-chk-label">
+                <input type="checkbox" id="act-chk-relative" checked onchange="toggleActivityRelative(this.checked)" /> Relative % to peak node
+            </label>
+            <label class="act-chk-label">
+                <input type="checkbox" id="act-chk-scaling" checked onchange="toggleActivityScaling(this.checked)" /> Scale node size by traffic
+            </label>
         </div>
-        <button class="activity-bar-close" onclick="closeActivityHeatmap()" title="Close Activity Heatmap">×</button>
+        <div class="act-peak-card">
+            <span style="color: #949BA4;">Peak: <span id="act-peak-node-val" style="font-family: monospace; color: #23A55A; font-weight: 700;">--</span></span>
+            <span style="color: #949BA4;">Traffic: <span id="act-peak-packets-val" style="color: #F2F3F5; font-weight: 700;">-- pkts</span></span>
+        </div>
+        <div class="activity-legend">
+            <div class="act-leg-item"><span><span class="act-dot" style="background: #EF4444; box-shadow: 0 0 5px #EF4444;"></span><span id="act-lbl-vhigh">> 75% (Peak)</span></span><span id="act-count-vhigh" style="color: #949BA4; font-size: 8.5px;">--</span></div>
+            <div class="act-leg-item"><span><span class="act-dot" style="background: #FB923C;"></span><span id="act-lbl-high">50 - 75% (High)</span></span><span id="act-count-high" style="color: #949BA4; font-size: 8.5px;">--</span></div>
+            <div class="act-leg-item"><span><span class="act-dot" style="background: #FACC15;"></span><span id="act-lbl-med">25 - 50% (Med)</span></span><span id="act-count-med" style="color: #949BA4; font-size: 8.5px;">--</span></div>
+            <div class="act-leg-item"><span><span class="act-dot" style="background: #10B981;"></span><span id="act-lbl-low">< 25% (Low)</span></span><span id="act-count-low" style="color: #949BA4; font-size: 8.5px;">--</span></div>
+        </div>
     </div>
     <!-- Floating Thunderstorm & Radar Panel -->
     <div id="thunderstorm-panel" class="thunderstorm-panel map-overlay-panel" style="display: none;">
@@ -1943,9 +2788,48 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             <span class="thunderstorm-title"><span class="map-drag-handle-grip">⠿</span>🌩️ THUNDERSTORMS <span id="strike-count-badge" class="scope-pill-count">0 strikes</span></span>
             <button class="thunderstorm-close-btn" onclick="if (window.pyBridge && window.pyBridge.on_thunderstorm_toggled) window.pyBridge.on_thunderstorm_toggled(false)" title="Close Thunderstorm Layer">×</button>
         </div>
-        <div class="thunderstorm-sub">
-            <span>📡 RainViewer Radar • ⚡ Blitzortung Live Feed</span>
+        <div class="thunder-stepper">
+            <button class="thunder-step-btn" onclick="stepThunderstormRadar(-1)" title="Previous radar frame">◀</button>
+            <span id="thunder-radar-label" class="thunder-time-label">Radar: Live Feed</span>
+            <button class="thunder-step-btn" onclick="stepThunderstormRadar(1)" title="Next radar frame">▶</button>
         </div>
+        <div id="thunder-proximity-badge" class="thunder-proximity-badge" style="display: none;">
+            ⚠️ Proximity Alert: Strike within 25 mi
+        </div>
+        <div class="thunder-nearest-card">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <span style="font-size: 9px; font-weight: 700; color: #DBDEE1;">⚡ Nearest Strike</span>
+                <span id="thunder-nearest-time" style="font-size: 8.5px; color: #949BA4;">-- ago</span>
+            </div>
+            <div id="thunder-nearest-val" style="font-size: 11px; font-weight: 700; color: #FBBF24;">-- mi (Bearing --°)</div>
+            <button class="thunder-jump-btn" onclick="jumpToNearestStrike()">🎯 Jump to Nearest Strike</button>
+        </div>
+        <div class="thunder-stat-grid">
+            <div class="thunder-stat-box">
+                <div class="thunder-stat-label">Strike Rate</div>
+                <div id="thunder-stat-rate" class="thunder-stat-val">0 / min</div>
+            </div>
+            <div class="thunder-stat-box">
+                <div class="thunder-stat-label">Distance</div>
+                <div id="thunder-stat-dist" class="thunder-stat-val">-- mi</div>
+            </div>
+        </div>
+        <div class="tropo-legend-footer">
+            <span>RainViewer Radar • Blitzortung Live Feed</span>
+        </div>
+    </div>
+    <!-- Floating Search Node IDs Panel -->
+    <div id="search-node-id-panel" class="search-node-id-panel map-overlay-panel" style="display: none;">
+        <div class="map-overlay-header" id="search-node-drag-handle" style="margin: -8px -10px 4px -10px; padding: 4px 8px;">
+            <span style="font-size: 11px; font-weight: 700; color: #23A55A; display: flex; align-items: center; gap: 4px;"><span class="map-drag-handle-grip">⠿</span>🔍 SEARCH NODE IDS</span>
+            <button class="tropo-legend-close" onclick="closeSearchNodeIdPanel()" title="Close Search Panel" style="font-size: 12px; padding: 0 2px;">×</button>
+        </div>
+        <input type="text" id="search-node-input" class="search-node-input" placeholder="Type Node ID or prefix (e.g. !a1b2, 4f)..." oninput="searchNodeIds(this.value)" autocomplete="off" spellcheck="false" />
+        <div class="search-node-status">
+            <span id="search-node-status-text">Showing all nodes</span>
+            <span id="search-node-count-badge" class="scope-pill-count">0</span>
+        </div>
+        <div id="search-node-results" class="search-node-results"></div>
     </div>
     <!-- Floating Space Weather & Aurora Panel -->
     <div id="aurora-legend-panel" class="aurora-legend-panel map-overlay-panel" style="display: none;">
@@ -2273,6 +3157,22 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             return expanded;
         }
 
+        window._scopePruneEmpty = false;
+        window._scopeHighlight = false;
+
+        function toggleScopePrune(checked) {
+            window._scopePruneEmpty = !!checked;
+            renderScopeFilterPills();
+        }
+        window.toggleScopePrune = toggleScopePrune;
+
+        function toggleScopeHighlight(checked) {
+            window._scopeHighlight = !!checked;
+            renderScopeOverlays();
+            refreshMarkersForScope();
+        }
+        window.toggleScopeHighlight = toggleScopeHighlight;
+
         function renderScopeFilterPills() {
             var container = document.getElementById('scope-pills-container');
             if (!container) return;
@@ -2294,9 +3194,12 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             container.appendChild(allPill);
 
             for (var k in window._scopeData) {
-                (function(scopeKey) {
-                    var sc = window._scopeData[scopeKey];
-                    var cnt = (sc.nodes || []).length;
+                var sc = window._scopeData[k];
+                var cnt = (sc.nodes || []).length;
+                if (window._scopePruneEmpty && cnt === 0) {
+                    continue;
+                }
+                (function(scopeKey, count) {
                     var pill = document.createElement('div');
                     var isActive = (window._activeScopeFilter === scopeKey);
                     pill.className = 'scope-pill' + (isActive ? ' active' : '');
@@ -2304,7 +3207,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                         pill.style.borderColor = sc.color || '#60687A';
                     }
                     var dotColor = sc.color || '#9CA3AF';
-                    pill.innerHTML = '<span class="scope-pill-name"><span style="color:' + dotColor + '; font-weight:bold; margin-right:4px;">#</span>' + escapeHtml(scopeKey) + '</span><span class="scope-pill-count">' + cnt + '</span>';
+                    pill.innerHTML = '<span class="scope-pill-name"><span style="color:' + dotColor + '; font-weight:bold; margin-right:4px;">#</span>' + escapeHtml(scopeKey) + '</span><span class="scope-pill-count">' + count + '</span>';
                     pill.onclick = function() {
                         window._activeScopeFilter = (window._activeScopeFilter === scopeKey ? 'all' : scopeKey);
                         renderScopeOverlays();
@@ -2312,7 +3215,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                         refreshMarkersForScope();
                     };
                     container.appendChild(pill);
-                })(k);
+                })(k, cnt);
             }
         }
 
@@ -2364,8 +3267,8 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
 
                 if (pts.length === 0) continue;
 
-                var polyFillOp = isSelected ? 0.12 : 0.03;
-                var polyWeight = isSelected ? 2 : 1;
+                var polyFillOp = isSelected ? (window._scopeHighlight ? 0.30 : 0.12) : 0.03;
+                var polyWeight = isSelected ? (window._scopeHighlight ? 3.5 : 2) : 1;
 
                 if (pts.length === 1) {
                     var circle = L.circle(pts[0], {
@@ -2472,6 +3375,131 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             return encodeURIComponent(String(str));
         }
 
+        window._searchNodeIdActive = false;
+        window._searchNodeQuery = '';
+        window._actRelative = true;
+        window._actScaling = true;
+        window._actMaxTraffic = 0;
+        window._actPeakNode = '--';
+        window._showPathVectors = true;
+        window._pathMultihopOnly = false;
+
+        function setSearchNodeIdVisible(visible) {
+            window._searchNodeIdActive = !!visible;
+            var panel = document.getElementById('search-node-id-panel');
+            if (panel) {
+                panel.style.display = window._searchNodeIdActive ? 'flex' : 'none';
+                if (window._searchNodeIdActive) {
+                    bringOverlayToFront(panel);
+                    var inp = document.getElementById('search-node-input');
+                    if (inp) {
+                        inp.focus();
+                        searchNodeIds(inp.value);
+                    }
+                } else {
+                    window._searchNodeQuery = '';
+                    var inp = document.getElementById('search-node-input');
+                    if (inp) inp.value = '';
+                    refreshMarkersForSearch();
+                }
+            }
+        }
+        window.setSearchNodeIdVisible = setSearchNodeIdVisible;
+
+        function closeSearchNodeIdPanel() {
+            setSearchNodeIdVisible(false);
+            if (window.pyBridge && window.pyBridge.on_search_node_id_toggled) {
+                window.pyBridge.on_search_node_id_toggled(false);
+            }
+        }
+        window.closeSearchNodeIdPanel = closeSearchNodeIdPanel;
+
+        function searchNodeIds(query) {
+            window._searchNodeQuery = (query || '').trim().toLowerCase();
+            var cleanQuery = window._searchNodeQuery.replace(/^[!@]+/, '');
+            var resultsContainer = document.getElementById('search-node-results');
+            var statusText = document.getElementById('search-node-status-text');
+            var countBadge = document.getElementById('search-node-count-badge');
+
+            var matches = [];
+            for (var id in markers) {
+                var m = markers[id];
+                if (m && m._nodeData) {
+                    var nd = m._nodeData;
+                    if (!cleanQuery) {
+                        matches.push({ marker: m, data: nd });
+                    } else {
+                        var nid = (nd.node_id || '').toLowerCase().replace(/^[!@]+/, '');
+                        var rawNid = (nd.node_id || '').toLowerCase();
+                        var nalias = (nd.alias || '').toLowerCase().replace(/^[!@]+/, '');
+                        var rawAlias = (nd.alias || '').toLowerCase();
+
+                        var isPrefix = (nid.indexOf(cleanQuery) === 0) ||
+                                       (rawNid.indexOf(window._searchNodeQuery) === 0) ||
+                                       (nalias.indexOf(cleanQuery) === 0) ||
+                                       (rawAlias.indexOf(window._searchNodeQuery) === 0);
+
+                        if (isPrefix) {
+                            matches.push({ marker: m, data: nd, isPrefix: true });
+                        }
+                    }
+                }
+            }
+
+            if (cleanQuery) {
+                matches.sort(function(a, b) {
+                    var aId = (a.data.node_id || '').replace(/^[!@]+/, '');
+                    var bId = (b.data.node_id || '').replace(/^[!@]+/, '');
+                    return aId.localeCompare(bId);
+                });
+            }
+
+            if (countBadge) countBadge.innerText = matches.length;
+            if (statusText) {
+                if (!cleanQuery) {
+                    statusText.innerText = 'Showing all ' + matches.length + ' nodes';
+                } else {
+                    statusText.innerText = matches.length + ' match' + (matches.length === 1 ? '' : 'es') + ' found';
+                }
+            }
+
+            if (resultsContainer) {
+                resultsContainer.innerHTML = '';
+                var displayList = matches.slice(0, 35);
+                for (var i = 0; i < displayList.length; i++) {
+                    (function(item) {
+                        var card = document.createElement('div');
+                        card.className = 'search-node-item';
+                        var idStr = item.data.node_id || '--';
+                        var nameStr = item.data.alias || item.data.name || 'Unnamed';
+                        var repBadge = item.data.is_repeater ? ' <span style="color:#A78BFA; font-size:8.5px; font-weight:600;">(Repeater)</span>' : '';
+                        card.innerHTML = '<div><div class="search-node-id-mono">' + escapeHtml(idStr) + repBadge + '</div><div class="search-node-meta">' + escapeHtml(nameStr) + '</div></div><span style="color:#949BA4; font-size:11px;">➔</span>';
+                        card.onclick = function() {
+                            if (item.marker && item.marker.getLatLng) {
+                                map.setView(item.marker.getLatLng(), Math.max(map.getZoom(), 12));
+                                if (item.marker.openPopup) {
+                                    item.marker.openPopup();
+                                }
+                            }
+                        };
+                        resultsContainer.appendChild(card);
+                    })(displayList[i]);
+                }
+            }
+
+            refreshMarkersForSearch();
+        }
+        window.searchNodeIds = searchNodeIds;
+
+        function refreshMarkersForSearch() {
+            for (var id in markers) {
+                var m = markers[id];
+                if (m && m._nodeData) {
+                    applyNodeMarkerStyling(m, m._nodeData);
+                }
+            }
+        }
+
         function applyNodeMarkerStyling(marker, node) {
             if (!marker || !node) return;
             var el = marker.getElement();
@@ -2479,42 +3507,90 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             var dot = el.querySelector('.node-dot');
             if (!dot) return;
 
+            if (node.is_phantom) {
+                dot.style.setProperty('background-color', '#000000', 'important');
+                dot.style.setProperty('border', '1.5px solid #4B5563', 'important');
+                dot.style.setProperty('box-shadow', '0 0 6px rgba(0, 0, 0, 0.9)', 'important');
+                dot.style.opacity = '0.92';
+                dot.style.transform = '';
+                return;
+            }
+
             var isLocal = !!node.is_local;
             var opacity = (!isLocal && freshnessFading) ? calculateFreshnessOpacity(node.last_seen) : 1.0;
             dot.style.opacity = opacity.toFixed(2);
+            dot.style.transform = '';
 
+            // 1. Search Node IDs View
+            if (window._searchNodeIdActive) {
+                var rawQ = (window._searchNodeQuery || '').trim().toLowerCase();
+                var cleanQ = rawQ.replace(/^[!@]+/, '');
+                var nid = (node.node_id || '').toLowerCase().replace(/^[!@]+/, '');
+                var rawNid = (node.node_id || '').toLowerCase();
+                var nalias = (node.alias || '').toLowerCase().replace(/^[!@]+/, '');
+                var rawAlias = (node.alias || '').toLowerCase();
+
+                var isMatch = (!cleanQ) || (
+                    nid.indexOf(cleanQ) === 0 ||
+                    rawNid.indexOf(rawQ) === 0 ||
+                    nalias.indexOf(cleanQ) === 0 ||
+                    rawAlias.indexOf(rawQ) === 0
+                );
+
+                if (isMatch) {
+                    dot.style.opacity = '1.0';
+                    dot.style.setProperty('background-color', '#23A55A', 'important');
+                    dot.style.setProperty('border-color', '#FFFFFF', 'important');
+                    dot.style.setProperty('box-shadow', '0 0 12px rgba(35, 165, 90, 0.95), 0 0 4px #FFFFFF', 'important');
+                    dot.style.transform = cleanQ ? 'scale(1.35)' : '';
+                    el.style.zIndex = '99999';
+                } else {
+                    dot.style.opacity = '0.18';
+                    dot.style.setProperty('background-color', '#4E5058', 'important');
+                    dot.style.setProperty('border-color', '#2B2D31', 'important');
+                    dot.style.setProperty('box-shadow', 'none', 'important');
+                    dot.style.transform = 'scale(0.85)';
+                }
+                return;
+            }
+
+            // 2. Path Modes
             if (pathModesActive && !isLocal) {
                 var pLen = (node.out_path_len !== undefined && node.out_path_len !== null) ? Number(node.out_path_len) : -1;
                 var pMode = (node.out_path_hash_mode !== undefined && node.out_path_hash_mode !== null) ? Number(node.out_path_hash_mode) : -1;
 
+                if (window._pathMultihopOnly && (pMode <= 0 && pLen <= 0)) {
+                    dot.style.opacity = '0.20';
+                    dot.style.setProperty('background-color', '#4E5058', 'important');
+                    dot.style.setProperty('border-color', '#2B2D31', 'important');
+                    dot.style.setProperty('box-shadow', 'none', 'important');
+                    return;
+                }
+
                 if (pMode >= 0) {
                     if (pMode === 0) {
-                        // 1-Byte Path: Vibrant Red
                         dot.style.setProperty('background-color', '#EF4444', 'important');
                         dot.style.setProperty('border-color', '#B91C1C', 'important');
                         dot.style.setProperty('box-shadow', '0 0 8px rgba(239, 68, 68, 0.7)', 'important');
                     } else if (pMode === 1) {
-                        // 2-Byte Path: Vibrant Sky Blue / Cyan
                         dot.style.setProperty('background-color', '#00D2FF', 'important');
                         dot.style.setProperty('border-color', '#0284C7', 'important');
                         dot.style.setProperty('box-shadow', '0 0 8px rgba(0, 210, 255, 0.7)', 'important');
                     } else {
-                        // 3-Byte Path: Emerald Green
                         dot.style.setProperty('background-color', '#00FF7F', 'important');
                         dot.style.setProperty('border-color', '#047857', 'important');
                         dot.style.setProperty('box-shadow', '0 0 8px rgba(0, 255, 127, 0.7)', 'important');
                     }
                 } else if (pLen > 0) {
-                    // Fallback routed path
                     dot.style.setProperty('background-color', '#EF4444', 'important');
                     dot.style.setProperty('border-color', '#B91C1C', 'important');
                     dot.style.setProperty('box-shadow', '0 0 8px rgba(239, 68, 68, 0.7)', 'important');
                 } else {
-                    // Direct / Flood: Muted Slate Gray
                     dot.style.setProperty('background-color', '#6B7280', 'important');
                     dot.style.setProperty('border-color', '#4B5563', 'important');
                     dot.style.setProperty('box-shadow', 'none', 'important');
                 }
+            // 3. Scopes
             } else if (window._scopeOverlaysActive && !isLocal && node.is_repeater) {
                 var scMeta = (window._scopeNodeMap && (window._scopeNodeMap[node.node_id] || (node.alias && window._scopeNodeMap[node.alias]))) ? (window._scopeNodeMap[node.node_id] || window._scopeNodeMap[node.alias]) : null;
                 if (scMeta) {
@@ -2529,59 +3605,141 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                         dot.style.opacity = '1.0';
                         dot.style.setProperty('background-color', scCol, 'important');
                         dot.style.setProperty('border-color', scCol, 'important');
-                        dot.style.setProperty('box-shadow', '0 0 10px ' + scCol, 'important');
+                        dot.style.setProperty('box-shadow', (window._scopeHighlight ? '0 0 14px ' : '0 0 10px ') + scCol, 'important');
+                        if (window._scopeHighlight) {
+                            dot.style.transform = 'scale(1.25)';
+                        }
                     }
                 } else {
                     dot.style.removeProperty('background-color');
                     dot.style.removeProperty('border-color');
                     dot.style.removeProperty('box-shadow');
-                    dot.style.opacity = (window._activeScopeFilter !== 'all') ? '0.15' : '0.4';
+                    dot.style.opacity = window._scopeHighlight ? '0.20' : ((window._activeScopeFilter !== 'all') ? '0.15' : '0.4');
                 }
-            } else if (activityHeatmapActive && !isLocal && node.is_repeater) {
+            // 4. Node Activity Heatmap
+            } else if (activityHeatmapActive && !isLocal && (node.is_repeater || node.is_room_server)) {
                 var cleanId = (node.node_id || '').toLowerCase().replace(/^[!@]+/, '');
                 var cleanAlias = (node.alias || '').toLowerCase().replace(/^[!@]+/, '');
                 var actMap = activityHeatmapData || {};
                 var count = (actMap[cleanId] !== undefined) ? actMap[cleanId] : (actMap[cleanAlias] || 0);
 
                 if (count <= 0) {
-                    dot.style.opacity = '0.35';
+                    dot.style.opacity = '0.30';
                     dot.style.setProperty('background-color', '#4B5563', 'important');
                     dot.style.setProperty('border-color', '#374151', 'important');
                     dot.style.setProperty('box-shadow', 'none', 'important');
+                    if (window._actScaling) {
+                        dot.style.transform = 'scale(0.70)';
+                    }
+                    el.style.zIndex = '';
                 } else {
                     dot.style.opacity = '1.0';
                     var actColor, actBorder, actShadow;
-                    if (count <= 2) {
-                        actColor = '#10B981'; // Green (Low)
-                        actBorder = '#059669';
-                        actShadow = '0 0 8px rgba(16, 185, 129, 0.7)';
-                    } else if (count <= 5) {
-                        actColor = '#FACC15'; // Yellow (Medium)
-                        actBorder = '#CA8A04';
-                        actShadow = '0 0 8px rgba(250, 204, 21, 0.7)';
-                    } else if (count <= 10) {
-                        actColor = '#FB923C'; // Orange (High)
-                        actBorder = '#EA580C';
-                        actShadow = '0 0 10px rgba(251, 146, 60, 0.8)';
+                    var maxT = window._actMaxTraffic || 1;
+                    var ratio = maxT > 0 ? (count / maxT) : 0;
+
+                    if (window._actRelative) {
+                        if (ratio >= 0.75) {
+                            actColor = '#EF4444'; // Red (Peak)
+                            actBorder = '#DC2626';
+                            actShadow = '0 0 18px rgba(239, 68, 68, 0.95), 0 0 6px #FFFFFF';
+                        } else if (ratio >= 0.50) {
+                            actColor = '#FB923C'; // Orange (High)
+                            actBorder = '#EA580C';
+                            actShadow = '0 0 14px rgba(251, 146, 60, 0.90), 0 0 4px #FFFFFF';
+                        } else if (ratio >= 0.25) {
+                            actColor = '#FACC15'; // Yellow (Medium)
+                            actBorder = '#CA8A04';
+                            actShadow = '0 0 12px rgba(250, 204, 21, 0.85)';
+                        } else {
+                            actColor = '#10B981'; // Green (Low)
+                            actBorder = '#059669';
+                            actShadow = '0 0 10px rgba(16, 185, 129, 0.8)';
+                        }
                     } else {
-                        actColor = '#EF4444'; // Red (Very High)
-                        actBorder = '#DC2626';
-                        actShadow = '0 0 12px rgba(239, 68, 68, 0.9)';
+                        if (count > 10) {
+                            actColor = '#EF4444';
+                            actBorder = '#DC2626';
+                            actShadow = '0 0 18px rgba(239, 68, 68, 0.95), 0 0 6px #FFFFFF';
+                        } else if (count > 5) {
+                            actColor = '#FB923C';
+                            actBorder = '#EA580C';
+                            actShadow = '0 0 14px rgba(251, 146, 60, 0.90), 0 0 4px #FFFFFF';
+                        } else if (count > 2) {
+                            actColor = '#FACC15';
+                            actBorder = '#CA8A04';
+                            actShadow = '0 0 12px rgba(250, 204, 21, 0.85)';
+                        } else {
+                            actColor = '#10B981';
+                            actBorder = '#059669';
+                            actShadow = '0 0 10px rgba(16, 185, 129, 0.8)';
+                        }
                     }
                     dot.style.setProperty('background-color', actColor, 'important');
                     dot.style.setProperty('border-color', actBorder, 'important');
                     dot.style.setProperty('box-shadow', actShadow, 'important');
+
+                    if (window._actScaling) {
+                        var effectiveRatio = window._actRelative ? ratio : Math.min(1.0, count / 15.0);
+                        var scaleFactor = 1.05 + (Math.pow(effectiveRatio, 0.55) * 1.75); // scales up to 2.80x
+                        dot.style.transform = 'scale(' + scaleFactor.toFixed(2) + ')';
+                        el.style.zIndex = Math.floor(1000 + effectiveRatio * 5000).toString();
+                    }
                 }
             } else {
-                // Restore standard role styling
                 dot.style.removeProperty('background-color');
                 dot.style.removeProperty('border-color');
                 dot.style.removeProperty('box-shadow');
+                el.style.zIndex = '';
             }
         }
 
-        function setFreshnessFading(enabled) {
-            freshnessFading = !!enabled;
+        function updatePathModeStats() {
+            var c1 = 0, c2 = 0, c3 = 0, cDirect = 0;
+            for (var id in markers) {
+                var m = markers[id];
+                if (m && m._nodeData && !m._nodeData.is_local) {
+                    var nd = m._nodeData;
+                    var pMode = (nd.out_path_hash_mode !== undefined && nd.out_path_hash_mode !== null) ? Number(nd.out_path_hash_mode) : -1;
+                    var pLen = (nd.out_path_len !== undefined && nd.out_path_len !== null) ? Number(nd.out_path_len) : -1;
+                    if (pMode === 0) c1++;
+                    else if (pMode === 1) c2++;
+                    else if (pMode >= 2) c3++;
+                    else if (pLen > 0) c1++;
+                    else cDirect++;
+                }
+            }
+            var el1 = document.getElementById('path-count-1byte');
+            var el2 = document.getElementById('path-count-2byte');
+            var el3 = document.getElementById('path-count-3byte');
+            var elD = document.getElementById('path-count-direct');
+            if (el1) el1.innerText = c1;
+            if (el2) el2.innerText = c2;
+            if (el3) el3.innerText = c3;
+            if (elD) elD.innerText = cDirect;
+        }
+
+        function togglePathVectors(checked) {
+            window._showPathVectors = !!checked;
+        }
+        window.togglePathVectors = togglePathVectors;
+
+        function togglePathMultihop(checked) {
+            window._pathMultihopOnly = !!checked;
+            for (var id in markers) {
+                var m = markers[id];
+                if (m && m._nodeData) applyNodeMarkerStyling(m, m._nodeData);
+            }
+        }
+        window.togglePathMultihop = togglePathMultihop;
+
+        function setPathModesVisible(visible) {
+            pathModesActive = !!visible;
+            var legend = document.getElementById('path-mode-legend');
+            if (legend) {
+                legend.style.display = pathModesActive ? 'flex' : 'none';
+            }
+            updatePathModeStats();
             for (var id in markers) {
                 var m = markers[id];
                 if (m && m._nodeData) {
@@ -2590,12 +3748,8 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             }
         }
 
-        function setPathModesVisible(visible) {
-            pathModesActive = !!visible;
-            var legend = document.getElementById('path-mode-legend');
-            if (legend) {
-                legend.style.display = pathModesActive ? 'block' : 'none';
-            }
+        function setFreshnessFading(enabled) {
+            freshnessFading = !!enabled;
             for (var id in markers) {
                 var m = markers[id];
                 if (m && m._nodeData) {
@@ -2919,13 +4073,55 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
         }
         window.onSetNodeScope = onSetNodeScope;
 
+        window.onTogglePhantomMarker = function(btn) {
+            if (!btn) return;
+            var nid = decodeURIComponent(btn.getAttribute('data-nid') || '');
+            var alias = decodeURIComponent(btn.getAttribute('data-alias') || '');
+            var isPhant = btn.getAttribute('data-phantom') === '1';
+            if (window.pyBridge && window.pyBridge.on_phantom_node_toggled) {
+                window.pyBridge.on_phantom_node_toggled(nid, alias, !isPhant);
+            }
+        };
+
+        window.onDeleteNodeClicked = function(btn) {
+            if (!btn) return;
+            var nid = decodeURIComponent(btn.getAttribute('data-nid') || '');
+            var alias = decodeURIComponent(btn.getAttribute('data-alias') || nid || 'Node');
+            if (!nid) return;
+            if (confirm("Are you sure you want to permanently delete node '" + alias + "' (" + nid + ")?\\n\\nThis will remove the node, direct message history, neighbour links, and room credentials.")) {
+                if (window.pyBridge && window.pyBridge.on_delete_node) {
+                    window.pyBridge.on_delete_node(nid);
+                }
+                if (window.deleteNodeMarker) {
+                    window.deleteNodeMarker(nid);
+                }
+            }
+        };
+
+        function deleteNodeMarker(nid) {
+            if (!nid) return;
+            map.closePopup();
+            var target = nid.toLowerCase().replace(/^[!@]+/, '');
+            for (var id in markers) {
+                var cleanId = id.toLowerCase().replace(/^[!@]+/, '');
+                var m = markers[id];
+                var mNodeId = (m && m._nodeData && m._nodeData.node_id) ? m._nodeData.node_id.toLowerCase().replace(/^[!@]+/, '') : '';
+                if (cleanId === target || mNodeId === target) {
+                    map.removeLayer(m);
+                    delete markers[id];
+                }
+            }
+        }
+        window.deleteNodeMarker = deleteNodeMarker;
+
         function buildNodePopupContent(node) {
             var isLocal = !!node.is_local;
             var isRep = !!node.is_repeater;
             var isRoom = !!node.is_room_server;
             var isFav = !!node.is_favorite;
+            var isPhantom = !!node.is_phantom;
             var favLabel = isFav ? 'Favorite ' : '';
-            var typeLabel = isLocal ? 'Local Companion' : (isRoom ? 'Room Server' : (isRep ? favLabel + 'Repeater' : favLabel + 'Companion Node'));
+            var typeLabel = isPhantom ? 'Phantom Node' : (isLocal ? 'Local Companion' : (isRoom ? 'Room Server' : (isRep ? favLabel + 'Repeater' : favLabel + 'Companion Node')));
             var starHtml = isFav ? '<span style="color: #FFD700;">★ </span>' : '';
             var safeAlias = escapeHtml(node.alias || node.node_id || 'Node');
             var safeNodeId = escapeHtml(node.node_id);
@@ -3073,12 +4269,57 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 }
             }
 
-            var iconPrefix = isLocal ? '👤 ' : (isRoom ? '🏢 ' : (isRep ? '📡 ' : '👤 '));
+            var iconPrefix = isPhantom ? '👻 ' : (isLocal ? '👤 ' : (isRoom ? '🏢 ' : (isRep ? '📡 ' : '👤 ')));
             var actionBtnLabel = isRoom ? 'Open Room Server' : (isRep ? 'Open Repeater Console' : 'Direct Message');
+
+            var phantomBtnHtml = '';
+            if (isRep || isPhantom) {
+                var pLabel = isPhantom ? '👻 Unmark Phantom Node' : '👻 Mark as Phantom Node';
+                var pStyle = isPhantom ? 'background-color: #374151; color: #F3F4F6; border: 1px solid #9CA3AF;' : 'background-color: #181A20; color: #E5E7EB; border: 1px solid #4B5563;';
+                phantomBtnHtml = '<button class="popup-btn" style="margin-top: 5px; ' + pStyle + '" data-nid="' + encodeURIComponent(node.node_id) + '" data-alias="' + encodeURIComponent(node.alias || '') + '" data-phantom="' + (isPhantom ? '1' : '0') + '" onclick="onTogglePhantomMarker(this)">' + pLabel + '</button>';
+            }
+
+        function copyNodeIdClipboard(encodedText, btn) {
+            var text = decodeURIComponent(encodedText);
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(function() {
+                    if (btn) {
+                        var orig = btn.innerText;
+                        btn.innerText = '✓ Copied';
+                        setTimeout(function() { btn.innerText = orig; }, 1500);
+                    }
+                }).catch(function() {
+                    if (window.pyBridge && window.pyBridge.on_copy_clipboard) {
+                        window.pyBridge.on_copy_clipboard(text);
+                    }
+                    if (btn) {
+                        var orig = btn.innerText;
+                        btn.innerText = '✓ Copied';
+                        setTimeout(function() { btn.innerText = orig; }, 1500);
+                    }
+                });
+            } else {
+                if (window.pyBridge && window.pyBridge.on_copy_clipboard) {
+                    window.pyBridge.on_copy_clipboard(text);
+                }
+                if (btn) {
+                    var orig = btn.innerText;
+                    btn.innerText = '✓ Copied';
+                    setTimeout(function() { btn.innerText = orig; }, 1500);
+                }
+            }
+        }
+        window.copyNodeIdClipboard = copyNodeIdClipboard;
+
+            var repLabel = isRep ? ' <span style="color:#A78BFA; font-size:9.5px; font-weight:700;">(Repeater)</span>' : (' (' + typeLabel + ')');
+            var idHtml = '<div class="node-popup-id-row">' +
+                '<span class="node-popup-id-mono">ID: ' + safeNodeId + repLabel + '</span>' +
+                '<button class="node-popup-copy-btn" data-node-id="' + escapeHtml(node.node_id || '') + '" onclick="copyNodeIdClipboard(this.dataset.nodeId, this)" title="Copy Node ID">⎘ Copy</button>' +
+                '</div>';
 
             return '<div class="custom-popup">' +
                 '<div class="popup-title">' + starHtml + iconPrefix + safeAlias + '</div>' +
-                '<div class="popup-stat">ID: ' + safeNodeId + ' (' + typeLabel + ')</div>' +
+                idHtml +
                 '<div class="popup-stat">Last heard: ' + lastHeardStr + '</div>' +
                 '<div class="popup-stat">Routing: ' + pathStr + '</div>' +
                 snrHtml + rssiHtml +
@@ -3091,6 +4332,8 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     '<button class="popup-btn" style="flex: 1; margin-top: 0; background-color: #064E3B; color: #34D399; border: 1px solid #10B981;" data-nid="' + encodeURIComponent(node.node_id) + '" data-alias="' + encodeURIComponent(node.alias || node.node_id || '') + '" data-lat="' + Number(node.lat) + '" data-lon="' + Number(node.lon) + '" onclick="onCalcViewshedClicked(this)">🟢 LOS Viewshed</button>' +
                 '</div>' +
                 '<button class="popup-btn" style="margin-top: 5px; background-color: #24262B; color: #38BDF8; border: 1px solid #38BDF8;" data-nid="' + encodeURIComponent(node.node_id) + '" data-alias="' + encodeURIComponent(node.alias || node.node_id || '') + '" data-lat="' + Number(node.lat) + '" data-lon="' + Number(node.lon) + '" onclick="onTrackAdsbClicked(this)">✈️ Track ADS-B Around Node</button>' +
+                phantomBtnHtml +
+                '<button class="popup-btn popup-btn-delete" style="margin-top: 5px; background-color: #7F1D1D; color: #FCA5A5; border: 1px solid #DC2626; font-weight: 600;" data-nid="' + encodeURIComponent(node.node_id) + '" data-alias="' + encodeURIComponent(node.alias || node.node_id || '') + '" onclick="onDeleteNodeClicked(this)">🗑️ Delete Node</button>' +
                 '</div>';
         }
 
@@ -3103,13 +4346,16 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     if (!node || typeof node.lat !== 'number' || typeof node.lon !== 'number' || isNaN(node.lat) || isNaN(node.lon)) return;
                     if (node.lat < -85.0 || node.lat > 85.0 || node.lon < -180.0 || node.lon > 180.0) return;
 
+                    var isPhantom = !!node.is_phantom;
                     var isLocal = !!node.is_local;
                     var isRep = !!node.is_repeater;
                     var isRoom = !!node.is_room_server;
                     var isFav = !!node.is_favorite;
 
                     var dotClass = 'node-dot ';
-                    if (isLocal) {
+                    if (isPhantom) {
+                        dotClass += 'node-dot-phantom';
+                    } else if (isLocal) {
                         dotClass += 'node-dot-local';
                     } else if (isRoom) {
                         dotClass += 'node-dot-room';
@@ -3141,13 +4387,14 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     var styleAttr = ' style="opacity: ' + opacity.toFixed(2) + ';' + initPathStyle + '"';
 
                     var starPrefix = isFav ? '⭐ ' : '';
+                    var phantomPrefix = isPhantom ? '<span style="color: #9CA3AF; font-size: 10px;">👻 [Phantom] </span>' : '';
                     var lastHeardStr = isLocal ? 'Active now (Local node)' : formatLastHeard(node.last_seen);
                     var pathStr = formatPathInfo(node);
                     var rawAlias = node.alias || node.node_id || 'Node';
                     var safeAlias = escapeHtml(rawAlias);
 
                     var actInfo = '';
-                    if (activityHeatmapActive && isRep) {
+                    if (activityHeatmapActive && (isRep || isRoom)) {
                         var cleanId = (node.node_id || '').toLowerCase().replace(/^[!@]+/, '');
                         var cleanAlias = (node.alias || '').toLowerCase().replace(/^[!@]+/, '');
                         var cAct = (activityHeatmapData[cleanId] !== undefined) ? activityHeatmapData[cleanId] : (activityHeatmapData[cleanAlias] || 0);
@@ -3157,7 +4404,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     }
 
                     var tipContent = '<div style="text-align: center; line-height: 1.35;">' +
-                        '<div>' + starPrefix + '<b>' + safeAlias + '</b></div>' +
+                        '<div>' + phantomPrefix + starPrefix + '<b>' + safeAlias + '</b></div>' +
                         '<div style="font-size: 10px; color: #9CA3AF; margin-top: 2px;">Last heard: ' + lastHeardStr + '</div>' +
                         '<div style="font-size: 10px; margin-top: 2px;">' + pathStr + '</div>' +
                         actInfo +
@@ -3199,6 +4446,27 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                         marker.bindPopup(function() {
                             return buildNodePopupContent(marker._nodeData);
                         }, { className: 'custom-popup', maxWidth: 320 });
+
+                        // Right-click context menu on node marker
+                        marker.on('contextmenu', function(ev) {
+                            if (ev && ev.originalEvent) {
+                                ev.originalEvent.preventDefault();
+                                ev.originalEvent.stopPropagation();
+                            }
+                            if (window.pyBridge && window.pyBridge.on_node_context_menu) {
+                                var nd = marker._nodeData || node;
+                                window.pyBridge.on_node_context_menu(
+                                    nd.node_id,
+                                    nd.alias || nd.node_id || '',
+                                    !!nd.is_repeater,
+                                    !!nd.is_phantom,
+                                    ev.latlng.lat,
+                                    ev.latlng.lng,
+                                    Math.round(ev.containerPoint.x),
+                                    Math.round(ev.containerPoint.y)
+                                );
+                            }
+                        });
 
                         if (isRep) {
                             marker.on('click', function(ev) {
@@ -3994,6 +5262,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                             var containerH = (mapEl ? mapEl.clientHeight : window.innerHeight);
                             var clampLeft = Math.max(0, Math.min(Math.max(0, containerW - 100), pos.left));
                             var clampTop = Math.max(0, Math.min(Math.max(0, containerH - 60), pos.top));
+                            if (clampLeft < 415 && clampTop < 55) {
+                                clampTop = 58;
+                            }
                             panel.style.left = clampLeft + 'px';
                             panel.style.top = clampTop + 'px';
                             panel.style.right = 'auto';
@@ -4014,6 +5285,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     e.target.closest('input') || 
                     e.target.closest('select') || 
                     e.target.closest('a') || 
+                    e.target.closest('label') ||
                     e.target.closest('.floating-route-close') ||
                     e.target.closest('.tropo-legend-close') ||
                     e.target.closest('.activity-bar-close') ||
@@ -4056,6 +5328,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 var maxH = Math.max(0, containerH - panel.offsetHeight);
                 var newLeft = Math.max(0, Math.min(maxW, origLeft + dx));
                 var newTop = Math.max(0, Math.min(maxH, origTop + dy));
+                if (newLeft < 415 && newTop < 55) {
+                    newTop = 58;
+                }
 
                 panel.style.left = newLeft + 'px';
                 panel.style.top = newTop + 'px';
@@ -4074,6 +5349,66 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                                 left: parseInt(panel.style.left, 10),
                                 top: parseInt(panel.style.top, 10)
                             }));
+                        } catch(e) {}
+                    }
+                }
+            });
+        }
+
+        function makeOverlayVerticallyResizable(panelId, handleId, storageKey) {
+            var panel = document.getElementById(panelId);
+            var handle = document.getElementById(handleId);
+            if (!panel || !handle) return;
+
+            if (typeof L !== 'undefined' && L.DomEvent) {
+                L.DomEvent.disableClickPropagation(handle);
+                L.DomEvent.disableScrollPropagation(handle);
+            }
+
+            if (storageKey) {
+                try {
+                    var savedH = sessionStorage.getItem('overlay_height_' + storageKey);
+                    if (savedH) {
+                        var h = parseInt(savedH, 10);
+                        if (!isNaN(h) && h >= 180 && h <= window.innerHeight - 20) {
+                            panel.style.height = h + 'px';
+                        }
+                    }
+                } catch(e) {}
+            }
+
+            var isResizing = false;
+            var startY = 0;
+            var startH = 0;
+
+            handle.addEventListener('mousedown', function(e) {
+                if (e.button !== 0) return;
+                e.preventDefault();
+                e.stopPropagation();
+                isResizing = true;
+                startY = e.clientY;
+                startH = panel.offsetHeight;
+                document.body.style.userSelect = 'none';
+                document.body.style.cursor = 'ns-resize';
+            });
+
+            document.addEventListener('mousemove', function(e) {
+                if (!isResizing) return;
+                var dy = e.clientY - startY;
+                var minH = 200;
+                var maxH = window.innerHeight - 40;
+                var newH = Math.max(minH, Math.min(maxH, startH + dy));
+                panel.style.height = newH + 'px';
+            });
+
+            document.addEventListener('mouseup', function() {
+                if (isResizing) {
+                    isResizing = false;
+                    document.body.style.userSelect = '';
+                    document.body.style.cursor = '';
+                    if (storageKey) {
+                        try {
+                            sessionStorage.setItem('overlay_height_' + storageKey, panel.offsetHeight.toString());
                         } catch(e) {}
                     }
                 }
@@ -4111,6 +5446,13 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
 
             // Path Mode Legend
             makeOverlayDraggable('path-mode-legend', 'path-mode-drag-handle', 'path_mode_legend');
+
+            // Satellite Tracker
+            makeOverlayDraggable('satellite-panel', 'satellite-drag-handle', 'satellites');
+            makeOverlayVerticallyResizable('satellite-panel', 'satellite-resize-handle', 'satellites');
+
+            // Search Node IDs
+            makeOverlayDraggable('search-node-id-panel', 'search-node-drag-handle', 'search_node_id');
         }
         setTimeout(initAllDraggableOverlays, 100);
 
@@ -4659,6 +6001,87 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             adsbLastTargetCoord = null;
         };
 
+        function updateActivityStats() {
+            var maxT = 0;
+            var peakN = '--';
+            var actMap = activityHeatmapData || {};
+            for (var k in actMap) {
+                var v = actMap[k];
+                if (typeof v === 'number' && v > maxT) {
+                    maxT = v;
+                    peakN = k;
+                }
+            }
+            window._actMaxTraffic = maxT;
+            window._actPeakNode = peakN;
+
+            var peakNodeEl = document.getElementById('act-peak-node-val');
+            var peakPacketsEl = document.getElementById('act-peak-packets-val');
+            if (peakNodeEl) peakNodeEl.innerText = peakN;
+            if (peakPacketsEl) peakPacketsEl.innerText = maxT + ' pkts';
+
+            var cVHigh = 0, cHigh = 0, cMed = 0, cLow = 0;
+            for (var k in actMap) {
+                var cnt = actMap[k];
+                if (typeof cnt !== 'number' || cnt <= 0) continue;
+                var ratio = maxT > 0 ? (cnt / maxT) : 0;
+                if (window._actRelative) {
+                    if (ratio >= 0.75) cVHigh++;
+                    else if (ratio >= 0.50) cHigh++;
+                    else if (ratio >= 0.25) cMed++;
+                    else cLow++;
+                } else {
+                    if (cnt > 10) cVHigh++;
+                    else if (cnt > 5) cHigh++;
+                    else if (cnt > 2) cMed++;
+                    else cLow++;
+                }
+            }
+            var elVHigh = document.getElementById('act-count-vhigh');
+            var elHigh = document.getElementById('act-count-high');
+            var elMed = document.getElementById('act-count-med');
+            var elLow = document.getElementById('act-count-low');
+            if (elVHigh) elVHigh.innerText = cVHigh;
+            if (elHigh) elHigh.innerText = cHigh;
+            if (elMed) elMed.innerText = cMed;
+            if (elLow) elLow.innerText = cLow;
+
+            var lblVHigh = document.getElementById('act-lbl-vhigh');
+            var lblHigh = document.getElementById('act-lbl-high');
+            var lblMed = document.getElementById('act-lbl-med');
+            var lblLow = document.getElementById('act-lbl-low');
+            if (window._actRelative) {
+                if (lblVHigh) lblVHigh.innerText = '> 75% (Peak)';
+                if (lblHigh) lblHigh.innerText = '50 - 75% (High)';
+                if (lblMed) lblMed.innerText = '25 - 50% (Med)';
+                if (lblLow) lblLow.innerText = '< 25% (Low)';
+            } else {
+                if (lblVHigh) lblVHigh.innerText = '> 10 pkts (Peak)';
+                if (lblHigh) lblHigh.innerText = '6 - 10 pkts (High)';
+                if (lblMed) lblMed.innerText = '3 - 5 pkts (Med)';
+                if (lblLow) lblLow.innerText = '1 - 2 pkts (Low)';
+            }
+        }
+
+        function toggleActivityRelative(checked) {
+            window._actRelative = !!checked;
+            updateActivityStats();
+            for (var id in markers) {
+                var m = markers[id];
+                if (m && m._nodeData) applyNodeMarkerStyling(m, m._nodeData);
+            }
+        }
+        window.toggleActivityRelative = toggleActivityRelative;
+
+        function toggleActivityScaling(checked) {
+            window._actScaling = !!checked;
+            for (var id in markers) {
+                var m = markers[id];
+                if (m && m._nodeData) applyNodeMarkerStyling(m, m._nodeData);
+            }
+        }
+        window.toggleActivityScaling = toggleActivityScaling;
+
         function setActivityHeatmap(enabled, timeframeHours, data) {
             activityHeatmapActive = !!enabled;
             if (timeframeHours) activityTimeframeHours = Number(timeframeHours);
@@ -4676,6 +6099,8 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             }
             var targetBtn = document.getElementById('act-btn-' + activityTimeframeHours + 'h');
             if (targetBtn) targetBtn.classList.add('active');
+
+            updateActivityStats();
 
             for (var id in markers) {
                 var m = markers[id];
@@ -4712,6 +6137,10 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
 
         var wsServerIdx = 0;
         var blitzServers = ['wss://ws7.blitzortung.org', 'wss://ws1.blitzortung.org', 'wss://ws8.blitzortung.org'];
+        window._radarMeta = null;
+        window._radarFrameIdx = 0;
+        window._nearestStrike = null;
+        window._lastLightningAlertTime = 0;
 
         function setThunderstormVisible(visible, radarMeta) {
             thunderstormActive = !!visible;
@@ -4721,7 +6150,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             }
 
             if (thunderstormActive) {
-                if (radarMeta && radarMeta.host && radarMeta.path) {
+                if (radarMeta && radarMeta.host) {
                     updateThunderstormRadar(radarMeta);
                 }
                 connectBlitzortung();
@@ -4740,23 +6169,100 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
         window.setThunderstormVisible = setThunderstormVisible;
 
         function updateThunderstormRadar(radarMeta) {
-            if (!radarMeta || !radarMeta.host || !radarMeta.path) return;
+            if (!radarMeta || !radarMeta.host) return;
+            window._radarMeta = radarMeta;
+            var frames = radarMeta.frames || [];
+            if (radarMeta.default_idx !== undefined && radarMeta.default_idx >= 0 && radarMeta.default_idx < frames.length) {
+                window._radarFrameIdx = radarMeta.default_idx;
+            } else {
+                window._radarFrameIdx = Math.max(0, frames.length - 1);
+            }
+            renderThunderstormFrame();
+        }
+        window.updateThunderstormRadar = updateThunderstormRadar;
+
+        function renderThunderstormFrame() {
             if (rainViewerRadarLayer) {
                 map.removeLayer(rainViewerRadarLayer);
                 rainViewerRadarLayer = null;
             }
-            if (!thunderstormActive) return;
-            var tileUrl = radarMeta.host + radarMeta.path + '/256/{z}/{x}/{y}/2/1_1.png';
-            rainViewerRadarLayer = L.tileLayer(tileUrl, {
-                opacity: 0.65,
-                maxNativeZoom: 7,
-                maxZoom: 19,
-                tileSize: 256,
-                updateWhenIdle: true,
-                pane: 'thunderstormPane'
-            }).addTo(map);
+            if (!thunderstormActive || !window._radarMeta) return;
+            var frames = window._radarMeta.frames || [];
+            var framePath = window._radarMeta.path || '';
+            var frameTime = null;
+            var isNowcast = false;
+
+            if (frames.length > 0 && window._radarFrameIdx >= 0 && window._radarFrameIdx < frames.length) {
+                var cur = frames[window._radarFrameIdx];
+                framePath = cur.path;
+                frameTime = cur.time;
+                isNowcast = !!cur.is_nowcast;
+            }
+
+            if (framePath) {
+                var tileUrl = window._radarMeta.host + framePath + '/256/{z}/{x}/{y}/2/1_1.png';
+                rainViewerRadarLayer = L.tileLayer(tileUrl, {
+                    opacity: 0.65,
+                    maxNativeZoom: 7,
+                    maxZoom: 19,
+                    tileSize: 256,
+                    updateWhenIdle: true,
+                    pane: 'thunderstormPane'
+                }).addTo(map);
+            }
+
+            var lbl = document.getElementById('thunder-radar-label');
+            if (lbl) {
+                if (frameTime) {
+                    var diffMins = Math.round((frameTime * 1000 - Date.now()) / 60000);
+                    var sign = diffMins > 0 ? '+' : '';
+                    var typeStr = isNowcast ? 'Nowcast' : 'Past';
+                    var dateObj = new Date(frameTime * 1000);
+                    var timeStr = (dateObj.getUTCHours() < 10 ? '0' : '') + dateObj.getUTCHours() + ':' + (dateObj.getUTCMinutes() < 10 ? '0' : '') + dateObj.getUTCMinutes() + ' UTC';
+                    lbl.innerText = typeStr + ' (' + sign + diffMins + 'm • ' + timeStr + ')';
+                } else {
+                    lbl.innerText = 'Radar: Live Feed';
+                }
+            }
         }
-        window.updateThunderstormRadar = updateThunderstormRadar;
+
+        function stepThunderstormRadar(delta) {
+            if (!window._radarMeta) return;
+            var frames = window._radarMeta.frames || [];
+            if (frames.length === 0) return;
+            var newIdx = window._radarFrameIdx + delta;
+            if (newIdx >= 0 && newIdx < frames.length) {
+                window._radarFrameIdx = newIdx;
+                renderThunderstormFrame();
+            }
+        }
+        window.stepThunderstormRadar = stepThunderstormRadar;
+
+        function getDistanceMiles(lat1, lon1, lat2, lon2) {
+            var R = 3958.8;
+            var dLat = (lat2 - lat1) * Math.PI / 180;
+            var dLon = (lon2 - lon1) * Math.PI / 180;
+            var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            return R * c;
+        }
+
+        function getBearingDeg(lat1, lon1, lat2, lon2) {
+            var y = Math.sin((lon2 - lon1) * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180);
+            var x = Math.cos(lat1 * Math.PI / 180) * Math.sin(lat2 * Math.PI / 180) -
+                    Math.sin(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.cos((lon2 - lon1) * Math.PI / 180);
+            var brng = Math.atan2(y, x) * 180 / Math.PI;
+            return (brng + 360) % 360;
+        }
+
+        function jumpToNearestStrike() {
+            if (window._nearestStrike && typeof window._nearestStrike.lat === 'number') {
+                map.setView([window._nearestStrike.lat, window._nearestStrike.lon], Math.max(map.getZoom(), 11));
+            }
+        }
+        window.jumpToNearestStrike = jumpToNearestStrike;
 
         function connectBlitzortung() {
             disconnectBlitzortung();
@@ -4809,10 +6315,42 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 interactive: false
             });
             lightningStrikesGroup.addLayer(marker);
-            lightningStrikesList.push({ marker: marker, ts: now });
+            lightningStrikesList.push({ marker: marker, ts: now, lat: strike.lat, lon: strike.lon });
 
             var badge = document.getElementById('strike-count-badge');
             if (badge) badge.innerText = lightningStrikesList.length + ' strikes';
+
+            var center = map.getCenter();
+            var distMi = getDistanceMiles(center.lat, center.lng, strike.lat, strike.lon);
+            var bearing = getBearingDeg(center.lat, center.lng, strike.lat, strike.lon);
+
+            if (!window._nearestStrike || distMi < window._nearestStrike.dist || (now - window._nearestStrike.ts > 600000)) {
+                window._nearestStrike = { lat: strike.lat, lon: strike.lon, dist: distMi, bearing: bearing, ts: now };
+                var nVal = document.getElementById('thunder-nearest-val');
+                var nTime = document.getElementById('thunder-nearest-time');
+                var nDist = document.getElementById('thunder-stat-dist');
+                if (nVal) nVal.innerText = distMi.toFixed(1) + ' mi (Bearing ' + Math.round(bearing) + '°)';
+                if (nTime) nTime.innerText = 'Just now';
+                if (nDist) nDist.innerText = distMi.toFixed(1) + ' mi';
+            }
+
+            var proxBadge = document.getElementById('thunder-proximity-badge');
+            if (distMi <= 25.0) {
+                if (proxBadge) proxBadge.style.display = 'block';
+                if (now - window._lastLightningAlertTime > 60000) {
+                    window._lastLightningAlertTime = now;
+                    if (window.pyBridge && window.pyBridge.on_lightning_proximity_alert) {
+                        window.pyBridge.on_lightning_proximity_alert(distMi, Math.round(bearing));
+                    }
+                }
+            }
+
+            var recentCount = 0;
+            for (var i = 0; i < lightningStrikesList.length; i++) {
+                if (now - lightningStrikesList[i].ts <= 60000) recentCount++;
+            }
+            var rateEl = document.getElementById('thunder-stat-rate');
+            if (rateEl) rateEl.innerText = recentCount + ' / min';
 
             while (lightningStrikesList.length > 0 && (now - lightningStrikesList[0].ts > 1800000 || lightningStrikesList.length > 500)) {
                 var old = lightningStrikesList.shift();
@@ -4993,6 +6531,534 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 }
             }
         };
+
+        // ==========================================
+        // SATELLITE TRACKING & SGP4 ORBITAL ENGINE
+        // ==========================================
+        var satellitesActive = false;
+        var satellitesRawData = [];
+        var satellitesParsed = [];
+        var satelliteMarkers = {};
+        var selectedNoradId = null;
+        var satGroundTrackLayers = [];
+        var satFootprintLayer = null;
+        var satObserver = null;
+        var satPropagationInterval = null;
+        var showSatFootprint = true;
+        var showSatGroundTrack = true;
+        var currentSatGroup = 'all';
+        var satSearchQuery = '';
+
+        function setSatellitesVisible(visible) {
+            satellitesActive = !!visible;
+            var panel = document.getElementById('satellite-panel');
+            if (panel) {
+                panel.style.display = satellitesActive ? 'flex' : 'none';
+            }
+            if (satellitesActive) {
+                startSatellitePropagationLoop();
+            } else {
+                stopSatellitePropagationLoop();
+                clearSatelliteMapLayers();
+            }
+        }
+        window.setSatellitesVisible = setSatellitesVisible;
+
+        function clearSatelliteMapLayers() {
+            for (var id in satelliteMarkers) {
+                if (satelliteMarkers[id]) {
+                    map.removeLayer(satelliteMarkers[id]);
+                }
+            }
+            satelliteMarkers = {};
+            clearSelectedSatGraphics();
+        }
+
+        function clearSelectedSatGraphics() {
+            if (satGroundTrackLayers && satGroundTrackLayers.length > 0) {
+                for (var i = 0; i < satGroundTrackLayers.length; i++) {
+                    map.removeLayer(satGroundTrackLayers[i]);
+                }
+                satGroundTrackLayers = [];
+            }
+            if (satFootprintLayer) {
+                map.removeLayer(satFootprintLayer);
+                satFootprintLayer = null;
+            }
+        }
+
+        function onSatellitesDataReady(payload) {
+            if (!payload) return;
+            satellitesRawData = payload.satellites || [];
+            if (payload.observer && typeof payload.observer.lat === 'number' && typeof payload.observer.lon === 'number') {
+                satObserver = {
+                    lat: payload.observer.lat,
+                    lon: payload.observer.lon,
+                    alt_km: (payload.observer.alt_m || 0) / 1000.0
+                };
+            }
+
+            satellitesParsed = [];
+            if (typeof satellite !== 'undefined') {
+                for (var i = 0; i < satellitesRawData.length; i++) {
+                    var s = satellitesRawData[i];
+                    try {
+                        var satrec = satellite.twoline2satrec(s.line1, s.line2);
+                        satellitesParsed.push({
+                            norad_id: String(s.norad_id),
+                            name: s.name || ('SAT-' + s.norad_id),
+                            group_name: (s.group_name || 'amateur').toLowerCase(),
+                            satrec: satrec,
+                            frequencies: s.frequencies || [],
+                            lat: 0,
+                            lon: 0,
+                            alt_km: 0,
+                            speed_km_s: 0,
+                            azimuth_deg: 0,
+                            elevation_deg: -90,
+                            range_km: 0,
+                            range_rate_km_s: 0,
+                            in_view: false
+                        });
+                    } catch (e) {
+                        console.warn("Error parsing TLE for sat:", s.norad_id, e);
+                    }
+                }
+            }
+
+            var badge = document.getElementById('sat-count-badge');
+            if (badge) badge.textContent = satellitesParsed.length;
+
+            renderSatellitesQuickList();
+            updateSatellitePositions();
+        }
+        window.onSatellitesDataReady = onSatellitesDataReady;
+
+        function startSatellitePropagationLoop() {
+            if (satPropagationInterval) clearInterval(satPropagationInterval);
+            updateSatellitePositions();
+            satPropagationInterval = setInterval(updateSatellitePositions, 1000);
+        }
+
+        function stopSatellitePropagationLoop() {
+            if (satPropagationInterval) {
+                clearInterval(satPropagationInterval);
+                satPropagationInterval = null;
+            }
+        }
+
+        function updateSatellitePositions() {
+            if (!satellitesActive || typeof satellite === 'undefined' || satellitesParsed.length === 0) return;
+
+            var now = new Date();
+            var gstime = satellite.gstime(now);
+
+            var obsGd = null;
+            var obsEcf = null;
+            if (satObserver) {
+                obsGd = {
+                    longitude: satellite.degreesToRadians(satObserver.lon),
+                    latitude: satellite.degreesToRadians(satObserver.lat),
+                    height: satObserver.alt_km
+                };
+                obsEcf = satellite.geodeticToEcf(obsGd);
+            }
+
+            for (var i = 0; i < satellitesParsed.length; i++) {
+                var sat = satellitesParsed[i];
+                try {
+                    var prop = satellite.propagate(sat.satrec, now);
+                    if (!prop.position || !prop.velocity) continue;
+
+                    var gd = satellite.eciToGeodetic(prop.position, gstime);
+                    var lat = satellite.degreesLat(gd.latitude);
+                    var lon = satellite.degreesLong(gd.longitude);
+                    var altKm = gd.height;
+
+                    sat.lat = lat;
+                    sat.lon = lon;
+                    sat.alt_km = altKm;
+
+                    var vx = prop.velocity.x;
+                    var vy = prop.velocity.y;
+                    var vz = prop.velocity.z;
+                    sat.speed_km_s = Math.sqrt(vx * vx + vy * vy + vz * vz);
+
+                    if (obsGd && obsEcf) {
+                        var satEcf = satellite.eciToEcf(prop.position, gstime);
+                        var look = satellite.ecfToLookAngles(obsGd, satEcf);
+                        sat.azimuth_deg = satellite.radiansToDegrees(look.azimuth);
+                        sat.elevation_deg = satellite.radiansToDegrees(look.elevation);
+                        sat.range_km = look.rangeSat;
+                        sat.in_view = sat.elevation_deg > 0;
+
+                        var rx = satEcf.x - obsEcf.x;
+                        var ry = satEcf.y - obsEcf.y;
+                        var rz = satEcf.z - obsEcf.z;
+                        var rMag = Math.sqrt(rx * rx + ry * ry + rz * rz);
+                        if (rMag > 0.1) {
+                            sat.range_rate_km_s = (rx * vx + ry * vy + rz * vz) / rMag;
+                        } else {
+                            sat.range_rate_km_s = 0;
+                        }
+                    } else {
+                        sat.elevation_deg = -90;
+                        sat.in_view = false;
+                        sat.range_rate_km_s = 0;
+                    }
+
+                    var matchesGroup = currentSatGroup === 'all' || sat.group_name === currentSatGroup;
+                    var matchesSearch = !satSearchQuery || sat.name.toLowerCase().indexOf(satSearchQuery) !== -1 || sat.norad_id.indexOf(satSearchQuery) !== -1;
+
+                    if (matchesGroup && matchesSearch) {
+                        updateSatMarker(sat);
+                    } else if (satelliteMarkers[sat.norad_id]) {
+                        map.removeLayer(satelliteMarkers[sat.norad_id]);
+                        delete satelliteMarkers[sat.norad_id];
+                    }
+                } catch (err) {}
+            }
+
+            if (selectedNoradId) {
+                var selSat = getSatelliteById(selectedNoradId);
+                if (selSat) {
+                    updateSatTelemetryHud(selSat);
+                    if (showSatFootprint) {
+                        renderSatFootprint(selSat);
+                    }
+                    if (showSatGroundTrack) {
+                        renderSatGroundTrack(selSat, now);
+                    }
+                }
+            }
+
+            updateQuickListStatus();
+        }
+
+        function updateSatMarker(sat) {
+            var id = sat.norad_id;
+            var latlng = [sat.lat, sat.lon];
+            var isSelected = selectedNoradId === id;
+
+            if (satelliteMarkers[id]) {
+                satelliteMarkers[id].setLatLng(latlng);
+                var el = satelliteMarkers[id].getElement();
+                if (el) {
+                    if (isSelected && !el.classList.contains('selected')) {
+                        el.classList.add('selected');
+                    } else if (!isSelected && el.classList.contains('selected')) {
+                        el.classList.remove('selected');
+                    }
+                }
+            } else {
+                var grpCls = 'sat-marker-' + sat.group_name;
+                var iconGlyph = '🛰️';
+                if (sat.group_name === 'stations') iconGlyph = '🚀';
+                else if (sat.group_name === 'weather') iconGlyph = '🌤️';
+                else if (sat.group_name === 'amateur') iconGlyph = '📻';
+                else if (sat.group_name === 'cubesat') iconGlyph = '📦';
+
+                var html = '<div class="sat-marker ' + grpCls + (isSelected ? ' selected' : '') + '">' +
+                           '<div class="sat-marker-icon">' + iconGlyph + '</div>' +
+                           '<div class="sat-marker-label">' + escapeHtml(sat.name) + '</div>' +
+                           '</div>';
+
+                var divIcon = L.divIcon({
+                    className: 'sat-leaflet-marker',
+                    html: html,
+                    iconSize: [60, 36],
+                    iconAnchor: [30, 11]
+                });
+
+                var marker = L.marker(latlng, { icon: divIcon, zIndexOffset: 2000 });
+                marker.on('click', function() {
+                    selectSatellite(id);
+                });
+                marker.addTo(map);
+                satelliteMarkers[id] = marker;
+            }
+        }
+
+        function selectSatellite(noradId) {
+            selectedNoradId = String(noradId);
+            var sat = getSatelliteById(selectedNoradId);
+            if (!sat) return;
+
+            var rows = document.querySelectorAll('.sat-item-row');
+            rows.forEach(function(r) {
+                if (r.getAttribute('data-id') === selectedNoradId) {
+                    r.classList.add('selected');
+                    r.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                } else {
+                    r.classList.remove('selected');
+                }
+            });
+
+            for (var mid in satelliteMarkers) {
+                var el = satelliteMarkers[mid].getElement();
+                if (el) {
+                    if (mid === selectedNoradId) el.classList.add('selected');
+                    else el.classList.remove('selected');
+                }
+            }
+
+            var box = document.getElementById('sat-telemetry-box');
+            if (box) box.style.display = 'flex';
+
+            updateSatTelemetryHud(sat);
+            renderSatFootprint(sat);
+            renderSatGroundTrack(sat, new Date());
+
+            if (window.pyBridge && window.pyBridge.on_satellite_selected) {
+                window.pyBridge.on_satellite_selected(selectedNoradId);
+            }
+        }
+        window.selectSatellite = selectSatellite;
+
+        function centerOnSelectedSatellite() {
+            if (!selectedNoradId) return;
+            var sat = getSatelliteById(selectedNoradId);
+            if (sat && typeof sat.lat === 'number' && typeof sat.lon === 'number') {
+                map.panTo([sat.lat, sat.lon]);
+            }
+        }
+        window.centerOnSelectedSatellite = centerOnSelectedSatellite;
+
+        function getSatelliteById(noradId) {
+            for (var i = 0; i < satellitesParsed.length; i++) {
+                if (satellitesParsed[i].norad_id === noradId) {
+                    return satellitesParsed[i];
+                }
+            }
+            return null;
+        }
+
+        function renderSatFootprint(sat) {
+            if (satFootprintLayer) {
+                map.removeLayer(satFootprintLayer);
+                satFootprintLayer = null;
+            }
+            if (!showSatFootprint || !sat || sat.alt_km <= 0) return;
+
+            var R = 6371.0;
+            var h = sat.alt_km;
+            var ratio = R / (R + h);
+            if (ratio > 1.0) ratio = 1.0;
+            var theta = Math.acos(ratio);
+            var radiusMeters = R * theta * 1000.0;
+
+            satFootprintLayer = L.circle([sat.lat, sat.lon], {
+                radius: radiusMeters,
+                color: '#38BDF8',
+                weight: 1.5,
+                fillColor: '#38BDF8',
+                fillOpacity: 0.12,
+                dashArray: '4, 6',
+                interactive: false
+            }).addTo(map);
+        }
+
+        function renderSatGroundTrack(sat, now) {
+            if (satGroundTrackLayers && satGroundTrackLayers.length > 0) {
+                for (var i = 0; i < satGroundTrackLayers.length; i++) {
+                    map.removeLayer(satGroundTrackLayers[i]);
+                }
+                satGroundTrackLayers = [];
+            }
+            if (!showSatGroundTrack || !sat || !sat.satrec) return;
+
+            var segments = [];
+            var currentSegment = [];
+            var prevLon = null;
+
+            for (var m = 0; m <= 90; m++) {
+                var t = new Date(now.getTime() + m * 60000);
+                var gstime = satellite.gstime(t);
+                var p = satellite.propagate(sat.satrec, t);
+                if (!p.position) continue;
+                var gd = satellite.eciToGeodetic(p.position, gstime);
+                var lat = satellite.degreesLat(gd.latitude);
+                var lon = satellite.degreesLong(gd.longitude);
+
+                if (prevLon !== null && Math.abs(lon - prevLon) > 180) {
+                    if (currentSegment.length > 1) {
+                        segments.push(currentSegment);
+                    }
+                    currentSegment = [];
+                }
+                currentSegment.push([lat, lon]);
+                prevLon = lon;
+            }
+            if (currentSegment.length > 1) {
+                segments.push(currentSegment);
+            }
+
+            for (var s = 0; s < segments.length; s++) {
+                var poly = L.polyline(segments[s], {
+                    color: '#00FFC2',
+                    weight: 2,
+                    opacity: 0.65,
+                    dashArray: '5, 5',
+                    interactive: false
+                }).addTo(map);
+                satGroundTrackLayers.push(poly);
+            }
+        }
+
+        function updateSatTelemetryHud(sat) {
+            var nameEl = document.getElementById('sat-telem-name');
+            var badgeEl = document.getElementById('sat-pass-badge');
+            var latlonEl = document.getElementById('sat-telem-latlon');
+            var altSpdEl = document.getElementById('sat-telem-alt-spd');
+            var azElEl = document.getElementById('sat-telem-az-el');
+            var rangeEl = document.getElementById('sat-telem-range');
+            var freqsContainer = document.getElementById('sat-freqs-container');
+
+            if (nameEl) nameEl.textContent = sat.name + ' (' + sat.norad_id + ')';
+            if (badgeEl) {
+                if (sat.in_view) {
+                    badgeEl.className = 'sat-pass-badge in-view';
+                    badgeEl.textContent = 'IN VIEW (' + sat.elevation_deg.toFixed(1) + '°)';
+                } else {
+                    badgeEl.className = 'sat-pass-badge below';
+                    badgeEl.textContent = 'BELOW (' + (sat.elevation_deg < -80 ? 'N/A' : sat.elevation_deg.toFixed(1) + '°') + ')';
+                }
+            }
+            if (latlonEl) {
+                latlonEl.textContent = sat.lat.toFixed(2) + '°, ' + sat.lon.toFixed(2) + '°';
+            }
+            if (altSpdEl) {
+                altSpdEl.textContent = Math.round(sat.alt_km) + ' km • ' + sat.speed_km_s.toFixed(2) + ' km/s';
+            }
+            if (azElEl) {
+                if (satObserver) {
+                    azElEl.textContent = Math.round(sat.azimuth_deg) + '° • ' + sat.elevation_deg.toFixed(1) + '°';
+                } else {
+                    azElEl.textContent = 'No Observer Coords';
+                }
+            }
+            if (rangeEl) {
+                if (satObserver && sat.range_km > 0) {
+                    rangeEl.textContent = Math.round(sat.range_km) + ' km';
+                } else {
+                    rangeEl.textContent = '--';
+                }
+            }
+
+            if (freqsContainer) {
+                if (sat.frequencies && sat.frequencies.length > 0) {
+                    var c = 299792.458;
+                    var html = '<table class="sat-freq-table"><thead><tr><th>Channel</th><th>Nominal</th><th>Live Doppler</th></tr></thead><tbody>';
+                    for (var f = 0; f < sat.frequencies.length; f++) {
+                        var fr = sat.frequencies[f];
+                        var f0 = fr.freq_mhz || 0;
+                        var v_rad = sat.range_rate_km_s || 0;
+                        var dopplerShiftHz = -f0 * 1e6 * (v_rad / c);
+                        var liveFreqMhz = f0 + (dopplerShiftHz / 1e6);
+                        var shiftFmt = (dopplerShiftHz >= 0 ? '+' : '') + (dopplerShiftHz / 1000.0).toFixed(2) + ' kHz';
+                        var shiftCls = dopplerShiftHz >= 0 ? 'sat-doppler-pos' : 'sat-doppler-neg';
+
+                        html += '<tr>' +
+                                '<td><span style="font-weight:600;">' + escapeHtml(fr.label) + '</span> <span style="color:#9CA3AF;font-size:8px;">(' + escapeHtml(fr.mode || '') + ')</span></td>' +
+                                '<td>' + f0.toFixed(3) + ' MHz</td>' +
+                                '<td><span class="' + shiftCls + '">' + liveFreqMhz.toFixed(4) + ' MHz</span> <span style="font-size:8px;color:#9CA3AF;">(' + shiftFmt + ')</span></td>' +
+                                '</tr>';
+                    }
+                    html += '</tbody></table>';
+                    freqsContainer.innerHTML = html;
+                } else {
+                    freqsContainer.innerHTML = '<div style="font-size:9px;color:#9CA3AF;margin-top:2px;">No known downlink frequencies in catalog.</div>';
+                }
+            }
+        }
+
+        function renderSatellitesQuickList() {
+            var listEl = document.getElementById('sat-quick-list');
+            if (!listEl) return;
+
+            var html = '';
+            for (var i = 0; i < satellitesParsed.length; i++) {
+                var s = satellitesParsed[i];
+                var matchesGroup = currentSatGroup === 'all' || s.group_name === currentSatGroup;
+                var matchesSearch = !satSearchQuery || s.name.toLowerCase().indexOf(satSearchQuery) !== -1 || s.norad_id.indexOf(satSearchQuery) !== -1;
+                if (!matchesGroup || !matchesSearch) continue;
+
+                var isSel = selectedNoradId === s.norad_id;
+                var dotCls = s.in_view ? 'sat-in-view-dot' : 'sat-below-horizon-dot';
+                var elText = s.in_view ? ('+' + s.elevation_deg.toFixed(0) + '°') : (s.elevation_deg < -80 ? '--' : s.elevation_deg.toFixed(0) + '°');
+
+                html += '<div class="sat-item-row' + (isSel ? ' selected' : '') + '" data-id="' + s.norad_id + '" onclick="selectSatellite(this.dataset.id)">' +
+                        '<span><span class="' + dotCls + '"></span>' + escapeHtml(s.name) + '</span>' +
+                        '<span style="font-family:monospace;font-size:9px;color:' + (s.in_view ? '#34D399' : '#9CA3AF') + ';">' + elText + '</span>' +
+                        '</div>';
+            }
+            listEl.innerHTML = html;
+        }
+
+        function updateQuickListStatus() {
+            var rows = document.querySelectorAll('.sat-item-row');
+            for (var i = 0; i < rows.length; i++) {
+                var r = rows[i];
+                var nid = r.getAttribute('data-id');
+                var sat = getSatelliteById(nid);
+                if (sat) {
+                    var dot = r.querySelector('span > span');
+                    if (dot) dot.className = sat.in_view ? 'sat-in-view-dot' : 'sat-below-horizon-dot';
+                    var valSpan = r.children[1];
+                    if (valSpan) {
+                        valSpan.style.color = sat.in_view ? '#34D399' : '#9CA3AF';
+                        valSpan.textContent = sat.in_view ? ('+' + sat.elevation_deg.toFixed(0) + '°') : (sat.elevation_deg < -80 ? '--' : sat.elevation_deg.toFixed(0) + '°');
+                    }
+                }
+            }
+        }
+
+        function setSatelliteGroupFilter(grp) {
+            currentSatGroup = grp;
+            var pills = document.querySelectorAll('.sat-group-pill');
+            pills.forEach(function(p) {
+                if (p.id === 'sat-grp-' + grp) p.classList.add('active');
+                else p.classList.remove('active');
+            });
+            renderSatellitesQuickList();
+            updateSatellitePositions();
+        }
+        window.setSatelliteGroupFilter = setSatelliteGroupFilter;
+
+        function filterSatellites(q) {
+            satSearchQuery = (q || '').toLowerCase().trim();
+            renderSatellitesQuickList();
+            updateSatellitePositions();
+        }
+        window.filterSatellites = filterSatellites;
+
+        function toggleSatFootprint(checked) {
+            showSatFootprint = !!checked;
+            if (selectedNoradId) {
+                var sat = getSatelliteById(selectedNoradId);
+                if (showSatFootprint) renderSatFootprint(sat);
+                else if (satFootprintLayer) {
+                    map.removeLayer(satFootprintLayer);
+                    satFootprintLayer = null;
+                }
+            }
+        }
+        window.toggleSatFootprint = toggleSatFootprint;
+
+        function toggleSatGroundTrack(checked) {
+            showSatGroundTrack = !!checked;
+            if (selectedNoradId) {
+                var sat = getSatelliteById(selectedNoradId);
+                if (showSatGroundTrack) renderSatGroundTrack(sat, new Date());
+                else if (satGroundTrackLayers && satGroundTrackLayers.length > 0) {
+                    for (var i = 0; i < satGroundTrackLayers.length; i++) {
+                        map.removeLayer(satGroundTrackLayers[i]);
+                    }
+                    satGroundTrackLayers = [];
+                }
+            }
+        }
+        window.toggleSatGroundTrack = toggleSatGroundTrack;
 
         function previewPacketPath(coords, meta) {
             clearPreviewPacketPath();
@@ -6423,10 +8489,15 @@ class WebBridge(QObject):
     hop_candidate_selected_signal = pyqtSignal(str, str, str)
     phantom_node_toggled_signal = pyqtSignal(str, str, bool)
     map_context_menu_signal = pyqtSignal(float, float, int, int)
+    node_context_menu_signal = pyqtSignal(str, str, bool, bool, float, float, int, int)
 
     @pyqtSlot(float, float, int, int)
     def on_map_context_menu(self, lat: float, lon: float, x: int, y: int):
         self.map_context_menu_signal.emit(lat, lon, x, y)
+
+    @pyqtSlot(str, str, bool, bool, float, float, int, int)
+    def on_node_context_menu(self, node_id: str, alias: str, is_repeater: bool, is_phantom: bool, lat: float, lon: float, x: int, y: int):
+        self.node_context_menu_signal.emit(node_id, alias, is_repeater, is_phantom, lat, lon, x, y)
 
     @pyqtSlot(str)
     def on_node_clicked(self, node_id: str):
@@ -6444,9 +8515,15 @@ class WebBridge(QObject):
     def on_hop_candidate_selected(self, hop_prefix: str, target_node_id: str, msg_id: str = ""):
         self.hop_candidate_selected_signal.emit(hop_prefix, target_node_id, msg_id)
 
+    node_deleted_signal = pyqtSignal(str)
+
     @pyqtSlot(str, str, bool)
     def on_phantom_node_toggled(self, node_id: str, alias: str, is_phantom: bool):
         self.phantom_node_toggled_signal.emit(node_id, alias, is_phantom)
+
+    @pyqtSlot(str)
+    def on_delete_node(self, node_id: str):
+        self.node_deleted_signal.emit(node_id)
 
     repeater_neighbors_cleared_signal = pyqtSignal()
     tropo_stepped_signal = pyqtSignal(int)
@@ -6518,6 +8595,22 @@ class WebBridge(QObject):
     def on_space_weather_opacity(self, opacity: float):
         self.space_weather_opacity_signal.emit(opacity)
 
+    satellite_toggled_signal = pyqtSignal(bool)
+    satellite_refresh_signal = pyqtSignal()
+    satellite_selected_signal = pyqtSignal(str)
+
+    @pyqtSlot(bool)
+    def on_satellite_toggled(self, enabled: bool):
+        self.satellite_toggled_signal.emit(enabled)
+
+    @pyqtSlot()
+    def on_satellite_refresh(self):
+        self.satellite_refresh_signal.emit()
+
+    @pyqtSlot(str)
+    def on_satellite_selected(self, norad_id: str):
+        self.satellite_selected_signal.emit(str(norad_id))
+
     adsb_color_mode_changed_signal = pyqtSignal(str)
     request_aircraft_photo_signal = pyqtSignal(str)
 
@@ -6554,6 +8647,79 @@ class WebBridge(QObject):
     @pyqtSlot(str, str, float, float)
     def on_calc_node_viewshed_requested(self, node_id: str, alias: str, lat: float, lon: float):
         self.calc_node_viewshed_signal.emit(node_id, alias, lat, lon)
+
+    search_node_id_toggled_signal = pyqtSignal(bool)
+    lightning_proximity_alert_signal = pyqtSignal(float, int)
+    copy_clipboard_signal = pyqtSignal(str)
+
+    @pyqtSlot(bool)
+    def on_search_node_id_toggled(self, enabled: bool):
+        self.search_node_id_toggled_signal.emit(enabled)
+
+    @pyqtSlot(float, int)
+    def on_lightning_proximity_alert(self, distance_mi: float, bearing_deg: int):
+        self.lightning_proximity_alert_signal.emit(distance_mi, bearing_deg)
+
+    @pyqtSlot(str)
+    def on_copy_clipboard(self, text: str):
+        try:
+            from PyQt6.QtGui import QGuiApplication
+            cb = QGuiApplication.clipboard()
+            if cb:
+                cb.setText(text)
+        except Exception:
+            pass
+        self.copy_clipboard_signal.emit(text)
+
+
+class DraggableOverlayFrame(QFrame):
+    """Repositionable/draggable floating overlay container with Discord dark theme styling."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._dragging = False
+        self._drag_start_pos = None
+        self._user_moved = False
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            child = self.childAt(event.position().toPoint())
+            if child and isinstance(child, (QPushButton, QComboBox, QAbstractItemView)):
+                super().mousePressEvent(event)
+                return
+            self._dragging = True
+            self._drag_start_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            self.raise_()
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._dragging and self._drag_start_pos is not None:
+            new_pos = event.globalPosition().toPoint() - self._drag_start_pos
+            if self.parent():
+                parent_w = self.parent().width()
+                parent_h = self.parent().height()
+                max_x = max(0, parent_w - self.width())
+                max_y = max(0, parent_h - self.height())
+                nx = max(0, min(max_x, new_pos.x()))
+                ny = max(0, min(max_y, new_pos.y()))
+                if nx < 415 and ny < 55:
+                    ny = 58
+                self.move(nx, ny)
+            else:
+                self.move(new_pos)
+            self._user_moved = True
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._dragging = False
+            self._drag_start_pos = None
+            event.accept()
+        else:
+            super().mouseReleaseEvent(event)
 
 
 class ReformingMapOverlay(QWidget):
@@ -6799,6 +8965,8 @@ class MeshMapWidget(QWidget):
 
     node_selected = pyqtSignal(str)
     map_ready = pyqtSignal()
+    search_node_id_toggled = pyqtSignal(bool)
+    lightning_proximity_alert = pyqtSignal(float, int)
 
     def __init__(self, storage=None, config=None, driver=None, parent=None):
         super().__init__(parent)
@@ -6812,6 +8980,7 @@ class MeshMapWidget(QWidget):
         self.show_rf_links = True
         self.show_paths = True
         self.show_companion_orbitals = False
+        self.show_search_node_id = False
         self._page_ready = not WEBENGINE_AVAILABLE
         self._last_traced_path_info = None
         self._pending_visualise_msg = None
@@ -6848,6 +9017,10 @@ class MeshMapWidget(QWidget):
         self.space_weather_service.weather_updated.connect(self._on_space_weather_updated)
         self.space_weather_service.weather_loading.connect(self._on_space_weather_loading)
         self.space_weather_service.weather_error.connect(self._on_space_weather_error)
+
+        self.show_satellites = getattr(self.config.satellites, "enabled", False) if (self.config and hasattr(self.config, "satellites")) else False
+        self.satellite_service = SatelliteService(storage=self.storage, config=self.config, parent=self)
+        self.satellite_service.tles_updated.connect(self._on_satellites_updated)
 
         self.elevation_service = ElevationService(parent=self)
         self.elevation_service.profile_ready.connect(self._on_elevation_profile_ready)
@@ -6912,6 +9085,10 @@ class MeshMapWidget(QWidget):
         self.btn_thunderstorm = QPushButton("⛈️ Storms")
         self.btn_thunderstorm.setCheckable(True)
         self.btn_thunderstorm.clicked.connect(lambda: self.set_thunderstorm(self.btn_thunderstorm.isChecked()))
+        self.btn_satellites = QPushButton("🛰️ Satellites")
+        self.btn_satellites.setCheckable(True)
+        self.btn_satellites.setChecked(self.show_satellites)
+        self.btn_satellites.clicked.connect(lambda: self.set_satellites(self.btn_satellites.isChecked()))
 
         self.stats_badge = QLabel("0 Nodes")
         self.btn_add_node = QPushButton("➕ Add Node")
@@ -6935,6 +9112,7 @@ class MeshMapWidget(QWidget):
             self.bridge.visualised_path_closed_signal.connect(self._on_visualised_path_closed)
             self.bridge.hop_candidate_selected_signal.connect(self._on_hop_candidate_selected)
             self.bridge.phantom_node_toggled_signal.connect(self._on_phantom_node_toggled)
+            self.bridge.node_deleted_signal.connect(self._on_bridge_delete_node)
             self.bridge.repeater_neighbors_cleared_signal.connect(self._on_repeater_neighbors_cleared)
             self.bridge.tropo_stepped_signal.connect(self._on_bridge_tropo_stepped)
             self.bridge.tropo_toggled_signal.connect(self._on_bridge_tropo_toggled)
@@ -6948,8 +9126,17 @@ class MeshMapWidget(QWidget):
             self.bridge.space_weather_toggled_signal.connect(self.set_space_weather)
             self.bridge.space_weather_refresh_signal.connect(lambda: self.space_weather_service.fetch_weather(force=True))
             self.bridge.space_weather_opacity_signal.connect(self._on_space_weather_opacity_changed)
+            self.bridge.satellite_toggled_signal.connect(self.set_satellites)
+            self.bridge.satellite_refresh_signal.connect(lambda: self.satellite_service.refresh_now(force=True))
+            self.bridge.search_node_id_toggled_signal.connect(self._on_bridge_search_node_id_toggled)
+            self.bridge.lightning_proximity_alert_signal.connect(self._on_bridge_lightning_proximity_alert)
             self.bridge.map_context_menu_signal.connect(
                 lambda lat, lon, x, y: QTimer.singleShot(0, lambda: self._show_map_context_menu(lat, lon, x, y))
+            )
+            self.bridge.node_context_menu_signal.connect(
+                lambda nid, alias, is_rep, is_phant, lat, lon, x, y: QTimer.singleShot(
+                    0, lambda: self._show_node_context_menu(nid, alias, is_rep, is_phant, lat, lon, x, y)
+                )
             )
             self.bridge.adsb_color_mode_changed_signal.connect(self._on_bridge_adsb_color_mode_changed)
             self.bridge.request_aircraft_photo_signal.connect(self._on_bridge_request_aircraft_photo)
@@ -7040,86 +9227,125 @@ class MeshMapWidget(QWidget):
             self.floating_controls.move(10, 10)
             self.floating_controls.show()
 
-            # Floating Line-of-Sight & Topographic Profile Controls at Top of Map
-            self.los_controls = QFrame(self.web_view)
+            # Floating Line-of-Sight & Topographic Profile Controls (Portrait Unified Style)
+            self.los_controls = DraggableOverlayFrame(self.web_view)
+            self.los_controls.setObjectName("losControlsOverlay")
+            self.los_controls.setFixedWidth(238)
             self.los_controls.setStyleSheet("""
-                QFrame {
-                    background-color: rgba(24, 27, 32, 0.94);
-                    border: 1px solid rgba(16, 185, 129, 0.4);
-                    border-radius: 6px;
-                }
-                QLabel {
-                    color: #10B981;
-                    font-size: 11px;
-                    font-weight: 700;
-                    background: transparent;
-                    border: none;
+                QFrame#losControlsOverlay {
+                    background-color: rgba(30, 31, 34, 0.96);
+                    border: 1px solid #383A40;
+                    border-radius: 8px;
                 }
                 QPushButton {
-                    background-color: rgba(255, 255, 255, 0.05);
-                    color: #D1D5DB;
-                    border: 1px solid rgba(255, 255, 255, 0.1);
-                    padding: 4px 8px;
-                    font-size: 11px;
+                    background-color: #2B2D31;
+                    color: #DBDEE1;
+                    border: 1px solid #383A40;
+                    padding: 3px 4px;
+                    font-size: 10px;
                     font-weight: 600;
                     border-radius: 4px;
                 }
                 QPushButton:hover {
-                    background-color: rgba(16, 185, 129, 0.2);
+                    background-color: #35373C;
                     color: #FFFFFF;
-                    border-color: #10B981;
+                    border-color: #4E5058;
                 }
                 QPushButton:checked {
-                    background-color: #10B981;
-                    color: #064E3B;
+                    background-color: #23A55A;
+                    color: #FFFFFF;
                     font-weight: 700;
-                    border-color: #34D399;
+                    border-color: #23A55A;
                 }
                 QComboBox {
-                    background-color: #1F242D;
-                    color: #F3F4F6;
-                    border: 1px solid #374151;
+                    background-color: #2B2D31;
+                    color: #DBDEE1;
+                    border: 1px solid #383A40;
                     border-radius: 4px;
-                    padding: 2px 6px;
-                    font-size: 11px;
+                    padding: 3px 6px;
+                    font-size: 10.5px;
                     font-weight: 600;
+                }
+                QComboBox:hover {
+                    border-color: #4E5058;
                 }
                 QComboBox::drop-down {
                     border: none;
-                    width: 14px;
+                    width: 16px;
                 }
                 QComboBox QAbstractItemView {
-                    background-color: #1E2024;
-                    color: #F3F4F6;
-                    selection-background-color: #10B981;
-                    selection-color: #064E3B;
-                    border: 1px solid #374151;
+                    background-color: #1E1F22;
+                    color: #DBDEE1;
+                    selection-background-color: #23A55A;
+                    selection-color: #FFFFFF;
+                    border: 1px solid #383A40;
+                    outline: none;
                 }
             """)
-            los_layout = QHBoxLayout(self.los_controls)
-            los_layout.setContentsMargins(5, 4, 5, 4)
-            los_layout.setSpacing(5)
+            los_main_layout = QVBoxLayout(self.los_controls)
+            los_main_layout.setContentsMargins(9, 7, 9, 8)
+            los_main_layout.setSpacing(5)
 
-            lbl_los = QLabel("📡 LOS:")
-            lbl_los.setToolTip("Line-of-Sight & RF Propagation Coverage Tools")
-            los_layout.addWidget(lbl_los)
+            # Header row with drag handle, title, and close button
+            hdr_layout = QHBoxLayout()
+            hdr_layout.setContentsMargins(0, 0, 0, 0)
+            hdr_layout.setSpacing(4)
 
-            self.btn_toggle_los = QPushButton("🟢 Viewshed")
-            self.btn_toggle_los.setCheckable(True)
-            self.btn_toggle_los.setToolTip("Toggle 360° Terrain-Aware RF Line-of-Sight Viewshed Coverage")
-            self.btn_toggle_los.clicked.connect(self._on_los_toggle_clicked)
-            los_layout.addWidget(self.btn_toggle_los)
+            lbl_grip = QLabel("⠿")
+            lbl_grip.setStyleSheet("color: #4E5058; font-size: 12px; font-weight: bold; background: transparent; border: none;")
+            hdr_layout.addWidget(lbl_grip)
+
+            lbl_los_title = QLabel("📡 LINE-OF-SIGHT & TOPO")
+            lbl_los_title.setStyleSheet("color: #F2F3F5; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; background: transparent; border: none;")
+            hdr_layout.addWidget(lbl_los_title, 1)
+
+            self.btn_close_los = QPushButton("✕")
+            self.btn_close_los.setObjectName("losCloseBtn")
+            self.btn_close_los.setToolTip("Close LOS & Topo panel")
+            self.btn_close_los.setFixedSize(18, 18)
+            self.btn_close_los.setStyleSheet("""
+                QPushButton#losCloseBtn {
+                    background: transparent;
+                    color: #80848E;
+                    border: none;
+                    font-size: 11px;
+                    font-weight: bold;
+                    padding: 0;
+                    border-radius: 3px;
+                }
+                QPushButton#losCloseBtn:hover {
+                    background-color: #ED4245;
+                    color: #FFFFFF;
+                }
+            """)
+            self.btn_close_los.clicked.connect(lambda: self.set_los_view_active(False))
+            hdr_layout.addWidget(self.btn_close_los)
+            los_main_layout.addLayout(hdr_layout)
+
+            # Antenna Height section
+            lbl_height = QLabel("ANTENNA HEIGHT (TX/RX)")
+            lbl_height.setStyleSheet("color: #949BA4; font-size: 9px; font-weight: 700; letter-spacing: 0.5px; background: transparent; border: none;")
+            los_main_layout.addWidget(lbl_height)
+
+            pills_layout = QHBoxLayout()
+            pills_layout.setContentsMargins(0, 0, 0, 0)
+            pills_layout.setSpacing(3)
 
             self.btn_los_ground = QPushButton("Ground (2m)")
             self.btn_los_ground.setCheckable(True)
             self.btn_los_ground.setToolTip("Handheld / mobile antenna (2m AGL)")
+            self.btn_los_ground.setFixedHeight(22)
+
             self.btn_los_rooftop = QPushButton("Rooftop (8m)")
             self.btn_los_rooftop.setCheckable(True)
             self.btn_los_rooftop.setChecked(True)
             self.btn_los_rooftop.setToolTip("Residential chimney / eaves mount (8m AGL)")
+            self.btn_los_rooftop.setFixedHeight(22)
+
             self.btn_los_mast = QPushButton("Mast (15m)")
             self.btn_los_mast.setCheckable(True)
             self.btn_los_mast.setToolTip("High mast / tower mount (15m AGL)")
+            self.btn_los_mast.setFixedHeight(22)
 
             self.height_group = QButtonGroup(self)
             self.height_group.addButton(self.btn_los_ground, 2)
@@ -7127,31 +9353,62 @@ class MeshMapWidget(QWidget):
             self.height_group.addButton(self.btn_los_mast, 15)
             self.height_group.idClicked.connect(self._on_los_height_button_clicked)
 
-            los_layout.addWidget(self.btn_los_ground)
-            los_layout.addWidget(self.btn_los_rooftop)
-            los_layout.addWidget(self.btn_los_mast)
+            pills_layout.addWidget(self.btn_los_ground)
+            pills_layout.addWidget(self.btn_los_rooftop)
+            pills_layout.addWidget(self.btn_los_mast)
+            los_main_layout.addLayout(pills_layout)
 
-            lbl_r = QLabel("Radius:")
-            lbl_r.setStyleSheet("color: #9CA3AF; font-weight: normal;")
-            los_layout.addWidget(lbl_r)
+            # Radius section
+            lbl_radius = QLabel("VIEWSHED RADIUS")
+            lbl_radius.setStyleSheet("color: #949BA4; font-size: 9px; font-weight: 700; letter-spacing: 0.5px; background: transparent; border: none;")
+            los_main_layout.addWidget(lbl_radius)
 
             self.combo_los_radius = QComboBox()
             self.combo_los_radius.addItems(["15 km", "25 km", "50 km"])
             self.combo_los_radius.setCurrentText("25 km")
+            self.combo_los_radius.setFixedHeight(24)
             self.combo_los_radius.currentTextChanged.connect(self._on_los_radius_changed)
-            los_layout.addWidget(self.combo_los_radius)
+            los_main_layout.addWidget(self.combo_los_radius)
 
-            self.btn_profile_path = QPushButton("🏔️ Profile Path")
+            # Action buttons: Viewshed & Profile
+            actions_row = QHBoxLayout()
+            actions_row.setContentsMargins(0, 0, 0, 0)
+            actions_row.setSpacing(4)
+
+            self.btn_toggle_los = QPushButton("🟢 Viewshed")
+            self.btn_toggle_los.setCheckable(True)
+            self.btn_toggle_los.setFixedHeight(24)
+            self.btn_toggle_los.setToolTip("Toggle 360° Terrain-Aware RF Line-of-Sight Viewshed Coverage")
+            self.btn_toggle_los.clicked.connect(self._on_los_toggle_clicked)
+            actions_row.addWidget(self.btn_toggle_los)
+
+            self.btn_profile_path = QPushButton("🏔️ Profile")
             self.btn_profile_path.setCheckable(True)
+            self.btn_profile_path.setFixedHeight(24)
             self.btn_profile_path.setToolTip("Click two points on the map to profile topographic elevation & 1st Fresnel zone clearance")
             self.btn_profile_path.clicked.connect(self._on_profile_path_toggle_clicked)
-            los_layout.addWidget(self.btn_profile_path)
+            actions_row.addWidget(self.btn_profile_path)
+            los_main_layout.addLayout(actions_row)
 
-            self.btn_clear_los = QPushButton("✕")
+            # Clear button row
+            self.btn_clear_los = QPushButton("🧹 Clear Overlays")
             self.btn_clear_los.setToolTip("Clear Viewshed and Path Profile overlays")
-            self.btn_clear_los.setFixedWidth(24)
+            self.btn_clear_los.setFixedHeight(22)
+            self.btn_clear_los.setStyleSheet("""
+                QPushButton {
+                    background-color: #232428;
+                    color: #949BA4;
+                    border: 1px solid #383A40;
+                    font-size: 10px;
+                    border-radius: 4px;
+                }
+                QPushButton:hover {
+                    background-color: #35373C;
+                    color: #F2F3F5;
+                }
+            """)
             self.btn_clear_los.clicked.connect(self._on_clear_los_clicked)
-            los_layout.addWidget(self.btn_clear_los)
+            los_main_layout.addWidget(self.btn_clear_los)
 
             self.los_controls.adjustSize()
             show_los = getattr(self.config, "map_show_rf_los", False) if self.config else False
@@ -7259,6 +9516,8 @@ class MeshMapWidget(QWidget):
             self.floating_controls.move(10, 10)
             self.floating_controls.raise_()
         if hasattr(self, "los_controls") and hasattr(self, "floating_controls") and hasattr(self, "web_view"):
+            if getattr(self.los_controls, "_user_moved", False):
+                return
             fl_w = self.floating_controls.width()
             los_w = self.los_controls.width()
             try:
@@ -7266,9 +9525,9 @@ class MeshMapWidget(QWidget):
             except Exception:
                 web_w = 800
             if fl_w + los_w + 30 <= web_w:
-                self.los_controls.move(fl_w + 20, 10)
+                self.los_controls.move(max(fl_w + 20, 430), 10)
             else:
-                self.los_controls.move(10, self.floating_controls.height() + 16)
+                self.los_controls.move(10, max(58, self.floating_controls.height() + 16))
             self.los_controls.raise_()
 
     def run_js(self, script: str, callback: Optional[Callable] = None):
@@ -7691,6 +9950,8 @@ class MeshMapWidget(QWidget):
             if hasattr(self, "reforming_overlay"):
                 self.reforming_overlay.hide_reforming()
             self.refresh_map_data()
+            if getattr(self, "show_satellites", False):
+                self.set_satellites(True)
             self.map_ready.emit()
 
     def _on_path_modes_toggle(self):
@@ -8263,6 +10524,149 @@ class MeshMapWidget(QWidget):
         if hasattr(self, "watcher_status"):
             self.watcher_status.setText("⚡ Watcher: Ready")
 
+    def _show_node_context_menu(self, node_id: str, alias: str, is_repeater: bool, is_phantom: bool, lat: float, lon: float, x: int, y: int):
+        """Displays rich context menu when user right-clicks directly on a node/repeater marker."""
+        now = time.time()
+        if hasattr(self, "_last_context_menu_time") and (now - self._last_context_menu_time) < 0.25:
+            return
+        self._last_context_menu_time = now
+
+        if hasattr(self, "_active_context_menu") and self._active_context_menu:
+            try:
+                self._active_context_menu.close()
+            except Exception:
+                pass
+            self._active_context_menu = None
+
+        menu = QMenu(self)
+        self._active_context_menu = menu
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #1E2024;
+                color: #F3F4F6;
+                border: 1px solid #374151;
+                border-radius: 8px;
+                padding: 6px;
+            }
+            QMenu::item {
+                padding: 7px 18px;
+                border-radius: 5px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            QMenu::item:selected {
+                background-color: #2D3748;
+                color: #38BDF8;
+            }
+            QMenu::item:disabled {
+                color: #38BDF8;
+                font-size: 12px;
+                font-weight: 700;
+                padding: 6px 14px;
+            }
+            QMenu::separator {
+                height: 1px;
+                background-color: #374151;
+                margin: 4px 6px;
+            }
+        """)
+
+        clean_alias = alias or node_id
+        is_fav = False
+        contact = None
+        if self.storage:
+            contact = self.storage.get_contact(node_id)
+            if not contact and alias:
+                contact = self.storage.get_contact(alias)
+        if contact:
+            is_fav = bool(contact.is_favorite or (self.config and self.config.is_user_favorite(contact.node_id, contact.alias)))
+        elif self.config:
+            is_fav = bool(self.config.is_user_favorite(node_id, clean_alias))
+
+        is_room = (getattr(contact, "is_room_server", False) or is_room_server_contact(contact)) if contact else is_room_server_contact({"alias": clean_alias, "node_id": node_id})
+        is_actual_phantom = self.storage.is_phantom_node(node_id, clean_alias) if self.storage else is_phantom
+
+        # 1. Header
+        type_str = "Phantom Node" if is_actual_phantom else ("Room Server" if is_room else ("Repeater" if is_repeater else "Companion"))
+        icon_str = "👻" if is_actual_phantom else ("🏢" if is_room else ("📡" if is_repeater else "👤"))
+        header_text = f"{icon_str} {clean_alias} • {type_str}"
+        act_header = menu.addAction(header_text)
+        act_header.setEnabled(False)
+
+        menu.addSeparator()
+
+        # 2. Phantom Node Action (for repeaters and phantom nodes)
+        if is_repeater or is_actual_phantom:
+            if is_actual_phantom:
+                act_phantom = menu.addAction("👻 Unmark Phantom Node (Restore Normal)")
+                act_phantom.triggered.connect(lambda: self._on_phantom_node_toggled(node_id, clean_alias, False))
+            else:
+                act_phantom = menu.addAction("👻 Mark as Phantom Node (Style Black)")
+                act_phantom.triggered.connect(lambda: self._on_phantom_node_toggled(node_id, clean_alias, True))
+            menu.addSeparator()
+
+        # 3. Favorite Action
+        fav_label = "⭐ Remove from Favorites" if is_fav else "⭐ Add to Favorites"
+        act_fav = menu.addAction(fav_label)
+        def toggle_node_fav():
+            new_f = not is_fav
+            if self.storage:
+                self.storage.set_contact_favorite(node_id, new_f)
+            if self.config:
+                if new_f:
+                    if node_id not in self.config.favorite_users:
+                        self.config.favorite_users.append(node_id)
+                else:
+                    self.config.favorite_users = [u for u in self.config.favorite_users if u != node_id and u != clean_alias]
+                self.config.save()
+            from meshcore_tray.core.event_bus import bus, EventType
+            bus.emit(EventType.FAVORITES_UPDATED, node_id)
+            self.refresh_map_data()
+        act_fav.triggered.connect(toggle_node_fav)
+
+        # 4. Open Console / DM
+        if is_room:
+            act_open = menu.addAction("🏢 Open Room Server Console")
+        elif is_repeater:
+            act_open = menu.addAction("📻 Open Repeater Console")
+        else:
+            act_open = menu.addAction("💬 Send Direct Message")
+        act_open.triggered.connect(lambda: self._on_bridge_node_clicked(node_id))
+
+        menu.addSeparator()
+
+        # 5. RF & Profile Operations
+        home_lat = getattr(self.config.meshcore, "latitude", None) if (self.config and hasattr(self.config, "meshcore")) else None
+        home_lon = getattr(self.config.meshcore, "longitude", None) if (self.config and hasattr(self.config, "meshcore")) else None
+        if home_lat is not None and home_lon is not None and lat is not None and lon is not None:
+            act_profile = menu.addAction(f"🏔️ Profile Path to Home ({clean_alias})")
+            act_profile.triggered.connect(lambda: self.show_elevation_profile(home_lat, home_lon, lat, lon, alias1="Home Station", alias2=clean_alias))
+
+        if lat is not None and lon is not None:
+            act_viewshed = menu.addAction(f"🟢 Calculate LOS Viewshed for {clean_alias}")
+            act_viewshed.triggered.connect(lambda: self._trigger_viewshed_calc(lat=lat, lon=lon, alias=clean_alias))
+
+            act_adsb = menu.addAction(f"✈️ Track ADS-B Air Traffic Around {clean_alias}")
+            act_adsb.triggered.connect(lambda: self._on_bridge_set_adsb_target(node_id, clean_alias, lat, lon))
+
+        menu.addSeparator()
+
+        # 6. Copy details
+        act_copy_id = menu.addAction(f"📋 Copy Node ID ({node_id})")
+        act_copy_id.triggered.connect(lambda: self._copy_to_clipboard(node_id, "Node ID"))
+
+        if lat is not None and lon is not None:
+            act_copy_coords = menu.addAction(f"📋 Copy Coordinates ({lat:.5f}, {lon:.5f})")
+            act_copy_coords.triggered.connect(lambda: self._copy_to_clipboard(f"{lat:.5f}, {lon:.5f}", "Coordinates"))
+
+        if hasattr(self, "web_view"):
+            safe_x = max(0, min(self.web_view.width(), int(x)))
+            safe_y = max(0, min(self.web_view.height(), int(y)))
+            global_pos = self.web_view.mapToGlobal(QPoint(safe_x, safe_y))
+        else:
+            global_pos = self.mapToGlobal(QPoint(int(x), int(y)))
+        menu.popup(global_pos)
+
     def _show_map_context_menu(self, lat: float, lon: float, x: int, y: int):
         """Displays custom dark-themed context menu for map operations."""
         now = time.time()
@@ -8320,6 +10724,27 @@ class MeshMapWidget(QWidget):
         act_header.setEnabled(False)
 
         menu.addSeparator()
+
+        # Check if right-clicking near any known repeater or phantom node (within 1km)
+        nearby_rep = None
+        if self.storage:
+            try:
+                coords_nodes = self.storage.get_nodes_with_coordinates()
+                for c in coords_nodes:
+                    if (c.is_repeater or self.storage.is_phantom_node(c.node_id, c.alias)) and c.latitude is not None and c.longitude is not None:
+                        d_km, _, _ = calculate_distance_and_bearing(lat, lon, c.latitude, c.longitude)
+                        if d_km < 1.0:
+                            nearby_rep = c
+                            break
+            except Exception:
+                pass
+
+        if nearby_rep:
+            is_p = self.storage.is_phantom_node(nearby_rep.node_id, nearby_rep.alias)
+            p_label = f"👻 Unmark '{nearby_rep.alias}' as Phantom Node" if is_p else f"👻 Mark '{nearby_rep.alias}' as Phantom Node (Style Black)"
+            act_rep_phantom = menu.addAction(p_label)
+            act_rep_phantom.triggered.connect(lambda: self._on_phantom_node_toggled(nearby_rep.node_id, nearby_rep.alias, not is_p))
+            menu.addSeparator()
 
         # 2. Navigation
         act_center = menu.addAction("🎯 Center Map Here")
@@ -8470,6 +10895,34 @@ class MeshMapWidget(QWidget):
     def _on_bridge_thunderstorm_toggled(self, enabled: bool):
         self.set_thunderstorm(enabled)
 
+    def _on_bridge_lightning_proximity_alert(self, distance_mi: float, bearing_deg: int):
+        """Dispatches 25-mile lightning strike proximity warning to listeners / system tray."""
+        self.lightning_proximity_alert.emit(float(distance_mi), int(bearing_deg))
+        if hasattr(self, "watcher_status"):
+            self.watcher_status.setText(
+                f"⚡ <b>LIGHTNING ALERT:</b> Strike detected {distance_mi:.1f} mi away (bearing {bearing_deg}°)"
+            )
+
+    def set_search_node_id(self, enabled: bool):
+        """Toggles the Search Node IDs interactive overlay and marker illumination."""
+        self.show_search_node_id = bool(enabled)
+
+        p = self.window()
+        if p and hasattr(p, "nav_dock") and hasattr(p.nav_dock, "btn_search_node_id"):
+            p.nav_dock.btn_search_node_id.blockSignals(True)
+            p.nav_dock.btn_search_node_id.setChecked(self.show_search_node_id)
+            p.nav_dock.btn_search_node_id.blockSignals(False)
+
+        if hasattr(self, "watcher_status") and self.show_search_node_id:
+            self.watcher_status.setText("🔍 <b>Search Node IDs:</b> Matching byte prefixes illuminated in neon green")
+
+        vis_str = "true" if self.show_search_node_id else "false"
+        self.run_js(f"setSearchNodeIdVisible({vis_str});")
+        self.search_node_id_toggled.emit(self.show_search_node_id)
+
+    def _on_bridge_search_node_id_toggled(self, enabled: bool):
+        self.set_search_node_id(enabled)
+
     def set_space_weather(self, enabled: bool):
         """Toggles real-time NOAA space weather telemetry and aurora forecast overlay."""
         self.show_space_weather = bool(enabled)
@@ -8519,6 +10972,68 @@ class MeshMapWidget(QWidget):
                 self.config.save()
             except Exception:
                 pass
+
+    def set_satellites(self, enabled: bool):
+        """Toggles real-time satellite tracking layer and syncs orbital elements to Leaflet."""
+        self.show_satellites = bool(enabled)
+        if self.config and hasattr(self.config, "satellites"):
+            self.config.satellites.enabled = self.show_satellites
+            try:
+                self.config.save()
+            except Exception:
+                pass
+
+        p = self.window()
+        if p and hasattr(p, "nav_dock") and hasattr(p.nav_dock, "btn_satellites"):
+            p.nav_dock.btn_satellites.blockSignals(True)
+            p.nav_dock.btn_satellites.setChecked(self.show_satellites)
+            p.nav_dock.btn_satellites.blockSignals(False)
+
+        if hasattr(self, "btn_satellites"):
+            self.btn_satellites.blockSignals(True)
+            self.btn_satellites.setChecked(self.show_satellites)
+            self.btn_satellites.blockSignals(False)
+
+        vis_str = "true" if self.show_satellites else "false"
+        self.run_js(f"setSatellitesVisible({vis_str});")
+
+        if self.show_satellites:
+            self._push_satellites_to_map()
+            self.satellite_service.start()
+        else:
+            self.satellite_service.stop()
+
+    def _push_satellites_to_map(self):
+        """Pushes active satellite orbital TLEs and observer coords to Leaflet."""
+        sats = self.satellite_service.get_satellites_for_map(active_only=False)
+        local_lat = getattr(self.config.meshcore, "latitude", None) if (self.config and hasattr(self.config, "meshcore")) else None
+        local_lon = getattr(self.config.meshcore, "longitude", None) if (self.config and hasattr(self.config, "meshcore")) else None
+        payload = {
+            "satellites": sats,
+            "observer": {
+                "lat": local_lat,
+                "lon": local_lon,
+                "alt_m": 0.0,
+            } if (local_lat is not None and local_lon is not None) else None
+        }
+        self.run_js(f"if (window.onSatellitesDataReady) window.onSatellitesDataReady({json.dumps(payload)});")
+
+    def _on_satellites_updated(self, tles: list):
+        """Triggered when SatelliteService finishes refreshing or seeding TLEs."""
+        if getattr(self, "show_satellites", False):
+            self._push_satellites_to_map()
+
+    def select_satellite(self, norad_id: str):
+        """Focuses and selects a satellite on the map, opening its tracker panel."""
+        if not self.show_satellites:
+            self.set_satellites(True)
+        clean_id = str(norad_id).strip()
+        self.run_js(
+            f"if (window.selectSatellite) {{ "
+            f"window.selectSatellite('{clean_id}'); "
+            f"setTimeout(function() {{ if (window.centerOnSelectedSatellite) window.centerOnSelectedSatellite(); }}, 200); "
+            f"}}"
+        )
 
     def preview_packet_path(self, path: PacketPathInfo):
         """Temporarily highlights a multi-hop flood trajectory on hover from the floods view."""
@@ -8643,7 +11158,7 @@ class MeshMapWidget(QWidget):
                     self.config.mark_phantom_node(clean_alias)
             logger.info(f"Marked phantom node: {alias} ({node_id})")
             if hasattr(self, "watcher_status"):
-                self.watcher_status.setText(f"⚡ <b>Phantom Node:</b> Marked '{clean_alias or node_id}' as phantom (excluded from map)")
+                self.watcher_status.setText(f"⚡ <b>Phantom Node:</b> Marked '{clean_alias or node_id}' as phantom (styled black)")
         else:
             if self.storage:
                 self.storage.unmark_phantom_node(node_id)
@@ -8655,12 +11170,53 @@ class MeshMapWidget(QWidget):
                     self.config.unmark_phantom_node(clean_alias)
             logger.info(f"Unmarked phantom node: {alias} ({node_id})")
             if hasattr(self, "watcher_status"):
-                self.watcher_status.setText(f"⚡ <b>Phantom Node:</b> Unmarked '{clean_alias or node_id}'")
+                self.watcher_status.setText(f"⚡ <b>Phantom Node:</b> Unmarked '{clean_alias or node_id}' (restored normal)")
+
+        if self.storage:
+            try:
+                self.refresh_map_data()
+            except Exception as e:
+                logger.debug(f"Error refreshing map nodes after phantom toggle: {e}")
+
+        from meshcore_tray.core.event_bus import bus, EventType
+        bus.emit(EventType.MAP_NODES_UPDATED, None)
 
         if hasattr(self, "_active_visualise_msg") and self._active_visualise_msg:
             self.visualise_message_path(self._active_visualise_msg)
         elif hasattr(self, "_pending_visualise_msg") and self._pending_visualise_msg:
             self.visualise_message_path(self._pending_visualise_msg)
+
+    def _on_bridge_delete_node(self, node_id: str):
+        """Called when user confirms node deletion from the Leaflet popup."""
+        if not node_id:
+            return
+        clean_id = node_id.strip().lstrip("!@").lower()
+        alias = clean_id
+        if self.storage:
+            c = self.storage.get_contact(clean_id)
+            if c and c.alias:
+                alias = c.alias
+            self.storage.delete_contact(clean_id)
+        if self.config:
+            self.config.favorite_users = [u for u in self.config.favorite_users if u != clean_id and u != alias]
+            self.config.save()
+        logger.info(f"Deleted node {clean_id} ({alias}) via Leaflet map popup.")
+        if hasattr(self, "watcher_status"):
+            self.watcher_status.setText(f"🗑️ Deleted node <b>{alias}</b> ({clean_id})")
+
+        safe_nid_json = json.dumps(clean_id)
+        if hasattr(self, "web_view") and self.web_view and self.web_view.page():
+            self.web_view.page().runJavaScript(f"if (window.deleteNodeMarker) {{ window.deleteNodeMarker({safe_nid_json}); }}")
+
+        if self.storage:
+            try:
+                self.refresh_map_data()
+            except Exception as e:
+                logger.debug(f"Error refreshing map nodes after delete: {e}")
+
+        from meshcore_tray.core.event_bus import bus, EventType
+        bus.emit(EventType.CONTACT_DELETED, clean_id)
+        bus.emit(EventType.MAP_NODES_UPDATED, None)
 
     def apply_colors(self, app_colors=None):
         """Applies configured theme colors to map markers, lines, and watcher status."""
@@ -8846,6 +11402,14 @@ class MeshMapWidget(QWidget):
         self._on_center_clicked()
         bus.emit(EventType.CLEAR_VISUALISED_PATHS, None)
 
+    def set_nodes(self, contacts=None):
+        """Refreshes map nodes. Provided for compatibility with external callers."""
+        self.refresh_map_data()
+
+    def on_node_clicked(self, node_id: str):
+        """Dispatches node selection event."""
+        self._on_bridge_node_clicked(node_id)
+
     def refresh_map_data(self, debounce: bool = False):
         """Fetches nodes and RF links with coordinates and pushes to Leaflet map.
         
@@ -8876,7 +11440,6 @@ class MeshMapWidget(QWidget):
         contacts = [
             c for c in self.storage.get_nodes_with_coordinates()
             if is_plausible_rf_coordinate(c.latitude, c.longitude, ref_lat=ref_lat, ref_lon=ref_lon, max_distance_km=2500.0)
-            and not (self.storage and self.storage.is_phantom_node(c.node_id, c.alias))
         ]
         if self.node_filter_mode == "CLIENTS":
             contacts = [c for c in contacts if not c.is_repeater and not getattr(c, "is_room_server", False) and not is_room_server_contact(c) and "[rep]" not in (c.alias or "").lower() and "[room]" not in (c.alias or "").lower() and "[server]" not in (c.alias or "").lower()]
@@ -8941,6 +11504,7 @@ class MeshMapWidget(QWidget):
                 "alias": str(c.alias or c.node_id or "Node"),
                 "is_repeater": bool(c.is_repeater),
                 "is_room_server": bool(getattr(c, "is_room_server", False) or is_room_server_contact(c)),
+                "is_phantom": bool(self.storage and self.storage.is_phantom_node(c.node_id, c.alias)),
                 "is_favorite": is_fav,
                 "is_local": c.node_id == "local" or (self.config and c.node_id == self.config.meshcore.node_id.lstrip("!")),
                 "lat": float(c.latitude),
@@ -9600,6 +12164,8 @@ class MeshMapWidget(QWidget):
                 self.thunderstorm_service.set_enabled(False)
             if hasattr(self, "space_weather_service") and self.space_weather_service:
                 self.space_weather_service.stop_polling()
+            if hasattr(self, "satellite_service") and self.satellite_service:
+                self.satellite_service.stop()
             if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self.web_view:
                 try:
                     self.web_view.stop()

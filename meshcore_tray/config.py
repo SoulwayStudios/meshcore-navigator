@@ -180,8 +180,21 @@ class GatewayConfig:
 
 
 @dataclass
+class SatelliteConfig:
+    enabled: bool = False
+    active_groups: List[str] = field(default_factory=lambda: ["stations", "amateur", "weather"])
+    update_interval_hours: int = 24
+    min_pass_elevation_deg: int = 15
+    show_ground_tracks: bool = True
+    show_footprints: bool = True
+    selected_satellites: List[str] = field(default_factory=lambda: ["25544", "25338", "28654"])  # ISS, NOAA-15, NOAA-18
+    custom_tle_url: str = ""
+
+
+@dataclass
 class AppConfig:
     meshcore: MeshcoreConfig = field(default_factory=MeshcoreConfig)
+    satellites: SatelliteConfig = field(default_factory=SatelliteConfig)
     pixoo_colors: PixooColors = field(default_factory=PixooColors)
     quiet_hours: PixooQuietHours = field(default_factory=PixooQuietHours)
     telemetry: PixooTelemetryConfig = field(default_factory=PixooTelemetryConfig)
@@ -353,6 +366,8 @@ class AppConfig:
             config.notifications = NotificationConfig(**{k: v for k, v in data["notifications"].items() if k in NotificationConfig.__dataclass_fields__})
         if "gateway" in data:
             config.gateway = GatewayConfig(**{k: v for k, v in data["gateway"].items() if k in GatewayConfig.__dataclass_fields__})
+        if "satellites" in data:
+            config.satellites = SatelliteConfig(**{k: v for k, v in data["satellites"].items() if k in SatelliteConfig.__dataclass_fields__})
         if "favorite_channels" in data:
             config.favorite_channels = list(data["favorite_channels"])
         if "favorite_users" in data:

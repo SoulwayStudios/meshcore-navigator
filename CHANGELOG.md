@@ -7,6 +7,29 @@ and this project follows semantic versioning with automated build increments:
 - **Patch (+0.0.1)**: Routine bug fixes, UI adjustments, maintenance, and regular GitHub commits.
 - **Minor (+0.1.0)**: Substantial new features and architectural additions.
 
+## [0.7.0] - 2026-09-18
+
+### Fixed & Hardened
+- **Windows Standalone PyInstaller Binary Platform Plugin**:
+  - Corrected startup platform initialization in `main.py` so Windows hosts default to the `windows` QPA platform plugin instead of forcing `wayland;xcb`.
+  - Added runtime Qt plugin path resolution (`addLibraryPath`) when frozen under PyInstaller so bundled `qwindows.dll` and WebEngine components are discovered automatically.
+  - Bundled all QtWebEngine binaries and locales in `build_windows.py`.
+  - Included binary alias `MESHCORENAVIGATOR.exe` alongside `MESHCORE-NAVIGATOR.exe` for seamless compatibility.
+
+### Added
+- **Real-Time Satellite Tracking & Pass Prediction View**:
+  - High-precision SGP4 orbital mechanics tracking ISS, Tiangong, NOAA 15/18/19, Meteor-M2, and amateur radio CubeSats.
+  - Live ground tracks on Leaflet map, polar elevation sky tracks, Doppler frequency estimator, and technical blueprint gallery.
+- **Clickable HTML Link Parser**:
+  - Automatic URL extraction and rich HTML formatting (`#58A6FF`, underline, word wrapping, XSS safety) in channel chat, DMs, room servers, and repeater console.
+  - One-click opening in default web browser and right-click context menu ("Open Link", "Copy Link Address").
+- **Room Server Demotion Guard & BBS Fixes**:
+  - Protected unbracketed room server aliases (e.g. `Navigator Room BBS M7NC`) from demotion during OTA packets or CLI commands.
+  - Native support for wire advertisement type 3 (`AdvType.ROOM`), credential awareness, and self-healing SQLite database schema synchronization.
+- **Interactive Node Activity Sizing & Deletion**:
+  - Dynamic sizing curve scales active repeaters and room servers up to `2.80x` with glowing multi-ring radiant halos and elevated z-index, while inactive nodes contract to `0.70x`.
+  - Red `🗑️ Delete Node` button in Leaflet map popups with confirmation dialog and cascade database purging.
+
 ## [0.6.0] - 2026-09-13
 
 ### Added

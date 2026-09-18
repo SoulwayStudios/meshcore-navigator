@@ -21,15 +21,34 @@ def build():
         "--collect-all=meshcore",
         "--collect-all=pixoo",
         "--collect-all=meshcore_tray",
+        "--collect-all=PyQt6.QtWebEngineCore",
+        "--collect-all=PyQt6.QtWebEngineWidgets",
+        "--collect-submodules=PyQt6",
         "--hidden-import=PyQt6.QtWebEngineWidgets",
+        "--hidden-import=PyQt6.QtWebEngineCore",
         "--hidden-import=PyQt6.QtWebChannel",
+        "--hidden-import=PyQt6.QtCore",
+        "--hidden-import=PyQt6.QtGui",
+        "--hidden-import=PyQt6.QtWidgets",
+        "--hidden-import=PyQt6.QtNetwork",
         "--hidden-import=qasync",
         "--hidden-import=serial",
+        "--hidden-import=serial.tools",
+        "--hidden-import=serial.tools.list_ports",
     ]
 
     print("Building Windows binary with PyInstaller...")
     print("Arguments:", args)
     PyInstaller.__main__.run(args)
+
+    dist_dir = os.path.join(script_dir, "dist", "MESHCORE-NAVIGATOR")
+    exe_with_hyphen = os.path.join(dist_dir, "MESHCORE-NAVIGATOR.exe")
+    exe_without_hyphen = os.path.join(dist_dir, "MESHCORENAVIGATOR.exe")
+    if os.path.exists(exe_with_hyphen) and not os.path.exists(exe_without_hyphen):
+        import shutil
+        print(f"Creating binary compatibility alias: {exe_without_hyphen}")
+        shutil.copy2(exe_with_hyphen, exe_without_hyphen)
+
     print("Windows build completed successfully.")
 
 if __name__ == "__main__":

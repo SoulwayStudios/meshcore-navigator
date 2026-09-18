@@ -18,3 +18,7 @@ def ensure_qapp():
     if app is None:
         app = QApplication(["meshcore-test", "-platform", "offscreen"])
     return app
+
+@pytest.fixture
+def qapp(ensure_qapp):
+    return ensure_qapp

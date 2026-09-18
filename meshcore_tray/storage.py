@@ -10,7 +10,8 @@ import sqlite3
 from typing import Any, Dict, List, Optional, Tuple, Union
 from meshcore_tray.core.models import (
     ChannelInfo, MessageEnvelope, NeighbourInfo, NodeContact, TelemetryEnvelope, PacketPathInfo, DockedCompanionInfo,
-    is_valid_alias, is_valid_node_id, is_valid_coordinate, calculate_haversine_distance_km, is_plausible_rf_coordinate
+    is_valid_alias, is_valid_node_id, is_valid_coordinate, calculate_haversine_distance_km, is_plausible_rf_coordinate,
+    is_room_server_contact
 )
 from meshcore_tray.core.event_bus import bus, EventType
 
@@ -281,6 +282,54 @@ class Storage:
                 cursor.execute("ALTER TABLE docked_companions ADD COLUMN is_unknown_first_hop INTEGER DEFAULT 0")
             if "first_hop_alias" not in dc_cols:
                 cursor.execute("ALTER TABLE docked_companions ADD COLUMN first_hop_alias TEXT DEFAULT ''")
+            # Satellite TLEs table (Orbital elements and radio frequency metadata)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS satellite_tles (
+                    norad_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    group_name TEXT NOT NULL,
+                    line1 TEXT NOT NULL,
+                    line2 TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    frequencies_json TEXT DEFAULT '[]',
+                    is_favorite INTEGER DEFAULT 0
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_sat_group ON satellite_tles(group_name)")
+            cursor.execute("PRAGMA table_info(satellite_tles)")
+            sat_cols = [col[1] for col in cursor.fetchall()]
+            if "is_favorite" not in sat_cols:
+                cursor.execute("ALTER TABLE satellite_tles ADD COLUMN is_favorite INTEGER DEFAULT 0")
+
+            # Self-healing categorization: Ensure CubeSats and Space Stations are classified accurately in existing caches
+            cursor.execute("""
+                UPDATE satellite_tles
+                SET group_name = 'cubesat'
+                WHERE group_name = 'amateur'
+                  AND (
+                      UPPER(name) LIKE '%CUBE%'
+                      OR UPPER(name) LIKE '%NANOSAT%'
+                      OR UPPER(name) LIKE '%POCKETQUBE%'
+                      OR UPPER(name) LIKE '%FOX-1%'
+                      OR UPPER(name) LIKE '%RADFXSAT%'
+                  )
+            """)
+            cursor.execute("""
+                UPDATE satellite_tles
+                SET group_name = 'stations'
+                WHERE (
+                    UPPER(name) LIKE '%ISS%'
+                    OR UPPER(name) LIKE '%ZARYA%'
+                    OR UPPER(name) LIKE '%NAUKA%'
+                    OR UPPER(name) LIKE '%CSS%'
+                    OR UPPER(name) LIKE '%TIANGONG%'
+                    OR UPPER(name) LIKE '%TIANHE%'
+                    OR UPPER(name) LIKE '%WENTIAN%'
+                    OR UPPER(name) LIKE '%MENGTIAN%'
+                    OR UPPER(name) LIKE '%DRAGON%'
+                )
+                AND UPPER(name) NOT LIKE '%SWISSCUBE%'
+            """)
 
             # Run migrations for coordinate columns on existing databases
             cursor.execute("PRAGMA table_info(contacts)")
@@ -1211,6 +1260,20 @@ class Storage:
             if not valid_alias:
                 alias = nid[:8] if is_valid_node_id(nid) else "Node"
 
+            # Detect and preserve room server flag
+            is_room_flag = 1 if (getattr(contact, "is_room_server", False) or is_room_server_contact(contact) or is_room_server_contact({"alias": alias, "node_id": nid})) else 0
+            if not is_room_flag:
+                clean_nid = nid.lstrip("!@").lower()
+                cursor.execute("""
+                    SELECT 1 FROM room_credentials
+                    WHERE lower(node_id) = ?
+                       OR lower(node_id) = ('!' || ?)
+                       OR ('!' || lower(node_id)) = ?
+                    LIMIT 1
+                """, (clean_nid, clean_nid, clean_nid))
+                if cursor.fetchone():
+                    is_room_flag = 1
+
             cursor.execute("""
                 INSERT INTO contacts (
                     node_id, alias, is_favorite, last_seen, public_key, is_repeater, snr_db, rssi_dbm, latitude, longitude,
@@ -1242,7 +1305,7 @@ class Storage:
                 getattr(contact, "out_path", ""),
                 sc_name,
                 al_reg_json,
-                int(getattr(contact, "is_room_server", False)),
+                is_room_flag,
                 1 if update_role else 0,
                 1 if update_role else 0
             ))
@@ -1256,8 +1319,11 @@ class Storage:
             return
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT node_id, alias, latitude, longitude FROM contacts")
-            existing_map = {r[0].lower(): (r[0], r[1], r[2], r[3]) for r in cursor.fetchall() if r[0]}
+            cursor.execute("SELECT node_id, alias, latitude, longitude, is_room_server FROM contacts")
+            existing_map = {r[0].lower(): (r[0], r[1], r[2], r[3], bool(r[4])) for r in cursor.fetchall() if r[0]}
+
+            cursor.execute("SELECT lower(node_id) FROM room_credentials")
+            cred_ids = {r[0].lstrip("!@") for r in cursor.fetchall() if r[0]}
 
             rows = []
             for c in contacts:
@@ -1272,8 +1338,9 @@ class Storage:
                 target_alias = c.alias
                 valid_alias = is_valid_alias(target_alias)
                 ex_lat, ex_lon = None, None
+                ex_room = False
                 if raw_id.lower() in existing_map:
-                    target_id, existing_alias, ex_lat, ex_lon = existing_map[raw_id.lower()]
+                    target_id, existing_alias, ex_lat, ex_lon, ex_room = existing_map[raw_id.lower()]
                     if not valid_alias and is_valid_alias(existing_alias):
                         target_alias = existing_alias
                         valid_alias = True
@@ -1311,6 +1378,10 @@ class Storage:
                 al_reg = getattr(c, "allowed_regions", []) or []
                 al_reg_json = json.dumps(al_reg) if isinstance(al_reg, list) else str(al_reg)
 
+                is_room_flag = int(getattr(c, "is_room_server", False) or is_room_server_contact(c) or is_room_server_contact({"alias": target_alias, "node_id": target_id}) or ex_room)
+                if not is_room_flag and target_id.lower().lstrip("!@") in cred_ids:
+                    is_room_flag = 1
+
                 rows.append((
                     target_id, target_alias, int(c.is_favorite), c_last_seen,
                     pk,
@@ -1320,7 +1391,7 @@ class Storage:
                     getattr(c, "out_path", ""),
                     sc_name,
                     al_reg_json,
-                    int(getattr(c, "is_room_server", False))
+                    is_room_flag
                 ))
 
             cursor.executemany("""
@@ -1704,6 +1775,12 @@ class Storage:
                    OR alias = ? COLLATE NOCASE
             """, (int(is_room_server), raw_id, clean_id, clean_id, raw_id, clean_id, raw_id))
             updated = cur.rowcount > 0
+            if not updated and is_room_server:
+                cur.execute("""
+                    INSERT OR IGNORE INTO contacts (node_id, alias, is_room_server)
+                    VALUES (?, ?, 1)
+                """, (clean_id, clean_id))
+                updated = cur.rowcount > 0
             cur.execute("""
                 UPDATE neighbours
                 SET is_room_server = ?
@@ -1713,6 +1790,22 @@ class Storage:
             """, (int(is_room_server), raw_id, clean_id, clean_id))
             conn.commit()
             return updated
+
+    def has_room_credentials(self, node_id: str) -> bool:
+        """Checks if saved room server credentials exist for the given node ID or alias."""
+        if not node_id:
+            return False
+        clean_id = node_id.strip().lstrip("!@").lower()
+        with self._get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT 1 FROM room_credentials
+                WHERE lower(node_id) = ?
+                   OR lower(node_id) = ('!' || ?)
+                   OR ('!' || lower(node_id)) = ?
+                LIMIT 1
+            """, (clean_id, clean_id, clean_id))
+            return cur.fetchone() is not None
 
     def get_room_servers(self) -> List[NodeContact]:
         """Returns all discovered Room Servers ordered by alias."""
@@ -1725,12 +1818,40 @@ class Storage:
                    OR lower(alias) LIKE '%[server]%'
                    OR lower(alias) LIKE '%-bbs%'
                    OR lower(alias) LIKE '%-room%'
+                   OR lower(alias) LIKE '%room%'
+                   OR lower(alias) LIKE '%bbs%'
+                   OR lower(alias) LIKE '%server%'
+                   OR lower(node_id) IN (SELECT lower(node_id) FROM room_credentials)
+                   OR ('!' || lower(node_id)) IN (SELECT lower(node_id) FROM room_credentials)
+                   OR lower(node_id) IN (SELECT ('!' || lower(node_id)) FROM room_credentials)
                 ORDER BY alias ASC
             """)
-            return [self._row_to_contact(r) for r in cur.fetchall()]
+            rows = cur.fetchall()
+            cur.execute("""
+                UPDATE contacts SET is_room_server = 1, is_repeater = 0
+                WHERE is_room_server = 0 AND (
+                    lower(alias) LIKE '%[room]%'
+                    OR lower(alias) LIKE '%[server]%'
+                    OR lower(alias) LIKE '%-bbs%'
+                    OR lower(alias) LIKE '%-room%'
+                    OR lower(alias) LIKE '%room%'
+                    OR lower(alias) LIKE '%bbs%'
+                    OR lower(alias) LIKE '%server%'
+                    OR lower(node_id) IN (SELECT lower(node_id) FROM room_credentials)
+                    OR ('!' || lower(node_id)) IN (SELECT lower(node_id) FROM room_credentials)
+                    OR lower(node_id) IN (SELECT ('!' || lower(node_id)) FROM room_credentials)
+                )
+            """)
+            conn.commit()
+            contacts = []
+            for r in rows:
+                c = self._row_to_contact(r)
+                c.is_room_server = True
+                contacts.append(c)
+            return contacts
 
     def set_room_password(self, node_id: str, password: str, auto_login: bool = True):
-        """Stores or updates the password for a room server."""
+        """Stores or updates the password for a room server and marks contact as room server."""
         if not node_id:
             return
         clean_id = node_id.strip().lstrip("!@").lower()
@@ -1740,6 +1861,13 @@ class Storage:
                 INSERT OR REPLACE INTO room_credentials (node_id, password, last_login_ts, auto_login)
                 VALUES (?, ?, ?, ?)
             """, (clean_id, password, datetime.now(timezone.utc).isoformat(), int(auto_login)))
+            cur.execute("""
+                UPDATE contacts SET is_room_server = 1
+                WHERE lower(node_id) = ?
+                   OR lower(node_id) = ('!' || ?)
+                   OR ('!' || lower(node_id)) = ?
+                   OR lower(alias) = ?
+            """, (clean_id, clean_id, clean_id, clean_id))
             conn.commit()
 
     def get_room_password(self, node_id: str) -> Optional[str]:
@@ -2796,10 +2924,46 @@ class Storage:
         self.set_app_state("last_read_flood_ts", ts)
 
     def delete_contact(self, node_id: str):
-        """Deletes a contact from SQLite."""
+        """Deletes a contact and its associated records from SQLite."""
+        if not node_id:
+            return
+        raw_id = (node_id or "").strip()
+        clean_id = raw_id.lstrip("!@").strip()
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("DELETE FROM contacts WHERE node_id = ? OR alias = ?", (node_id, node_id))
+            cursor.execute("""
+                DELETE FROM contacts
+                WHERE node_id = ? COLLATE NOCASE
+                   OR node_id = ? COLLATE NOCASE
+                   OR node_id = ('!' || ?) COLLATE NOCASE
+                   OR ('!' || node_id) = ? COLLATE NOCASE
+                   OR alias = ? COLLATE NOCASE
+                   OR alias = ? COLLATE NOCASE
+            """, (raw_id, clean_id, clean_id, raw_id, clean_id, raw_id))
+            cursor.execute("""
+                DELETE FROM neighbours
+                WHERE node_id = ? COLLATE NOCASE
+                   OR node_id = ? COLLATE NOCASE
+                   OR node_id = ('!' || ?) COLLATE NOCASE
+                   OR ('!' || node_id) = ? COLLATE NOCASE
+                   OR alias = ? COLLATE NOCASE
+                   OR alias = ? COLLATE NOCASE
+            """, (raw_id, clean_id, clean_id, raw_id, clean_id, raw_id))
+            cursor.execute("""
+                DELETE FROM docked_companions
+                WHERE node_id = ? COLLATE NOCASE
+                   OR node_id = ? COLLATE NOCASE
+                   OR node_id = ('!' || ?) COLLATE NOCASE
+                   OR ('!' || node_id) = ? COLLATE NOCASE
+                   OR alias = ? COLLATE NOCASE
+                   OR alias = ? COLLATE NOCASE
+            """, (raw_id, clean_id, clean_id, raw_id, clean_id, raw_id))
+            cursor.execute("""
+                DELETE FROM room_credentials
+                WHERE lower(node_id) = ?
+                   OR lower(node_id) = ('!' || ?)
+                   OR ('!' || lower(node_id)) = ?
+            """, (clean_id.lower(), clean_id.lower(), clean_id.lower()))
             conn.commit()
 
     def set_contact_favorite(self, node_id: str, is_favorite: bool):
@@ -2971,4 +3135,158 @@ class Storage:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM docked_companions")
             conn.commit()
+
+    # --- Satellite Tracking TLEs ---
+
+    def save_satellite_tles(self, tles: List[Dict[str, Any]]) -> int:
+        """Saves or updates a batch of satellite TLE records in the database."""
+        if not tles:
+            return 0
+        now_ts = datetime.now(timezone.utc).isoformat()
+        count = 0
+        with self._get_connection() as conn:
+            cur = conn.cursor()
+            for sat in tles:
+                norad_id = str(sat.get("norad_id") or "").strip()
+                name = str(sat.get("name") or "").strip()
+                group_name = str(sat.get("group_name") or "amateur").strip()
+                line1 = str(sat.get("line1") or "").strip()
+                line2 = str(sat.get("line2") or "").strip()
+                if not norad_id or not line1 or not line2:
+                    continue
+                freqs = sat.get("frequencies")
+                freq_json = json.dumps(freqs) if freqs is not None else "[]"
+                updated_at = str(sat.get("updated_at") or now_ts)
+                cur.execute("""
+                    INSERT INTO satellite_tles
+                    (norad_id, name, group_name, line1, line2, updated_at, frequencies_json, is_favorite)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT is_favorite FROM satellite_tles WHERE norad_id = ?), 0))
+                    ON CONFLICT(norad_id) DO UPDATE SET
+                        name = excluded.name,
+                        group_name = excluded.group_name,
+                        line1 = excluded.line1,
+                        line2 = excluded.line2,
+                        updated_at = excluded.updated_at,
+                        frequencies_json = excluded.frequencies_json
+                """, (norad_id, name, group_name, line1, line2, updated_at, freq_json, norad_id))
+                count += 1
+            conn.commit()
+        return count
+
+    def get_satellite_tles(self, group_name: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Retrieves cached satellite TLE records, optionally filtered by category group."""
+        with self._get_connection() as conn:
+            cur = conn.cursor()
+            if group_name and group_name != "all":
+                cur.execute("""
+                    SELECT norad_id, name, group_name, line1, line2, updated_at, frequencies_json, is_favorite
+                    FROM satellite_tles
+                    WHERE lower(group_name) = ?
+                    ORDER BY name ASC
+                """, (group_name.lower(),))
+            else:
+                cur.execute("""
+                    SELECT norad_id, name, group_name, line1, line2, updated_at, frequencies_json, is_favorite
+                    FROM satellite_tles
+                    ORDER BY name ASC
+                """)
+            rows = cur.fetchall()
+            results = []
+            for r in rows:
+                try:
+                    freqs = json.loads(r["frequencies_json"]) if r["frequencies_json"] else []
+                except Exception:
+                    freqs = []
+                results.append({
+                    "norad_id": r["norad_id"],
+                    "name": r["name"],
+                    "group_name": r["group_name"],
+                    "line1": r["line1"],
+                    "line2": r["line2"],
+                    "updated_at": r["updated_at"],
+                    "frequencies": freqs,
+                    "is_favorite": bool(r["is_favorite"]) if "is_favorite" in r.keys() else False,
+                    "is_satellite": True,
+                })
+            return results
+
+    def get_satellite_by_id(self, norad_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieves a single satellite TLE record by its NORAD catalog ID."""
+        if not norad_id:
+            return None
+        clean_id = str(norad_id).strip()
+        with self._get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT norad_id, name, group_name, line1, line2, updated_at, frequencies_json, is_favorite
+                FROM satellite_tles
+                WHERE norad_id = ?
+            """, (clean_id,))
+            r = cur.fetchone()
+            if not r:
+                return None
+            try:
+                freqs = json.loads(r["frequencies_json"]) if r["frequencies_json"] else []
+            except Exception:
+                freqs = []
+            return {
+                "norad_id": r["norad_id"],
+                "name": r["name"],
+                "group_name": r["group_name"],
+                "line1": r["line1"],
+                "line2": r["line2"],
+                "updated_at": r["updated_at"],
+                "frequencies": freqs,
+                "is_favorite": bool(r["is_favorite"]) if "is_favorite" in r.keys() else False,
+                "is_satellite": True,
+            }
+
+    def set_satellite_favorite(self, norad_id: str, is_favorite: bool) -> bool:
+        """Sets favorite flag on a satellite record."""
+        clean_id = str(norad_id).strip()
+        fav_val = 1 if is_favorite else 0
+        with self._get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("UPDATE satellite_tles SET is_favorite = ? WHERE norad_id = ?", (fav_val, clean_id))
+            conn.commit()
+            return cur.rowcount > 0
+
+    def get_favorite_satellites(self) -> List[Dict[str, Any]]:
+        """Retrieves all satellites marked as favorite."""
+        with self._get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT norad_id, name, group_name, line1, line2, updated_at, frequencies_json, is_favorite
+                FROM satellite_tles
+                WHERE is_favorite = 1
+                ORDER BY name ASC
+            """)
+            rows = cur.fetchall()
+            results = []
+            for r in rows:
+                try:
+                    freqs = json.loads(r["frequencies_json"]) if r["frequencies_json"] else []
+                except Exception:
+                    freqs = []
+                results.append({
+                    "norad_id": r["norad_id"],
+                    "name": r["name"],
+                    "group_name": r["group_name"],
+                    "line1": r["line1"],
+                    "line2": r["line2"],
+                    "updated_at": r["updated_at"],
+                    "frequencies": freqs,
+                    "is_favorite": True,
+                    "is_satellite": True,
+                })
+            return results
+
+    def get_satellite_tle_count(self) -> int:
+        """Returns total number of cached satellite TLE records."""
+        with self._get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT count(*) FROM satellite_tles")
+            row = cur.fetchone()
+            return row[0] if row else 0
+
 

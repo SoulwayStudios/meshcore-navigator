@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QListWidgetItem, QPushButton, QFrame, QSplitter, QMenu,
     QLineEdit, QComboBox, QInputDialog, QAbstractItemView
 )
-from meshcore_tray.core.models import ChannelInfo, NodeContact
+from meshcore_tray.core.models import ChannelInfo, NodeContact, is_room_server_contact
 from meshcore_tray.core.event_bus import bus, EventType
 
 logger = logging.getLogger("meshcore_tray.sidebar")
@@ -644,25 +644,41 @@ class Sidebar(QWidget):
 
         for c in contacts_sorted:
             is_fav = c.is_favorite or (self.config and self.config.is_user_favorite(c.node_id, c.alias))
-            is_rep = bool(c.is_repeater)
+            is_room = getattr(c, "is_room_server", False) or is_room_server_contact(c)
+            is_rep = bool(c.is_repeater) and not is_room
             clean_alias = c.alias.lstrip("@")
-            icon = "📡" if is_rep else "👤"
-            rep_tag = " [R]" if is_rep else ""
-            tip_type = "Repeater Node" if is_rep else "Companion Node"
+
+            if is_room:
+                icon = "◆"
+                tag = " [Room]"
+                tip_type = "Room Server"
+                item_color = QColor("#FF55FF") if is_fav else QColor("#D946EF")
+            elif is_rep:
+                icon = "📡"
+                tag = " [R]"
+                tip_type = "Repeater Node"
+                item_color = QColor(fav_user_col) if is_fav else QColor("#C9D1D9")
+            else:
+                icon = "👤"
+                tag = ""
+                tip_type = "Companion Node"
+                item_color = QColor(fav_user_col) if is_fav else QColor("#C9D1D9")
+
             last_seen_str = f" • Last heard: {c.last_seen[11:16]}" if c.last_seen and len(c.last_seen) >= 16 else ""
 
             if is_fav:
-                item = QListWidgetItem(f"★ {icon} @{clean_alias}{rep_tag}")
+                item = QListWidgetItem(f"★ {icon} @{clean_alias}{tag}")
                 item.setIcon(self._yellow_star_icon)
-                item.setForeground(QColor(fav_user_col))
+                item.setForeground(item_color)
                 item.setToolTip(f"Favorite {tip_type}: @{clean_alias} ({c.node_id}){last_seen_str}")
             else:
-                item = QListWidgetItem(f"{icon} @{clean_alias}{rep_tag}")
-                item.setForeground(QColor("#C9D1D9"))
+                item = QListWidgetItem(f"{icon} @{clean_alias}{tag}")
+                item.setForeground(item_color)
                 item.setToolTip(f"{tip_type}: @{clean_alias} ({c.node_id}){last_seen_str}")
 
             item.setData(Qt.ItemDataRole.UserRole, c.node_id)
             item.setData(Qt.ItemDataRole.UserRole + 1, is_rep)
+            item.setData(Qt.ItemDataRole.UserRole + 2, is_room)
             self.contact_list.addItem(item)
 
     def _show_channel_context_menu(self, pos: QPoint):
@@ -753,6 +769,8 @@ class Sidebar(QWidget):
         contact = self.storage.get_contact(node_id) if self.storage else None
         alias = contact.alias if contact else node_id
         is_fav = bool(contact and contact.is_favorite) or (self.config and self.config.is_user_favorite(node_id, alias))
+        is_room = bool(item.data(Qt.ItemDataRole.UserRole + 2)) or (contact and (getattr(contact, "is_room_server", False) or is_room_server_contact(contact)))
+        is_rep = bool(item.data(Qt.ItemDataRole.UserRole + 1)) or (contact and contact.is_repeater)
 
         menu = QMenu(self)
         menu.setStyleSheet("""
@@ -761,11 +779,13 @@ class Sidebar(QWidget):
             QMenu::item:selected { background-color: #464C5A; color: #FFFFFF; }
         """)
 
-        fav_action = menu.addAction("⭐ Remove from Favorites" if is_fav else "⭐ Add to Favorites (Yellow Star)")
-        dm_action = menu.addAction("✉️ Send Direct Message")
+        fav_action = menu.addAction("⭐ Remove from Favorites" if is_fav else "⭐ Add to Favorites")
+        action_label = "🏢 Open Room Server Console" if is_room else ("📻 Open Repeater Console" if is_rep else "✉️ Send Direct Message")
+        dm_action = menu.addAction(action_label)
         edit_action = menu.addAction("✏️ Edit Contact / Coordinates")
         menu.addSeparator()
-        del_action = menu.addAction("🗑️ Remove Contact")
+        del_label = "🗑️ Remove Room Server" if is_room else ("🗑️ Remove Repeater" if is_rep else "🗑️ Remove Contact")
+        del_action = menu.addAction(del_label)
 
         action = menu.exec(self.contact_list.mapToGlobal(pos))
         if action == fav_action:

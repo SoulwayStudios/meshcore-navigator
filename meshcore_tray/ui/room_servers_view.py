@@ -19,6 +19,7 @@ from meshcore_tray.config import AppConfig
 from meshcore_tray.core.models import NodeContact, MessageEnvelope, is_room_server_contact
 from meshcore_tray.core.event_bus import bus, EventType
 from meshcore_tray.ui.avatar_generator import get_contact_avatar_icon
+from meshcore_tray.ui.link_parser import format_message_text_with_links
 
 logger = logging.getLogger("meshcore_tray.room_servers_view")
 
@@ -201,9 +202,15 @@ class MessageBubbleWidget(QFrame):
         layout.addLayout(top_row)
 
         # Message Body
-        lbl_text = QLabel(self.message.text)
+        lbl_text = QLabel()
+        lbl_text.setTextFormat(Qt.TextFormat.RichText)
         lbl_text.setWordWrap(True)
-        lbl_text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        lbl_text.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse |
+            Qt.TextInteractionFlag.LinksAccessibleByMouse
+        )
+        lbl_text.setOpenExternalLinks(True)
+        lbl_text.setText(format_message_text_with_links(self.message.text))
         lbl_text.setStyleSheet("color: #E2E8F0; font-size: 13px; line-height: 1.4;")
         layout.addWidget(lbl_text)
 
@@ -230,6 +237,7 @@ class RoomServersViewWidget(QWidget):
         self.radio_driver = radio_driver
         self.active_room: Optional[NodeContact] = None
         self.rooms_list: List[NodeContact] = []
+        self.sort_mode = "alpha"
         self._init_ui()
         self._setup_bus_events()
 
@@ -314,6 +322,28 @@ class RoomServersViewWidget(QWidget):
         self.search_input.textChanged.connect(self._filter_rooms_list)
         left_layout.addWidget(self.search_input)
 
+        # Sort Mode Toolbar
+        sort_layout = QHBoxLayout()
+        sort_layout.setSpacing(6)
+        lbl_sort = QLabel("Sort:")
+        lbl_sort.setStyleSheet("color: #64748B; font-size: 11px; font-weight: bold;")
+        sort_layout.addWidget(lbl_sort)
+
+        self.btn_sort_alpha = QPushButton("🔤 Name")
+        self.btn_sort_alpha.setCheckable(True)
+        self.btn_sort_alpha.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_sort_alpha.clicked.connect(lambda: self._set_sort_mode("alpha"))
+        sort_layout.addWidget(self.btn_sort_alpha)
+
+        self.btn_sort_recent = QPushButton("🕒 Recent")
+        self.btn_sort_recent.setCheckable(True)
+        self.btn_sort_recent.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_sort_recent.clicked.connect(lambda: self._set_sort_mode("recent"))
+        sort_layout.addWidget(self.btn_sort_recent)
+        sort_layout.addStretch()
+        left_layout.addLayout(sort_layout)
+        self._update_sort_buttons()
+
         # Room Servers QListWidget
         self.list_widget = QListWidget()
         self.list_widget.setStyleSheet("""
@@ -335,6 +365,8 @@ class RoomServersViewWidget(QWidget):
             }
         """)
         self.list_widget.itemSelectionChanged.connect(self._on_room_selection_changed)
+        self.list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.list_widget.customContextMenuRequested.connect(self._show_room_context_menu)
         left_layout.addWidget(self.list_widget, 1)
 
         # Bottom tip
@@ -476,6 +508,26 @@ class RoomServersViewWidget(QWidget):
         """)
         self.btn_adsb.clicked.connect(self._on_track_adsb_clicked)
         host_row.addWidget(self.btn_adsb)
+
+        self.btn_fav = QPushButton("⭐ Favourite")
+        self.btn_fav.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_fav.setStyleSheet("""
+            QPushButton {
+                background-color: #24262B;
+                color: #F8FAFC;
+                border: 1px solid #333842;
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-weight: bold;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #333842;
+                color: #FFD700;
+            }
+        """)
+        self.btn_fav.clicked.connect(self._toggle_active_room_favorite)
+        host_row.addWidget(self.btn_fav)
 
         auth_card_layout.addLayout(host_row)
 
@@ -729,6 +781,7 @@ class RoomServersViewWidget(QWidget):
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         main_layout.addWidget(splitter)
+        self._update_sort_buttons()
 
     def _setup_bus_events(self):
         bus.subscribe(EventType.MESSAGE_RECEIVED, self._on_bus_message)
@@ -752,28 +805,260 @@ class RoomServersViewWidget(QWidget):
         self.badge_count.setText(str(len(self.rooms_list)))
         self._render_rooms_list(current_sel_id)
 
+    def _set_sort_mode(self, mode: str):
+        self.sort_mode = mode
+        self._update_sort_buttons()
+        self.reload_rooms()
+
+    def _update_sort_buttons(self):
+        is_alpha = (getattr(self, "sort_mode", "alpha") == "alpha")
+        if hasattr(self, "btn_sort_alpha") and hasattr(self, "btn_sort_recent"):
+            self.btn_sort_alpha.setChecked(is_alpha)
+            self.btn_sort_recent.setChecked(not is_alpha)
+
+            active_style = """
+                QPushButton {
+                    background-color: #464C5A;
+                    color: #FFFFFF;
+                    font-weight: bold;
+                    border: 1px solid #60687A;
+                    border-radius: 5px;
+                    padding: 4px 8px;
+                    font-size: 11px;
+                }
+            """
+            inactive_style = """
+                QPushButton {
+                    background-color: #2B2F38;
+                    color: #9CA3AF;
+                    font-weight: normal;
+                    border: 1px solid #414143;
+                    border-radius: 5px;
+                    padding: 4px 8px;
+                    font-size: 11px;
+                }
+                QPushButton:hover {
+                    background-color: #353842;
+                    color: #FFFFFF;
+                }
+            """
+            self.btn_sort_alpha.setStyleSheet(active_style if is_alpha else inactive_style)
+            self.btn_sort_recent.setStyleSheet(inactive_style if is_alpha else active_style)
+
+    def _add_thin_divider(self):
+        item = QListWidgetItem()
+        item.setFlags(Qt.ItemFlag.NoItemFlags)
+        container = QWidget()
+        container.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        container.setAutoFillBackground(False)
+        container.setStyleSheet("background: transparent; border: none;")
+        c_layout = QVBoxLayout(container)
+        c_layout.setContentsMargins(12, 4, 12, 4)
+        c_layout.setSpacing(0)
+        line = QFrame()
+        line.setFixedHeight(1)
+        line.setStyleSheet("background-color: #383A40; border: none; max-height: 1px; min-height: 1px;")
+        c_layout.addWidget(line)
+        item.setSizeHint(QSize(200, 9))
+        self.list_widget.addItem(item)
+        self.list_widget.setItemWidget(item, container)
+
+    def _update_favorite_button(self, is_fav: bool):
+        if not hasattr(self, "btn_fav"):
+            return
+        if is_fav:
+            self.btn_fav.setText("★ Favourited")
+            self.btn_fav.setStyleSheet("""
+                QPushButton {
+                    background-color: #3B2E1E;
+                    color: #FFD700;
+                    border: 1px solid #D97706;
+                    border-radius: 6px;
+                    padding: 6px 12px;
+                    font-weight: bold;
+                    font-size: 12px;
+                }
+                QPushButton:hover {
+                    background-color: #4D3C25;
+                }
+            """)
+        else:
+            self.btn_fav.setText("⭐ Favourite")
+            self.btn_fav.setStyleSheet("""
+                QPushButton {
+                    background-color: #24262B;
+                    color: #F8FAFC;
+                    border: 1px solid #333842;
+                    border-radius: 6px;
+                    padding: 6px 12px;
+                    font-weight: bold;
+                    font-size: 12px;
+                }
+                QPushButton:hover {
+                    background-color: #333842;
+                    color: #FFD700;
+                }
+            """)
+
+    def _toggle_active_room_favorite(self):
+        if not self.active_room:
+            return
+        node_id = self.active_room.node_id
+        alias = self.active_room.alias
+        is_fav = bool(self.active_room.is_favorite or (self.config and self.config.is_user_favorite(node_id, alias)))
+        new_fav = not is_fav
+        if self.storage:
+            self.storage.set_contact_favorite(node_id, new_fav)
+        if self.config:
+            if new_fav:
+                if node_id not in self.config.favorite_users:
+                    self.config.favorite_users.append(node_id)
+            else:
+                self.config.favorite_users = [u for u in self.config.favorite_users if u != node_id and u != alias]
+            self.config.save()
+        self.active_room.is_favorite = new_fav
+        self._update_favorite_button(new_fav)
+        from meshcore_tray.core.event_bus import bus, EventType
+        bus.emit(EventType.FAVORITES_UPDATED, node_id)
+        self.reload_rooms()
+
+    def _show_room_context_menu(self, pos):
+        item = self.list_widget.itemAt(pos)
+        if not item:
+            return
+        room = item.data(Qt.ItemDataRole.UserRole)
+        if not room:
+            return
+        node_id = room.node_id
+        alias = room.alias or node_id
+        is_fav = bool(room.is_favorite or (self.config and self.config.is_user_favorite(node_id, alias)))
+
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #222327;
+                color: #F2F3F5;
+                border: 1px solid #414143;
+                border-radius: 6px;
+                padding: 4px;
+            }
+            QMenu::item {
+                padding: 6px 20px;
+                border-radius: 4px;
+            }
+            QMenu::item:selected {
+                background-color: #9333EA;
+                color: #FFFFFF;
+            }
+        """)
+
+        fav_action = menu.addAction("⭐ Remove from Favorites" if is_fav else "⭐ Add to Favorites")
+        map_action = menu.addAction("🗺️ Show on Map")
+        adsb_action = None
+        if room.latitude is not None and room.longitude is not None:
+            adsb_action = menu.addAction("✈️ Track ADS-B Around Room Server")
+        pwd_action = menu.addAction("🔑 Enter / Edit Password...")
+        menu.addSeparator()
+        copy_id_action = menu.addAction(f"📋 Copy Node ID ({node_id})")
+        copy_alias_action = menu.addAction(f"📋 Copy Alias ({alias})")
+        menu.addSeparator()
+        del_action = menu.addAction("🗑️ Remove Room Server")
+
+        action = menu.exec(self.list_widget.mapToGlobal(pos))
+        if action == fav_action:
+            new_fav = not is_fav
+            if self.storage:
+                self.storage.set_contact_favorite(node_id, new_fav)
+            if self.config:
+                if new_fav:
+                    if node_id not in self.config.favorite_users:
+                        self.config.favorite_users.append(node_id)
+                else:
+                    self.config.favorite_users = [u for u in self.config.favorite_users if u != node_id and u != alias]
+                self.config.save()
+            from meshcore_tray.core.event_bus import bus, EventType
+            bus.emit(EventType.FAVORITES_UPDATED, node_id)
+            if self.active_room and self.active_room.node_id.lower() == node_id.lower():
+                self.active_room.is_favorite = new_fav
+                self._update_favorite_button(new_fav)
+            self.reload_rooms()
+        elif action == map_action:
+            self.show_on_map_requested.emit(node_id, room.latitude or 0.0, room.longitude or 0.0, alias)
+        elif adsb_action and action == adsb_action:
+            self.track_adsb_requested.emit(node_id, float(room.latitude or 0.0), float(room.longitude or 0.0), alias)
+        elif action == pwd_action:
+            self.set_active_room(room)
+            self.pwd_input.setFocus()
+        elif action == copy_id_action:
+            QApplication.clipboard().setText(node_id)
+        elif action == copy_alias_action:
+            QApplication.clipboard().setText(alias)
+        elif action == del_action:
+            if self.storage:
+                self.storage.delete_contact(node_id)
+            if self.config:
+                self.config.favorite_users = [u for u in self.config.favorite_users if u != node_id and u != alias]
+                self.config.save()
+            from meshcore_tray.core.event_bus import bus, EventType
+            bus.emit(EventType.MAP_NODES_UPDATED, None)
+            self.reload_rooms()
+
     def _render_rooms_list(self, keep_id: Optional[str] = None):
         self.list_widget.blockSignals(True)
         try:
             self.list_widget.clear()
             filter_q = self.search_input.text().strip().lower()
 
-            matched_item = None
+            favorites = []
+            others = []
             for room in self.rooms_list:
                 alias = room.alias or room.node_id
                 if filter_q and (filter_q not in alias.lower() and filter_q not in room.node_id.lower()):
                     continue
 
-                has_pwd = bool(self.storage.get_room_password(room.node_id)) if self.storage else False
                 is_fav = bool(room.is_favorite or (self.config and self.config.is_user_favorite(room.node_id, room.alias)))
+                if is_fav:
+                    favorites.append(room)
+                else:
+                    others.append(room)
 
-                item = QListWidgetItem(self.list_widget)
+            def get_sort_key(r):
+                if getattr(self, "sort_mode", "alpha") == "recent":
+                    ts = getattr(r, "last_seen", None) or getattr(r, "last_heard", None) or ""
+                    return str(ts)
+                return (r.alias or r.node_id).lower()
+
+            rev = (getattr(self, "sort_mode", "alpha") == "recent")
+            favorites.sort(key=get_sort_key, reverse=rev)
+            others.sort(key=get_sort_key, reverse=rev)
+
+            matched_item = None
+
+            # 1. Favorites
+            for room in favorites:
+                has_pwd = bool(self.storage.get_room_password(room.node_id)) if self.storage else False
+                item = QListWidgetItem()
                 item.setSizeHint(QSize(0, 54))
                 item.setData(Qt.ItemDataRole.UserRole, room)
-
-                row_widget = RoomServerRowWidget(room, has_saved_password=has_pwd, is_favorite=is_fav)
+                row_widget = RoomServerRowWidget(room, has_saved_password=has_pwd, is_favorite=True)
+                self.list_widget.addItem(item)
                 self.list_widget.setItemWidget(item, row_widget)
+                if keep_id and room.node_id.lower() == keep_id.lower():
+                    matched_item = item
 
+            # 2. Thin Divider
+            if favorites and others:
+                self._add_thin_divider()
+
+            # 3. Others
+            for room in others:
+                has_pwd = bool(self.storage.get_room_password(room.node_id)) if self.storage else False
+                item = QListWidgetItem()
+                item.setSizeHint(QSize(0, 54))
+                item.setData(Qt.ItemDataRole.UserRole, room)
+                row_widget = RoomServerRowWidget(room, has_saved_password=has_pwd, is_favorite=False)
+                self.list_widget.addItem(item)
+                self.list_widget.setItemWidget(item, row_widget)
                 if keep_id and room.node_id.lower() == keep_id.lower():
                     matched_item = item
 
@@ -795,6 +1080,9 @@ class RoomServersViewWidget(QWidget):
         self.active_room = contact
         self.placeholder.setVisible(False)
         self.room_content.setVisible(True)
+
+        is_fav = bool(contact.is_favorite or (self.config and self.config.is_user_favorite(contact.node_id, contact.alias)))
+        self._update_favorite_button(is_fav)
 
         clean_name = contact.alias.replace("[Room]", "").replace("[room]", "").replace("[Server]", "").replace("[server]", "").strip()
         clean_name = html.unescape(clean_name) or contact.node_id

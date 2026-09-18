@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
 )
 
 from meshcore_tray.config import AppConfig
+from meshcore_tray.core.models import is_room_server_contact
 from meshcore_tray.ui.avatar_generator import get_contact_avatar_icon
 
 logger = logging.getLogger("meshcore_tray.nav_dock")
@@ -30,7 +31,11 @@ LAYER_SVGS = {
     "scopes": '<circle cx="12" cy="12" r="9" stroke="{color}" stroke-width="1.8" fill="none"/><circle cx="12" cy="12" r="5" stroke="{color}" stroke-width="1.5" fill="none"/><circle cx="12" cy="12" r="1.5" fill="{color}"/><line x1="12" y1="3" x2="12" y2="21" stroke="{color}" stroke-width="1.5"/><line x1="3" y1="12" x2="21" y2="12" stroke="{color}" stroke-width="1.5"/>',
     "rf_los": '<path d="M2 20L8.5 9l3.5 5.5 4-6.5 6 12H2z" stroke="{color}" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round" fill="none"/><circle cx="16" cy="5" r="2" fill="{color}"/><line x1="3" y1="6" x2="14" y2="6" stroke="{color}" stroke-width="1.5" stroke-dasharray="2 2"/>',
     # Space Weather: Vertical undulating Aurora Borealis ribbons from mockup
-    "space_weather": '<path d="M3 18h18" stroke="{color}" stroke-width="1.5" stroke-linecap="round"/><path d="M4 18v-4M7 18v-7M10 18v-9M13 18v-11M16 18v-8M19 18v-5" stroke="{color}" stroke-width="2" stroke-linecap="round"/><path d="M3 14c3-3 6-5 10-5s5 2 8 4" stroke="{color}" stroke-width="1.5" stroke-linecap="round" fill="none"/>'
+    "space_weather": '<path d="M3 18h18" stroke="{color}" stroke-width="1.5" stroke-linecap="round"/><path d="M4 18v-4M7 18v-7M10 18v-9M13 18v-11M16 18v-8M19 18v-5" stroke="{color}" stroke-width="2" stroke-linecap="round"/><path d="M3 14c3-3 6-5 10-5s5 2 8 4" stroke="{color}" stroke-width="1.5" stroke-linecap="round" fill="none"/>',
+    # Satellite Tracking: Solar array wings, central payload bus, and downlink transmission waves
+    "satellites": '<rect x="9" y="8" width="6" height="7" rx="1" stroke="{color}" stroke-width="1.8" fill="none"/><rect x="2" y="9" width="5" height="5" stroke="{color}" stroke-width="1.5" fill="none"/><line x1="7" y1="11.5" x2="9" y2="11.5" stroke="{color}" stroke-width="1.5"/><rect x="17" y="9" width="5" height="5" stroke="{color}" stroke-width="1.5" fill="none"/><line x1="15" y1="11.5" x2="17" y2="11.5" stroke="{color}" stroke-width="1.5"/><line x1="12" y1="8" x2="12" y2="4" stroke="{color}" stroke-width="1.5"/><circle cx="12" cy="3" r="1" fill="{color}"/><path d="M8 18a5 5 0 0 0 8 0M6 21a8 8 0 0 0 12 0" stroke="{color}" stroke-width="1.6" stroke-linecap="round" fill="none"/>',
+    # Search Node IDs: Vector magnifying glass with center mesh node dot
+    "search_node_id": '<circle cx="11" cy="11" r="7" stroke="{color}" stroke-width="1.8" fill="none"/><line x1="16.5" y1="16.5" x2="22" y2="22" stroke="{color}" stroke-width="2" stroke-linecap="round"/><circle cx="11" cy="11" r="2" fill="{color}"/>',
 }
 
 # Primary navigation action bar vector glyphs (white inactive, glowing emerald active)
@@ -41,6 +46,7 @@ PRIMARY_NAV_SVGS = {
     "dms": '<path d="M17 8h2a2 2 0 0 1 2 2v7l-3-2h-1" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M15 14H7l-4 3V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2z" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>',
     "rooms": '<path d="M12 2L2 12l10 10 10-10L12 2z" stroke="{color}" stroke-width="2" stroke-linejoin="round" fill="none"/><path d="M7 12h10M9 9h6M9 15h6" stroke="{color}" stroke-width="1.8" stroke-linecap="round"/>',
     "repeaters": '<path d="M12 18v4M9 22h6M12 18l3-11h-6l3 11z" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M7.5 9.5a6.5 6.5 0 0 1 9 0M5 7a10 10 0 0 1 14 0" stroke="{color}" stroke-width="2" stroke-linecap="round" fill="none"/>',
+    "satellites": '<rect x="9" y="8" width="6" height="7" rx="1" stroke="{color}" stroke-width="1.8" fill="none"/><rect x="2" y="9" width="5" height="5" stroke="{color}" stroke-width="1.5" fill="none"/><line x1="7" y1="11.5" x2="9" y2="11.5" stroke="{color}" stroke-width="1.5"/><rect x="17" y="9" width="5" height="5" stroke="{color}" stroke-width="1.5" fill="none"/><line x1="15" y1="11.5" x2="17" y2="11.5" stroke="{color}" stroke-width="1.5"/><line x1="12" y1="8" x2="12" y2="4" stroke="{color}" stroke-width="1.5"/><circle cx="12" cy="3" r="1" fill="{color}"/><path d="M8 18a5 5 0 0 0 8 0M6 21a8 8 0 0 0 12 0" stroke="{color}" stroke-width="1.6" stroke-linecap="round" fill="none"/>',
 }
 
 CYCLE_SVGS = {
@@ -101,24 +107,28 @@ def create_cycle_icon(mode_name: str) -> Optional[QIcon]:
         return None
 
 
-def create_nav_icon(icon_name: str, active: bool = False) -> Optional[QIcon]:
-    """Renders crisp vector SVG icons for primary navigation: white inactive, glowing emerald with radial halo active."""
+def create_nav_icon(icon_name: str, active: bool = False, custom_color: Optional[str] = None) -> Optional[QIcon]:
+    """Renders crisp vector SVG icons for primary navigation with optional custom accent color."""
     inner_svg = PRIMARY_NAV_SVGS.get(icon_name)
     if not inner_svg:
         return None
     try:
-        color = "#34D399" if active else "#FFFFFF"
+        if custom_color:
+            color = custom_color
+        else:
+            color = "#34D399" if active else "#FFFFFF"
         svg_str = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">{inner_svg.format(color=color)}</svg>'
         renderer = QSvgRenderer(QByteArray(svg_str.encode("utf-8")))
         pix = QPixmap(32, 32)
         pix.fill(QColor(0, 0, 0, 0))
         painter = QPainter(pix)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        if active:
+        if active or custom_color:
+            c = QColor(color)
             glow = QRadialGradient(16, 16, 13)
-            glow.setColorAt(0.0, QColor(52, 211, 153, 90))
-            glow.setColorAt(0.6, QColor(16, 185, 129, 35))
-            glow.setColorAt(1.0, QColor(16, 185, 129, 0))
+            glow.setColorAt(0.0, QColor(c.red(), c.green(), c.blue(), 90))
+            glow.setColorAt(0.6, QColor(c.red(), c.green(), c.blue(), 35))
+            glow.setColorAt(1.0, QColor(c.red(), c.green(), c.blue(), 0))
             painter.setBrush(QBrush(glow))
             painter.setPen(Qt.PenStyle.NoPen)
             painter.drawEllipse(2, 2, 28, 28)
@@ -157,6 +167,9 @@ class DockButton(QPushButton):
             "🏢": "rooms",
             "repeaters": "repeaters",
             "📡": "repeaters",
+            "satellites": "satellites",
+            "🛰️": "satellites",
+            "🛰": "satellites",
             "app_icon": "app_icon",
             "⚡": "app_icon",
         }
@@ -257,6 +270,9 @@ class LayerButton(QPushButton):
             "rf_los": "rf_los",
             "🌌": "space_weather",
             "space_weather": "space_weather",
+            "satellites": "satellites",
+            "🔍": "search_node_id",
+            "search_node_id": "search_node_id",
         }
         return mapping.get(text)
 
@@ -463,6 +479,18 @@ class MapLayerDockWidget(QWidget):
         self.btn_space_weather.toggled.connect(lambda ch: self.layer_toggled.emit("space_weather", ch))
         layout.addWidget(self.btn_space_weather)
 
+        # 12. Satellite Tracking (ISS, Ham, Weather, Cubesats)
+        self.btn_satellites = LayerButton("satellites", "Satellite Tracking (ISS, Ham, Weather, Cubesats)", parent=self)
+        self.btn_satellites.setChecked(False)
+        self.btn_satellites.toggled.connect(lambda ch: self.layer_toggled.emit("satellites", ch))
+        layout.addWidget(self.btn_satellites)
+
+        # 13. Search Node IDs (Byte / Prefix Match)
+        self.btn_search_node_id = LayerButton("search_node_id", "Search Node IDs (Byte / Prefix Match)", parent=self)
+        self.btn_search_node_id.setChecked(False)
+        self.btn_search_node_id.toggled.connect(lambda ch: self.layer_toggled.emit("search_node_id", ch))
+        layout.addWidget(self.btn_search_node_id)
+
         layout.addStretch()
 
     def set_layer_active(self, layer_key: str, is_active: bool):
@@ -478,6 +506,8 @@ class MapLayerDockWidget(QWidget):
             "scopes": self.btn_scopes,
             "rf_los": self.btn_rf_los,
             "space_weather": self.btn_space_weather,
+            "satellites": self.btn_satellites,
+            "search_node_id": self.btn_search_node_id,
         }
         btn = mapping.get(layer_key)
         if btn:
@@ -489,7 +519,7 @@ class MapLayerDockWidget(QWidget):
 class NavDockWidget(QWidget):
     """Vertical Discord-style navigation strip (60px wide) with primary views & favorite contacts."""
 
-    view_changed = pyqtSignal(str)          # "main", "floods", "dms", "repeaters"
+    view_changed = pyqtSignal(str)          # "main", "floods", "dms", "rooms", "repeaters", "satellites"
     settings_requested = pyqtSignal()
     broadcast_advert_requested = pyqtSignal(bool) # flood: True/False
     resync_requested = pyqtSignal()
@@ -497,6 +527,8 @@ class NavDockWidget(QWidget):
     layer_toggled = pyqtSignal(str, bool)   # (layer_key, is_checked)
     radio_connect_requested = pyqtSignal()  # Trigger radio connect / reconnect
     contact_selected = pyqtSignal(str)      # Direct Message node_id from favorite avatar click
+    satellite_selected = pyqtSignal(str)    # norad_id from favorite satellite click
+    favorite_item_selected = pyqtSignal(str, str) # (item_type, item_id)
 
     def __init__(self, config: Optional[AppConfig] = None, parent=None):
         super().__init__(parent)
@@ -527,6 +559,7 @@ class NavDockWidget(QWidget):
         self.btn_scopes = self.map_layers.btn_scopes
         self.btn_rf_los = self.map_layers.btn_rf_los
         self.btn_space_weather = self.map_layers.btn_space_weather
+        self.btn_satellites = self.map_layers.btn_satellites
 
         self.map_layers.layer_toggled.connect(self.layer_toggled.emit)
         self.map_layers.node_filter_changed.connect(self.node_filter_changed.emit)
@@ -578,7 +611,12 @@ class NavDockWidget(QWidget):
         self.btn_repeaters.clicked.connect(lambda: self.switch_view("repeaters"))
         layout.addWidget(self.btn_repeaters)
 
-        # Favorite Contacts Section (at bottom of dock)
+        # 7. View 6: Satellites & Orbital Tracking
+        self.btn_sats = DockButton("satellites", "Satellites & Orbital Tracking (ISS, Weather, Ham, Cubesats)", parent=self)
+        self.btn_sats.clicked.connect(lambda: self.switch_view("satellites"))
+        layout.addWidget(self.btn_sats)
+
+        # Favorite Items Section (at bottom of dock)
         self.fav_divider = self._create_divider()
         self.fav_divider.setVisible(False)
         layout.addWidget(self.fav_divider)
@@ -611,7 +649,10 @@ class NavDockWidget(QWidget):
         return False
 
     def update_favorite_contacts(self, favorites: list):
-        """Populates the bottom of the nav dock with procedural avatar pills & rich hover tooltips."""
+        """Populates the bottom of the nav dock with procedural avatar pills & rich hover tooltips.
+        
+        Accepts mixed favorites: Contacts, Repeaters, Room Servers, and Satellites.
+        """
         while self.fav_layout.count():
             item = self.fav_layout.takeAt(0)
             widget = item.widget()
@@ -623,17 +664,110 @@ class NavDockWidget(QWidget):
             return
 
         self.fav_divider.setVisible(True)
-        for contact in favorites[:6]:
-            alias = getattr(contact, "alias", None) or getattr(contact, "node_id", "Unknown")
-            node_id = getattr(contact, "node_id", "")
+        for fav_item in favorites[:8]:
+            # Detect if favorite item is a satellite
+            is_sat = False
+            if isinstance(fav_item, dict):
+                is_sat = bool(fav_item.get("is_satellite") or "norad_id" in fav_item)
+            else:
+                is_sat = bool(getattr(fav_item, "is_satellite", False) or hasattr(fav_item, "norad_id"))
+
+            if is_sat:
+                if isinstance(fav_item, dict):
+                    sat_name = str(fav_item.get("name") or "SAT")
+                    norad_id = str(fav_item.get("norad_id") or "")
+                    group_name = str(fav_item.get("group_name") or "amateur").lower()
+                    freqs = fav_item.get("frequencies") or []
+                else:
+                    sat_name = str(getattr(fav_item, "name", "SAT"))
+                    norad_id = str(getattr(fav_item, "norad_id", ""))
+                    group_name = str(getattr(fav_item, "group_name", "amateur")).lower()
+                    freqs = getattr(fav_item, "frequencies", []) or []
+
+                if group_name == "stations":
+                    accent_col = "#38BDF8"
+                    group_label = "🚀 Space Station"
+                elif group_name == "weather":
+                    accent_col = "#F59E0B"
+                    group_label = "🌤️ Weather Satellite"
+                elif group_name == "cubesat":
+                    accent_col = "#A855F7"
+                    group_label = "📦 CubeSat / Nanosat"
+                else:
+                    accent_col = "#10B981"
+                    group_label = "📻 Amateur Satellite"
+
+                clean_name = sat_name.strip().replace("(", "").replace(")", "").replace("-", " ")
+                words = clean_name.split()
+                initials = (words[0][:1] + words[1][:1]).upper() if len(words) >= 2 else clean_name[:2].upper()
+
+                btn = QPushButton(parent=self)
+                btn.setFixedSize(40, 40)
+                btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                btn.setProperty("initials", initials)
+
+                sat_icon = create_layer_icon("satellites", active=True)
+                if sat_icon and not sat_icon.isNull():
+                    btn.setIcon(sat_icon)
+                    btn.setIconSize(QSize(26, 26))
+                    btn.setText("")
+                else:
+                    btn.setText(initials)
+
+                freq_lines = []
+                for f in freqs[:2]:
+                    freq_lines.append(f"• {f.get('label', 'Downlink')}: {f.get('freq_mhz', '')} MHz ({f.get('mode', '')})")
+                freq_text = ("\n" + "\n".join(freq_lines)) if freq_lines else ""
+
+                tip = (
+                    f"🛰️ {sat_name}\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🏷️ Category: {group_label}\n"
+                    f"🔑 NORAD ID: {norad_id}{freq_text}\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🛰️ Click to open in Satellites Page"
+                )
+                btn.setToolTip(tip)
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: #1A1D24;
+                        border: 1.5px solid #2E323B;
+                        border-radius: 14px;
+                        color: {accent_col};
+                        font-weight: bold;
+                        font-size: 11px;
+                        padding: 0px;
+                        text-align: center;
+                    }}
+                    QPushButton:hover {{
+                        border-color: {accent_col};
+                        background-color: #242832;
+                        border-radius: 12px;
+                    }}
+                """)
+                btn.clicked.connect(lambda _, nid=norad_id: (
+                    self.satellite_selected.emit(nid),
+                    self.favorite_item_selected.emit("satellite", nid)
+                ))
+                self.fav_layout.addWidget(btn)
+                continue
+
+            contact = fav_item
+            alias = getattr(contact, "alias", None) or (contact.get("alias") if isinstance(contact, dict) else None) or getattr(contact, "node_id", None) or (contact.get("node_id") if isinstance(contact, dict) else "Unknown")
+            node_id = getattr(contact, "node_id", None) or (contact.get("node_id") if isinstance(contact, dict) else "")
             is_rep = self._is_repeater_contact(contact)
+            is_room = is_room_server_contact(contact)
 
-            # Generate procedural avatar icon (Style B Tactical Radar for repeaters, Style C Cyberpunk Droid for users)
-            avatar_icon = get_contact_avatar_icon(node_id, alias, is_repeater=is_rep, size=36)
-
-            clean_alias = alias.strip().lstrip("!").lstrip("#")
+            clean_alias = str(alias).strip().lstrip("!").lstrip("#")
             parts = clean_alias.split()
             initials = (parts[0][:1] + parts[1][:1]).upper() if len(parts) >= 2 else clean_alias[:2].upper()
+
+            if is_room:
+                # Room servers use the Room Server vector icon in glowing neon magenta, not robot or text initials
+                avatar_icon = create_nav_icon("rooms", active=True, custom_color="#FF55FF")
+            else:
+                # Generate procedural avatar icon (Style B Tactical Radar for repeaters, Style C Cyberpunk Droid for users)
+                avatar_icon = get_contact_avatar_icon(node_id, str(alias), is_repeater=is_rep, size=36)
 
             btn = QPushButton(parent=self)
             btn.setFixedSize(40, 40)
@@ -642,32 +776,47 @@ class NavDockWidget(QWidget):
 
             if avatar_icon and not avatar_icon.isNull():
                 btn.setIcon(avatar_icon)
-                btn.setIconSize(QSize(32, 32))
+                btn.setIconSize(QSize(28, 28) if is_room else QSize(32, 32))
                 btn.setText("")
             else:
-                btn.setText(initials)
+                btn.setText("" if is_room else initials)
 
-            role_desc = "📡 Repeater Node" if is_rep else "👤 User / Client Node"
-            hw_model = getattr(contact, "hw_model", "") or getattr(contact, "hardware", "")
+            if is_room:
+                role_desc = "◆ Room Server (BBS)"
+                click_tip = "🏢 Click to open Room Server Console"
+                hover_border = "#FF55FF"
+                item_type = "room"
+            elif is_rep:
+                role_desc = "📡 Repeater Node"
+                click_tip = "💬 Click to open Direct Message"
+                hover_border = "#34D399"
+                item_type = "repeater"
+            else:
+                role_desc = "👤 User / Client Node"
+                click_tip = "💬 Click to open Direct Message"
+                hover_border = "#34D399"
+                item_type = "contact"
+
+            hw_model = getattr(contact, "hw_model", "") if not isinstance(contact, dict) else contact.get("hw_model", "")
             hw_line = f"\n📟 Hardware: {hw_model}" if hw_model else ""
 
             # RF / Signal info if available
-            snr = getattr(contact, "snr_db", 0.0)
-            rssi = getattr(contact, "rssi_dbm", -100.0)
+            snr = getattr(contact, "snr_db", 0.0) if not isinstance(contact, dict) else contact.get("snr_db", 0.0)
+            rssi = getattr(contact, "rssi_dbm", -100.0) if not isinstance(contact, dict) else contact.get("rssi_dbm", -100.0)
             rf_line = ""
             if snr != 0.0 or rssi != -100.0:
                 rf_line = f"\n📶 Signal: {rssi:.0f} dBm (SNR {snr:+.1f} dB)"
 
             # Hop path if available
-            hops = getattr(contact, "out_path_len", -1)
+            hops = getattr(contact, "out_path_len", -1) if not isinstance(contact, dict) else contact.get("out_path_len", -1)
             hops_line = f"\n🔀 Path: {hops} hop{'s' if hops != 1 else ''}" if hops >= 0 else ""
 
             # Location if available
-            lat = getattr(contact, "latitude", None)
-            lon = getattr(contact, "longitude", None)
+            lat = getattr(contact, "latitude", None) if not isinstance(contact, dict) else contact.get("latitude")
+            lon = getattr(contact, "longitude", None) if not isinstance(contact, dict) else contact.get("longitude")
             loc_line = f"\n📍 Location: {lat:.4f}, {lon:.4f}" if (lat is not None and lon is not None) else ""
 
-            last_seen = getattr(contact, "last_seen", None)
+            last_seen = getattr(contact, "last_seen", None) if not isinstance(contact, dict) else contact.get("last_seen")
             seen_line = f"\n🕒 Last Seen: {last_seen}" if last_seen else ""
 
             tip = (
@@ -676,25 +825,31 @@ class NavDockWidget(QWidget):
                 f"🏷️ Role: {role_desc}\n"
                 f"🔑 Node ID: {node_id}{hw_line}{rf_line}{hops_line}{loc_line}{seen_line}\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"💬 Click to open Direct Message"
+                f"{click_tip}"
             )
             btn.setToolTip(tip)
-            btn.setStyleSheet("""
-                QPushButton {
+            btn.setStyleSheet(f"""
+                QPushButton {{
                     background-color: #1A1D24;
                     border: 1.5px solid #2E323B;
                     border-radius: 14px;
                     padding: 0px;
                     text-align: center;
-                }
-                QPushButton:hover {
-                    border-color: #34D399;
+                }}
+                QPushButton:hover {{
+                    border-color: {hover_border};
                     background-color: #242832;
                     border-radius: 12px;
-                }
+                }}
             """)
-            btn.clicked.connect(lambda _, nid=node_id: self.contact_selected.emit(nid))
+            btn.clicked.connect(lambda _, nid=node_id, t=item_type: (
+                self.contact_selected.emit(nid),
+                self.favorite_item_selected.emit(t, nid)
+            ))
             self.fav_layout.addWidget(btn)
+
+    # Alias for update_favorite_contacts to reflect mixed favorites support
+    update_favorite_items = update_favorite_contacts
 
     def _create_divider(self) -> QFrame:
         line = QFrame()
@@ -774,6 +929,8 @@ class NavDockWidget(QWidget):
         if hasattr(self, "btn_rooms"):
             self.btn_rooms.set_active(view_name == "rooms")
         self.btn_repeaters.set_active(view_name == "repeaters")
+        if hasattr(self, "btn_sats"):
+            self.btn_sats.set_active(view_name == "satellites")
         self.view_changed.emit(view_name)
 
     def set_layer_active(self, layer_key: str, is_active: bool):

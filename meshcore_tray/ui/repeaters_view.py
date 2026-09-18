@@ -49,10 +49,11 @@ def format_last_seen(ts: Optional[str]) -> str:
 class RepeaterRowWidget(QWidget):
     """Row widget for repeaters with status indicator, clean last seen (no raw ID), gold star, and transparent text."""
 
-    def __init__(self, contact: NodeContact, is_favorite: bool = False, parent=None):
+    def __init__(self, contact: NodeContact, is_favorite: bool = False, is_phantom: bool = False, parent=None):
         super().__init__(parent)
         self.contact = contact
         self.is_favorite = is_favorite
+        self.is_phantom = is_phantom
         self.setFixedHeight(52)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAutoFillBackground(False)
@@ -71,23 +72,33 @@ class RepeaterRowWidget(QWidget):
         layout.setContentsMargins(10, 6, 10, 6)
         layout.setSpacing(12)
 
-        # Repeater badge: Style B Tactical Radar Constellation avatar
+        # Repeater badge: Style B Tactical Radar Constellation avatar (or black if phantom)
         self.badge = QLabel()
         self.badge.setFixedSize(36, 36)
         self.badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        avatar_icon = get_contact_avatar_icon(contact.node_id, contact.alias, is_repeater=True, size=36)
-        if avatar_icon and not avatar_icon.isNull():
-            self.badge.setPixmap(avatar_icon.pixmap(36, 36))
-            self.badge.setStyleSheet("background: transparent; border: none; border-radius: 8px;")
-        else:
-            self.badge.setText("📡")
+        if self.is_phantom:
+            self.badge.setText("👻")
             self.badge.setStyleSheet("""
-                background-color: #FFA500;
-                color: #000000;
+                background-color: #000000;
+                color: #9CA3AF;
+                border: 1.5px solid #4B5563;
                 border-radius: 8px;
                 font-size: 16px;
-                font-weight: bold;
             """)
+        else:
+            avatar_icon = get_contact_avatar_icon(contact.node_id, contact.alias, is_repeater=True, size=36)
+            if avatar_icon and not avatar_icon.isNull():
+                self.badge.setPixmap(avatar_icon.pixmap(36, 36))
+                self.badge.setStyleSheet("background: transparent; border: none; border-radius: 8px;")
+            else:
+                self.badge.setText("📡")
+                self.badge.setStyleSheet("""
+                    background-color: #FFA500;
+                    color: #000000;
+                    border-radius: 8px;
+                    font-size: 16px;
+                    font-weight: bold;
+                """)
         badge = self.badge
         layout.addWidget(badge)
 
@@ -108,6 +119,12 @@ class RepeaterRowWidget(QWidget):
         self.name_lbl.setAutoFillBackground(False)
         self.name_lbl.setStyleSheet("background: transparent; border: none; color: #F2F3F5; font-size: 13px; font-weight: 600;")
         name_row.addWidget(self.name_lbl)
+
+        if self.is_phantom:
+            self.phantom_lbl = QLabel("👻")
+            self.phantom_lbl.setToolTip("Marked as Phantom Node")
+            self.phantom_lbl.setStyleSheet("color: #9CA3AF; font-size: 12px;")
+            name_row.addWidget(self.phantom_lbl)
 
         self.star_lbl = QLabel("★")
         self.star_lbl.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
@@ -434,7 +451,8 @@ class RepeatersViewWidget(QWidget):
 
     def _add_row(self, contact: NodeContact, is_fav: bool):
         item = QListWidgetItem()
-        widget = RepeaterRowWidget(contact, is_favorite=is_fav)
+        is_phantom = bool(self.storage and self.storage.is_phantom_node(contact.node_id, contact.alias))
+        widget = RepeaterRowWidget(contact, is_favorite=is_fav, is_phantom=is_phantom)
         item.setSizeHint(QSize(220, 54))
         item.setData(Qt.ItemDataRole.UserRole, contact.node_id)
         self.repeater_list.addItem(item)
@@ -454,6 +472,28 @@ class RepeatersViewWidget(QWidget):
     def set_active_repeater(self, contact: NodeContact):
         self.console.set_repeater(contact)
 
+    def _toggle_phantom_node(self, node_id: str, alias: str = ""):
+        """Toggles phantom node status for a repeater across storage and config, then refreshes list."""
+        is_phantom = bool(self.storage and self.storage.is_phantom_node(node_id, alias))
+        if is_phantom:
+            if self.storage:
+                self.storage.unmark_phantom_node(node_id)
+                if alias:
+                    self.storage.unmark_phantom_node(alias)
+            if self.config:
+                self.config.unmark_phantom_node(node_id)
+                if alias:
+                    self.config.unmark_phantom_node(alias)
+        else:
+            if self.storage:
+                self.storage.mark_phantom_node(node_id, alias)
+            if self.config:
+                self.config.mark_phantom_node(node_id)
+                if alias:
+                    self.config.mark_phantom_node(alias)
+        bus.emit(EventType.MAP_NODES_UPDATED, None)
+        self.reload_repeaters()
+
     def _show_repeater_context_menu(self, pos):
         item = self.repeater_list.itemAt(pos)
         if not item:
@@ -466,6 +506,7 @@ class RepeatersViewWidget(QWidget):
             return
 
         is_fav = bool(contact and contact.is_favorite) or (self.config and self.config.is_user_favorite(node_id, contact.alias or ""))
+        is_phantom = bool(self.storage and self.storage.is_phantom_node(node_id, contact.alias))
         menu = QMenu(self)
         menu.setStyleSheet("""
             QMenu {
@@ -486,6 +527,7 @@ class RepeatersViewWidget(QWidget):
         """)
 
         fav_action = menu.addAction("⭐ Remove from Favorites" if is_fav else "⭐ Add to Favorites")
+        phantom_action = menu.addAction("👻 Remove from Phantom Nodes" if is_phantom else "👻 Mark as Phantom Node")
         map_action = menu.addAction("🗺️ Show on Map")
         adsb_action = None
         if contact and contact.latitude is not None and contact.longitude is not None:
@@ -507,6 +549,8 @@ class RepeatersViewWidget(QWidget):
                 self.config.save()
             bus.emit(EventType.FAVORITES_UPDATED, node_id)
             self.reload_repeaters()
+        elif action == phantom_action:
+            self._toggle_phantom_node(node_id, contact.alias or "")
         elif action == map_action:
             self.show_on_map_requested.emit(node_id, contact.latitude, contact.longitude, contact.alias or node_id)
         elif adsb_action and action == adsb_action:

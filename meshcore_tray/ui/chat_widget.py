@@ -4,8 +4,8 @@ import html
 import logging
 import re
 from typing import List, Optional
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSize
-from PyQt6.QtGui import QTextOption, QKeySequence
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSize, QUrl
+from PyQt6.QtGui import QTextOption, QKeySequence, QDesktopServices
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea,
     QFrame, QPushButton, QSizePolicy, QMenu, QDialog, QFormLayout,
@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
 from meshcore_tray.core.models import MessageEnvelope, NodeContact
 from meshcore_tray.core.event_bus import bus, EventType
 from meshcore_tray.ui.avatar_generator import get_contact_avatar_icon
+from meshcore_tray.ui.link_parser import format_message_text_with_links, extract_urls
 
 logger = logging.getLogger("meshcore_tray.chat_widget")
 
@@ -63,14 +64,18 @@ def insert_break_opportunities(text: str, max_chunk: int = 16) -> str:
 
 
 class MessageBodyLabel(QLabel):
-    """Word-wrapping QLabel for chat bubbles that safely breaks long unbroken strings
-    and prevents oversized minimum size hints from blowing out layout container widths."""
+    """Word-wrapping QLabel for chat bubbles that renders clickable HTML links
+    and safely breaks long unbroken strings to prevent oversized minimum size hints."""
 
     def __init__(self, text: str = "", parent=None):
         super().__init__(parent)
-        self.setTextFormat(Qt.TextFormat.PlainText)
+        self.setTextFormat(Qt.TextFormat.RichText)
         self.setWordWrap(True)
-        self.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse |
+            Qt.TextInteractionFlag.LinksAccessibleByMouse
+        )
+        self.setOpenExternalLinks(True)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAutoFillBackground(False)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
@@ -79,7 +84,7 @@ class MessageBodyLabel(QLabel):
 
     def setText(self, text: str):
         self._raw_text = text
-        super().setText(insert_break_opportunities(text))
+        super().setText(format_message_text_with_links(text, insert_break_func=insert_break_opportunities))
 
     def raw_text(self) -> str:
         return getattr(self, "_raw_text", self.text().replace("\u200b", ""))
@@ -425,6 +430,24 @@ class MessageBubble(QFrame):
         else:
             act_copy = menu.addAction("📋 Copy Message")
 
+        found_urls = extract_urls(selected_text or self.msg.text)
+        url_actions = []
+        if found_urls:
+            if len(found_urls) == 1:
+                u = found_urls[0]
+                short_u = u if len(u) <= 30 else (u[:27] + "...")
+                act_open_u = menu.addAction(f"🌐 Open Link ({short_u})")
+                act_copy_u = menu.addAction(f"🔗 Copy Link Address")
+                url_actions.append((act_open_u, "open", u))
+                url_actions.append((act_copy_u, "copy", u))
+            else:
+                for u in found_urls[:5]:
+                    short_u = u if len(u) <= 30 else (u[:27] + "...")
+                    act_open_u = menu.addAction(f"🌐 Open {short_u}")
+                    act_copy_u = menu.addAction(f"🔗 Copy {short_u}")
+                    url_actions.append((act_open_u, "open", u))
+                    url_actions.append((act_copy_u, "copy", u))
+
         act_reply = menu.addAction(f"💬 Reply to @{self.msg.sender_name}")
         act_dm = menu.addAction(f"✉️ Direct Message @{self.msg.sender_name}")
         act_path = menu.addAction("🗺️ Visualise Path")
@@ -444,6 +467,16 @@ class MessageBubble(QFrame):
         act_delete = menu.addAction("🗑️ Delete Message")
 
         chosen = menu.exec(self.mapToGlobal(pos))
+        for act, action_type, u in url_actions:
+            if chosen == act:
+                if action_type == "open":
+                    QDesktopServices.openUrl(QUrl(u))
+                elif action_type == "copy":
+                    clip = QApplication.clipboard()
+                    if clip:
+                        clip.setText(u)
+                return
+
         if chosen == act_copy:
             text_to_copy = selected_text if selected_text else html.unescape(self.msg.text)
             clip = QApplication.clipboard()

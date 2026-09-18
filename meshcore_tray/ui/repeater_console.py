@@ -6,13 +6,14 @@ from datetime import datetime
 from typing import Optional
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QTextEdit, QFrame, QGridLayout
+    QPushButton, QTextEdit, QTextBrowser, QFrame, QGridLayout
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QTextOption
 from meshcore_tray.core.event_bus import bus, EventType
 from meshcore_tray.core.models import NodeContact, MessageEnvelope
 from meshcore_tray.ui.avatar_generator import get_contact_avatar_icon
+from meshcore_tray.ui.link_parser import format_message_text_with_links
 
 
 class RepeaterConsoleWidget(QWidget):
@@ -225,8 +226,9 @@ class RepeaterConsoleWidget(QWidget):
         term_label.setStyleSheet("color: #9CA3AF; font-size: 12px;")
         main_layout.addWidget(term_label)
 
-        self.term_box = QTextEdit()
+        self.term_box = QTextBrowser()
         self.term_box.setReadOnly(True)
+        self.term_box.setOpenExternalLinks(True)
         self.term_box.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
         self.term_box.setStyleSheet(
             "background-color: #1C1C1C; color: #39D353; font-family: 'Cascadia Code', 'Fira Code', 'DejaVu Sans Mono', monospace; "
@@ -329,9 +331,11 @@ class RepeaterConsoleWidget(QWidget):
             lines = clean_text.splitlines()
             if lines:
                 first_color = "#3FB950" if any(k in lines[0] for k in ["✅", "📊", "🌐", "ℹ️", "🔋", "🧭"]) else "#58A6FF"
-                self.term_box.append(f"<span style='color: #8B949E;'>[{t_str}]</span> <span style='color: #58A6FF; font-weight:bold;'>&lt;&lt;&lt;</span> <span style='color: {first_color}; font-weight: bold;'>{html.escape(lines[0])}</span>{snr_str}")
+                line0_html = format_message_text_with_links(lines[0], link_color="#58A6FF")
+                self.term_box.append(f"<span style='color: #8B949E;'>[{t_str}]</span> <span style='color: #58A6FF; font-weight:bold;'>&lt;&lt;&lt;</span> <span style='color: {first_color}; font-weight: bold;'>{line0_html}</span>{snr_str}")
                 for sub_line in lines[1:]:
-                    self.term_box.append(f"<span style='color: #8B949E;'>[{t_str}]</span> <span style='color: #30363D;'>&nbsp;&nbsp;&nbsp;</span> <span style='color: #7EE787;'>{html.escape(sub_line)}</span>")
+                    sub_line_html = format_message_text_with_links(sub_line, link_color="#7EE787")
+                    self.term_box.append(f"<span style='color: #8B949E;'>[{t_str}]</span> <span style='color: #30363D;'>&nbsp;&nbsp;&nbsp;</span> <span style='color: #7EE787;'>{sub_line_html}</span>")
             self.term_box.verticalScrollBar().setValue(self.term_box.verticalScrollBar().maximum())
 
             # Detect and parse neighbours telemetry

@@ -201,6 +201,9 @@ class NodeContact:
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
 
 
+import re
+
+
 def is_room_server_contact(contact: Optional[Union[NodeContact, dict]]) -> bool:
     """Helper to detect if a contact represents a Room Server (by flag, type code, or alias tag)."""
     if not contact:
@@ -208,14 +211,18 @@ def is_room_server_contact(contact: Optional[Union[NodeContact, dict]]) -> bool:
     if isinstance(contact, dict):
         if contact.get("is_room_server"):
             return True
-        if contact.get("type") == 3:
+        if contact.get("type") == 3 or contact.get("adv_type") == 3:
             return True
         alias = str(contact.get("alias") or contact.get("adv_name") or "").lower()
     else:
         if getattr(contact, "is_room_server", False):
             return True
         alias = (contact.alias or "").lower()
-    return "[room]" in alias or "[server]" in alias or alias.endswith("-bbs") or "-room" in alias
+    if not alias:
+        return False
+    if "[room]" in alias or "[server]" in alias or "-room" in alias or "-bbs" in alias or alias.endswith("-bbs"):
+        return True
+    return bool(re.search(r'\b(room|bbs|server)\b', alias))
 
 
 @dataclass

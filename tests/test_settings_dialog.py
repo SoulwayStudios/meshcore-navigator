@@ -328,8 +328,8 @@ def test_embedded_settings_view_in_main_window(qapp, tmp_path, monkeypatch):
 
     # Initial state: main_stack is index 0 (main_splitter with channels, chat, map)
     assert win.main_stack.currentIndex() == 0
-    assert win.main_stack.count() == 5
-    assert win.main_stack.widget(4) == win.settings_view
+    assert win.main_stack.count() == 6
+    assert win.main_stack.widget(5) == win.settings_view
 
     # Open Settings via nav_dock icon or _open_settings
     win._open_settings()

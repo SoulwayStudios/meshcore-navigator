@@ -4,7 +4,37 @@
 
 ---
 
-## 🌟 What's New in v0.6.2
+## 🌟 What's New in v0.7.0
+
+### 🪟 Out-of-the-Box Windows Standalone Binary Fix
+- **Platform Plugin Initialization Fix**: Resolved a critical issue where Windows executables failed to initialize Qt's platform plugin without manual PowerShell environment variables (`QT_QPA_PLATFORM=windows` or `-platform windows`).
+- **Dynamic Platform Detection**: Corrected startup platform initialization in `main.py` to automatically detect Windows (`win32`) and default to the `windows` QPA platform plugin while preserving native Wayland/XCB on Linux and Cocoa on macOS.
+- **PyInstaller Frozen Plugin Discovery**: Integrated automated runtime Qt plugin path resolution (`addLibraryPath`) so bundled `qwindows.dll` and WebEngine binaries load effortlessly.
+- **Dual Executable Aliases**: Included both `MESHCORE-NAVIGATOR.exe` and `MESHCORENAVIGATOR.exe` in the Windows distribution package for universal compatibility across launch shortcuts and scripts.
+
+### 🛰️ Real-Time Satellite Tracking & Pass Prediction
+- **Live Orbital Propagation**: Track the International Space Station (ISS), Tiangong Space Station, NOAA Weather Satellites (NOAA 15/18/19), Meteor-M2 weather series, and amateur radio CubeSats in real time using high-precision SGP4 orbital mechanics and Keplerian two-line element sets (TLEs).
+- **Interactive Polar Sky Track & Ground Tracks**: Displays real-time ground tracks on the Leaflet map and polar radar elevation/azimuth sky tracks indicating approaching satellite passes from your station's coordinates.
+- **Doppler Shift Frequency Estimator**: Computes instantaneous Doppler frequency offset in Hz and kHz for VHF/UHF amateur radio downlinks and weather satellite imagery transponders.
+- **Imagery & Blueprint Gallery**: High-resolution space-grade technical schematics, orbital photos, and real-time pass timelines.
+
+### 🔗 Clickable HTML Link Parser in Chat & Consoles
+- **Automatic Link Detection**: Chat messages, direct messages, room server boards, and repeater consoles now automatically recognize URLs (`http://`, `https://`, `ftp://`, `www.`, email addresses, and top-level domains).
+- **Safe HTML & Visual Legibility**: Formatted in vivid cyan/blue (`#58A6FF`) with underline, soft break word-wrapping across card containers, and robust XSS protection.
+- **One-Click Default Browser Launching**: Click any link directly to open it in your system's default browser while preserving mouse text selection.
+- **Context Menu Integration**: Right-click chat bubbles to instantly **Open Link** or **Copy Link Address**.
+
+### 🏢 Room Server Demotion Protection & BBS Enhancements
+- **Permanent Node Role Guard**: Protected unbracketed room server aliases (such as `Navigator Room BBS M7NC`) from accidental demotion to client or repeater nodes when receiving OTA packets or testing CLI commands (`!help`, `!read`, `!info`).
+- **Wire Type 3 Protocol Handling**: Full native support for MeshCore advertisement type 3 (`AdvType.ROOM`), automatic credential awareness, and self-healing SQLite schema synchronization.
+
+### 🗺️ Amplified Activity Sizing & Leaflet Node Deletion
+- **High-Contrast Activity Heatmap Sizing**: Dynamic sizing curve scales active repeaters and room servers up to **2.80x** with glowing multi-ring radiant halos and elevated z-index, while inactive nodes contract to **0.70x** at 30% opacity to minimize visual clutter.
+- **Leaflet Popup Node Deletion**: Added a prominent red `🗑️ Delete Node` button in Leaflet map popups with a confirmation dialog, purging stale nodes and unlinking neighbors across SQLite in real time.
+
+---
+
+## 📦 Previous Highlights (v0.6.2)
 
 ### 💫 Hardware-Accelerated Transmission Path Dot Animation
 - **Restored Dotted Path Animation**: Resolved an issue where vector paths rendered into the HTML5 Canvas bitmap buffer, leaving CSS keyframes inactive. Initialized a dedicated Leaflet SVG renderer (`visualisedSvgRenderer`) so the dotted lines smoothly animate along transmission paths.
