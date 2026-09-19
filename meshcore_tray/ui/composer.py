@@ -9,6 +9,9 @@ from PyQt6.QtWidgets import (
     QListWidget, QListWidgetItem, QMenu
 )
 
+from meshcore_tray.core.event_bus import bus, EventType
+from meshcore_tray.core.models import MessageEnvelope
+
 logger = logging.getLogger("meshcore_tray.composer")
 
 
@@ -49,7 +52,26 @@ class PowerComposer(QWidget):
         self.active_channel = "Public"
         self.active_dm: Optional[str] = None
         self._is_searching = False
+
+        # Resend tracking on zero repeats
+        self._last_sent_text: str = ""
+        self._last_sent_channel: str = "Public"
+        self._last_sent_dm: Optional[str] = None
+        self._last_sent_msg_id: Optional[str] = None
+        self._last_sent_repeats: int = 0
+        self._can_resend_on_enter: bool = False
+
+        self._btn_color: str = "#00FF7F"
+        self._btn_text_color: str = "#000000"
+
         self._init_ui()
+
+        # Subscribe to message bus events for repeat tracking
+        try:
+            bus.subscribe(EventType.MESSAGE_SENT, self._on_bus_message_sent)
+            bus.subscribe(EventType.MESSAGE_UPDATED, self._on_bus_message_updated)
+        except Exception as e:
+            logger.debug(f"Event bus subscription skipped: {e}")
 
     def _init_ui(self):
         layout = QHBoxLayout(self)
@@ -86,7 +108,7 @@ class PowerComposer(QWidget):
 
         self.send_button = QPushButton("Send")
         self.send_button.setObjectName("primaryButton")
-        self.send_button.setFixedWidth(80)
+        self.send_button.setFixedWidth(105)
         self.send_button.setMinimumHeight(38)
         self.send_button.clicked.connect(self._handle_submit)
 
@@ -104,21 +126,28 @@ class PowerComposer(QWidget):
 
     def apply_theme(self, color_hex: Optional[str] = None, text_color_hex: Optional[str] = None):
         """Applies configured send button color and legible text color."""
-        c = color_hex
-        if not c and self.config and hasattr(self.config, "app_colors"):
-            c = getattr(self.config.app_colors, "send_button_color", "#00FF7F")
-        if not c:
-            c = "#00FF7F"
+        if color_hex:
+            self._btn_color = color_hex
+        elif not hasattr(self, "_btn_color") or not self._btn_color:
+            c = None
+            if self.config and hasattr(self.config, "app_colors"):
+                c = getattr(self.config.app_colors, "send_button_color", "#00FF7F")
+            self._btn_color = c or "#00FF7F"
 
-        txt_col = text_color_hex
-        if not txt_col and self.config and hasattr(self.config, "app_colors"):
-            txt_col = getattr(self.config.app_colors, "send_button_text_color", None)
-        if not txt_col:
-            # Auto-calculate luminance contrast for maximum legibility on light/dark backgrounds
-            col = QColor(c)
-            lum = (0.299 * col.red() + 0.587 * col.green() + 0.114 * col.blue()) / 255.0
-            txt_col = "#000000" if lum > 0.45 else "#FFFFFF"
+        if text_color_hex:
+            self._btn_text_color = text_color_hex
+        elif not hasattr(self, "_btn_text_color") or not self._btn_text_color:
+            txt_col = None
+            if self.config and hasattr(self.config, "app_colors"):
+                txt_col = getattr(self.config.app_colors, "send_button_text_color", None)
+            if not txt_col:
+                col = QColor(self._btn_color)
+                lum = (0.299 * col.red() + 0.587 * col.green() + 0.114 * col.blue()) / 255.0
+                txt_col = "#000000" if lum > 0.45 else "#FFFFFF"
+            self._btn_text_color = txt_col
 
+        c = self._btn_color
+        txt_col = self._btn_text_color
         c_hover = QColor(c).lighter(115).name()
         self.send_button.setStyleSheet(f"""
             QPushButton#primaryButton {{
@@ -132,6 +161,11 @@ class PowerComposer(QWidget):
                 background-color: {c_hover};
                 border-color: {c_hover};
             }}
+            QPushButton#primaryButton:disabled {{
+                background-color: #374151;
+                color: #9CA3AF;
+                border: 1px solid #4B5563;
+            }}
         """)
 
     def set_active_target(self, channel: str, dm_recipient: Optional[str] = None):
@@ -141,11 +175,101 @@ class PowerComposer(QWidget):
             self.input_field.setPlaceholderText(f"Message @{dm_recipient}... (#channel, @user, /join, /switch, ? search)")
         else:
             self.input_field.setPlaceholderText(f"Message #{channel}... (#channel, @user, /join, /switch, ? search)")
+        self._update_counter_and_button()
 
     def focus(self):
         self.input_field.setFocus()
 
+    def populate_resend(self, text: str):
+        """Populates the composer with text to resend and focuses the input field."""
+        self.input_field.setText(text)
+        self.input_field.setFocus()
+        self.input_field.setCursorPosition(len(text))
+
+    def _target_matches_last_sent(self) -> bool:
+        if self.active_dm:
+            return self._last_sent_dm == self.active_dm
+        return self._last_sent_channel == self.active_channel
+
+    def _update_counter_and_button(self):
+        text = self.input_field.text()
+        raw_len = len(text)
+
+        if raw_len == 0:
+            self.input_field.setStyleSheet("")
+            self.apply_theme()
+            if (
+                self._can_resend_on_enter
+                and self._last_sent_repeats == 0
+                and self._last_sent_text
+                and self._target_matches_last_sent()
+            ):
+                self.send_button.setEnabled(True)
+                self.send_button.setText("🔁 Resend")
+                self.send_button.setToolTip(f"No repeats heard yet. Click or press Enter to resend '{self._last_sent_text[:30]}...'")
+                if not self.input_field.placeholderText().startswith("🔁"):
+                    self.input_field.setPlaceholderText("🔁 No repeats heard. Press Enter to resend, or type new message...")
+            else:
+                self.send_button.setEnabled(True)
+                self.send_button.setText("Send")
+                self.send_button.setToolTip("Send message (Enter)")
+                if self.input_field.placeholderText().startswith("🔁"):
+                    if self.active_dm:
+                        self.input_field.setPlaceholderText(f"Message @{self.active_dm}... (#channel, @user, /join, /switch, ? search)")
+                    else:
+                        self.input_field.setPlaceholderText(f"Message #{self.active_channel}... (#channel, @user, /join, /switch, ? search)")
+        elif raw_len <= 133:
+            self.input_field.setStyleSheet("")
+            self.send_button.setEnabled(True)
+            self.send_button.setText(f"Send ({raw_len}/133)")
+            self.send_button.setToolTip(f"Send message ({raw_len}/133 characters)")
+            self.apply_theme()
+        else:
+            self.input_field.setStyleSheet("QLineEdit#composerInput { border: 1.5px solid #EF4444; }")
+            self.send_button.setEnabled(False)
+            self.send_button.setText(f"❌ {raw_len}/133")
+            self.send_button.setToolTip(f"Message exceeds 133 character limit by {raw_len - 133} characters! Shorten text to send.")
+            self.send_button.setStyleSheet("""
+                QPushButton#primaryButton {
+                    background-color: #DC2626;
+                    color: #FFFFFF;
+                    border: 1px solid #EF4444;
+                    border-radius: 6px;
+                    font-weight: bold;
+                }
+            """)
+
+    def _on_bus_message_sent(self, msg: MessageEnvelope):
+        if not msg or not getattr(msg, "is_outgoing", False):
+            return
+        if msg.text == self._last_sent_text:
+            self._last_sent_msg_id = getattr(msg, "id", None)
+            self._last_sent_repeats = getattr(msg, "repeats_heard", 0)
+            if self._last_sent_repeats == 0:
+                self._can_resend_on_enter = True
+            else:
+                self._can_resend_on_enter = False
+            self._update_counter_and_button()
+
+    def _on_bus_message_updated(self, msg: MessageEnvelope):
+        if not msg:
+            return
+        matched = False
+        if self._last_sent_msg_id and getattr(msg, "id", None) == self._last_sent_msg_id:
+            matched = True
+        elif getattr(msg, "is_outgoing", False) and msg.text == self._last_sent_text:
+            matched = True
+
+        if matched:
+            repeats = getattr(msg, "repeats_heard", 0)
+            self._last_sent_repeats = repeats
+            if repeats > 0:
+                self._can_resend_on_enter = False
+            self._update_counter_and_button()
+
     def _on_text_changed(self, text: str):
+        self._update_counter_and_button()
+
         # 1. Search Mode: Prefix '?'
         if text.startswith("?"):
             self._is_searching = True
@@ -308,8 +432,28 @@ class PowerComposer(QWidget):
                 self.input_field.setCursorPosition(len(new_text))
 
     def _handle_submit(self):
+        # 133 character limit enforcement
+        if len(self.input_field.text()) > 133:
+            logger.warning(f"Message length ({len(self.input_field.text())}) exceeds 133 character limit. Submission blocked.")
+            return
+
         text = self.input_field.text().strip()
         if not text:
+            # Check if user can resend last unrepeated message on Enter
+            if (
+                self._can_resend_on_enter
+                and self._last_sent_repeats == 0
+                and self._last_sent_text
+                and self._target_matches_last_sent()
+            ):
+                resend_text = self._last_sent_text
+                logger.info(f"Resending message on Enter (0 repeats heard): {resend_text[:30]}")
+                if self.active_dm:
+                    self.send_message.emit("DM", self.active_dm, resend_text)
+                else:
+                    self.send_message.emit(self.active_channel, None, resend_text)
+                self.input_field.setPlaceholderText("🔁 Resent! Waiting for repeats... Press Enter to resend again.")
+                self._update_counter_and_button()
             return
 
         # Handle Search submit (just keep search active)
@@ -333,9 +477,16 @@ class PowerComposer(QWidget):
             if len(parts) >= 3:
                 target_user = parts[1].lstrip("@")
                 dm_body = parts[2]
+                self._last_sent_text = dm_body
+                self._last_sent_channel = "DM"
+                self._last_sent_dm = target_user
+                self._last_sent_repeats = 0
+                self._last_sent_msg_id = None
+                self._can_resend_on_enter = True
                 self.send_message.emit("DM", target_user, dm_body)
                 self.input_field.clear()
                 self.popup.hide()
+                self._update_counter_and_button()
                 return
 
         # Handle Slash channel switch
@@ -361,13 +512,27 @@ class PowerComposer(QWidget):
             target_chan = parts[0][1:]
             msg_body = parts[1] if len(parts) > 1 else ""
             if msg_body:
+                self._last_sent_text = msg_body
+                self._last_sent_channel = target_chan
+                self._last_sent_dm = None
+                self._last_sent_repeats = 0
+                self._last_sent_msg_id = None
+                self._can_resend_on_enter = True
                 self.send_message.emit(target_chan, None, msg_body)
                 self.input_field.clear()
                 self.popup.hide()
+                self._update_counter_and_button()
                 return
 
         # Standard send to currently active conversation
         # Note: In-channel replies and mentions (@user ...) remain public in active_channel!
+        self._last_sent_text = text
+        self._last_sent_channel = self.active_channel
+        self._last_sent_dm = self.active_dm
+        self._last_sent_repeats = 0
+        self._last_sent_msg_id = None
+        self._can_resend_on_enter = True
+
         if self.active_dm:
             self.send_message.emit("DM", self.active_dm, text)
         else:
@@ -375,6 +540,7 @@ class PowerComposer(QWidget):
 
         self.input_field.clear()
         self.popup.hide()
+        self._update_counter_and_button()
 
     def eventFilter(self, obj, event):
         """Keyboard navigation hook for Tab, Enter, Up, Down, Esc."""
@@ -403,6 +569,8 @@ class PowerComposer(QWidget):
                     return True
             else:
                 if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                    if len(self.input_field.text()) > 133:
+                        return True
                     self._handle_submit()
                     return True
                 elif key == Qt.Key.Key_Escape:

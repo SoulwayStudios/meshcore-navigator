@@ -3,7 +3,7 @@
 import pytest
 from meshcore_tray.config import AppConfig
 from meshcore_tray.core.event_bus import bus, EventType
-from meshcore_tray.core.models import MessageEnvelope, TelemetryEnvelope
+from meshcore_tray.core.models import MessageEnvelope, TelemetryEnvelope, NodeContact
 from meshcore_tray.drivers.meshcore_driver import MeshCoreDriver
 from meshcore_tray.storage import Storage
 
@@ -357,5 +357,77 @@ def test_map_marker_glow_styles():
     assert "box-shadow: 0 0 6px var(--favorite-color);" in html
     assert ".node-dot-local" in html
     assert "box-shadow: 0 0 6px #38BDF8;" in html
+
+
+def test_rx_log_data_emits_req_and_trace_packets(driver, temp_storage):
+    """Verifies that REQ/TRACE packets received via RX_LOG_DATA are emitted to PACKET_PATH_TRACED and saved."""
+    traced_paths = []
+    bus.subscribe(EventType.PACKET_PATH_TRACED, lambda p: traced_paths.append(p))
+
+    # Add a repeater
+    temp_storage.save_contact(NodeContact(
+        node_id="627c826257c1", alias="MCC Allotment", is_repeater=True, latitude=54.6368, longitude=-3.5388
+    ))
+
+    # Simulate RX_LOG_DATA for an over-the-air REQ packet
+    req_event_data = {
+        "path": "62",
+        "path_len": 1,
+        "route_typename": "FLOOD",
+        "payload_typename": "REQ",
+        "snr": 11.5,
+        "payload": "100162aabbcc"
+    }
+
+    driver._handle_rx_log_data(req_event_data)
+
+    assert len(traced_paths) >= 1
+    p = traced_paths[-1]
+    assert p.payload_type == "REQ"
+    assert "REQ" in p.sender_name
+    assert len(p.coordinates) >= 1
+    assert p.coordinates[0] == [54.6368, -3.5388]
+
+    # Verify saved to database
+    db_paths = temp_storage.get_recent_packet_paths(limit=5)
+    matching = [dp for dp in db_paths if dp.payload_type == "REQ"]
+    assert len(matching) >= 1
+
+
+def test_channel_msg_populates_repeater_coordinates(driver, temp_storage):
+    """Verifies that channel messages populate chat_path.coordinates with intermediate repeater GPS coordinates."""
+    traced_paths = []
+    bus.subscribe(EventType.PACKET_PATH_TRACED, lambda p: traced_paths.append(p))
+
+    # Save repeater
+    temp_storage.save_contact(NodeContact(
+        node_id="3f9ad1439c12", alias="MCC Barnholm Rep", is_repeater=True, latitude=54.8668, longitude=-4.2842
+    ))
+
+    # Save sender (without GPS)
+    temp_storage.save_contact(NodeContact(
+        node_id="sender123456", alias="MM1BHO", is_repeater=False, latitude=None, longitude=None
+    ))
+
+    msg_payload = {
+        "sender_id": "sender123456",
+        "sender_name": "MM1BHO",
+        "text": "Hello world from Cumbria",
+        "chan_name": "#cumbria",
+        "path": "3f",
+        "path_len": 1,
+        "route_typename": "FLOOD",
+        "SNR": 10.0
+    }
+
+    driver._handle_channel_msg(msg_payload)
+
+    assert len(traced_paths) >= 1
+    chat_path = traced_paths[-1]
+    assert chat_path.payload_type == "GRP_TXT"
+    # Even though sender had no GPS, intermediate repeater coordinates are populated!
+    assert len(chat_path.coordinates) >= 1
+    assert chat_path.coordinates[0] == [54.8668, -4.2842]
+
 
 

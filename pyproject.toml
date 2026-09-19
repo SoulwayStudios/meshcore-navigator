@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "meshcore-navigator"
-version = "0.7.1"
+version = "0.8.0"
 description = "MESHCORE NAVIGATOR - MeshCore Desktop Station, Live Map & Matrix Integration"
 readme = "README.md"
 license = { text = "GPL-3.0-or-later" }
@@ -27,6 +27,8 @@ dependencies = [
     "meshcore>=2.3.0",
     "pixoo>=0.9.0",
     "packaging>=23.0",
+    "pycryptodome>=3.20.0",
+    "paho-mqtt>=2.0.0",
 ]
 
 [project.scripts]

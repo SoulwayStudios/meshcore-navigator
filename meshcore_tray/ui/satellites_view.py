@@ -871,10 +871,10 @@ class SatellitesViewWidget(QWidget):
         hdr_row.addWidget(self.count_badge)
         hdr_row.addStretch()
 
-        btn_sync = QPushButton("↺ Sync TLEs")
-        btn_sync.setToolTip("Sync latest Two-Line Elements from CelesTrak")
-        btn_sync.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_sync.setStyleSheet("""
+        self.btn_sync = QPushButton("↺ Sync TLEs")
+        self.btn_sync.setToolTip("Sync latest Two-Line Elements from CelesTrak")
+        self.btn_sync.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_sync.setStyleSheet("""
             QPushButton {
                 background-color: #1E1F22;
                 color: #DBDEE1;
@@ -888,9 +888,14 @@ class SatellitesViewWidget(QWidget):
                 background-color: #35373C;
                 color: #FFFFFF;
             }
+            QPushButton:disabled {
+                background-color: #1E1F22;
+                color: #72767D;
+                border-color: #2B2D31;
+            }
         """)
-        btn_sync.clicked.connect(self._on_sync_tles_clicked)
-        hdr_row.addWidget(btn_sync)
+        self.btn_sync.clicked.connect(self._on_sync_tles_clicked)
+        hdr_row.addWidget(self.btn_sync)
 
         left_layout.addLayout(hdr_row)
 
@@ -1366,6 +1371,7 @@ class SatellitesViewWidget(QWidget):
 
     def reload_satellites(self):
         """Loads satellite catalog from database or offline defaults."""
+        self._reset_sync_button()
         try:
             db_sats = self.storage.get_satellite_tles()
             if not db_sats:
@@ -1736,8 +1742,21 @@ class SatellitesViewWidget(QWidget):
         tle_str = f"{name}\n{line1}\n{line2}"
         QApplication.clipboard().setText(tle_str)
 
+    def _reset_sync_button(self):
+        if hasattr(self, "btn_sync") and self.btn_sync:
+            self.btn_sync.setEnabled(True)
+            self.btn_sync.setText("↺ Sync TLEs")
+
     def _on_sync_tles_clicked(self):
-        self.satellite_service.refresh_tles()
+        if hasattr(self, "btn_sync") and self.btn_sync:
+            self.btn_sync.setEnabled(False)
+            self.btn_sync.setText("↺ Syncing...")
+            QTimer.singleShot(6000, self._reset_sync_button)
+        if self.satellite_service:
+            if hasattr(self.satellite_service, "refresh_tles"):
+                self.satellite_service.refresh_tles()
+            elif hasattr(self.satellite_service, "refresh_now"):
+                self.satellite_service.refresh_now(force=True)
 
     def select_satellite(self, norad_id: str):
         """Focuses and selects a satellite by its NORAD catalog ID."""

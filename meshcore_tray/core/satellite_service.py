@@ -428,6 +428,13 @@ class SatelliteService(QObject):
         self._download_worker.finished_signal.connect(self._on_download_finished)
         self._download_worker.start()
 
+    def refresh_tles(self, force: bool = True):
+        """Spawns background download worker to update TLE sets from CelesTrak.
+
+        Alias for refresh_now() for UI and API compatibility.
+        """
+        self.refresh_now(force=force)
+
     def _on_download_finished(self, tles: List[Dict[str, Any]], success: bool):
         if success and tles and self.storage:
             saved = self.storage.save_satellite_tles(tles)

@@ -4,7 +4,7 @@ from datetime import datetime
 import json
 import logging
 from typing import List, Optional
-from PyQt6.QtCore import Qt, pyqtSignal, QPoint
+from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QTimer
 from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QFont
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QListWidget,
@@ -182,22 +182,27 @@ class Sidebar(QWidget):
                     except Exception:
                         pass
 
+        self._reload_timer = QTimer(self)
+        self._reload_timer.setSingleShot(True)
+        self._reload_timer.setInterval(75)
+        self._reload_timer.timeout.connect(self._do_reload)
+
         self._init_ui()
         self._subscribe_events()
 
     def _subscribe_events(self):
-        bus.subscribe(EventType.MESSAGE_RECEIVED, lambda _: self.reload())
-        bus.subscribe(EventType.READ_STATE_UPDATED, lambda _: self.reload())
-        bus.subscribe(EventType.CHANNELS_UPDATED, lambda _: self.reload())
-        bus.subscribe(EventType.FAVORITES_UPDATED, lambda _: self.reload())
-        bus.subscribe(EventType.SETTINGS_UPDATED, lambda _: self.reload())
-        bus.subscribe(EventType.MAP_NODES_UPDATED, lambda _: self.reload())
-        bus.subscribe(EventType.NODE_DISCOVERED, lambda _: self.reload())
+        bus.subscribe(EventType.MESSAGE_RECEIVED, lambda _: self.reload(immediate=False))
+        bus.subscribe(EventType.READ_STATE_UPDATED, lambda _: self.reload(immediate=False))
+        bus.subscribe(EventType.CHANNELS_UPDATED, lambda _: self.reload(immediate=True))
+        bus.subscribe(EventType.FAVORITES_UPDATED, lambda _: self.reload(immediate=True))
+        bus.subscribe(EventType.SETTINGS_UPDATED, lambda _: self.reload(immediate=True))
+        bus.subscribe(EventType.MAP_NODES_UPDATED, lambda _: self.reload(immediate=False) if getattr(self, "show_contacts", False) else None)
+        bus.subscribe(EventType.NODE_DISCOVERED, lambda _: self.reload(immediate=False) if getattr(self, "show_contacts", False) else None)
 
     def set_active_channel(self, channel_name: str):
         """Sets the currently active channel and updates read/unread styling."""
         self.active_channel = channel_name
-        self.reload()
+        self.reload(immediate=True)
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -475,9 +480,21 @@ class Sidebar(QWidget):
             except Exception as e:
                 logger.debug("Could not backup channel order to SQLite: %s", e)
 
-        self.reload()
+        self.reload(immediate=True)
 
-    def reload(self):
+    def reload(self, immediate: bool = True):
+        """Refreshes channels and contacts with debouncing to prevent UI micro-stutters."""
+        if immediate:
+            if hasattr(self, "_reload_timer") and self._reload_timer.isActive():
+                self._reload_timer.stop()
+            self._do_reload()
+        else:
+            if hasattr(self, "_reload_timer"):
+                self._reload_timer.start()
+            else:
+                self._do_reload()
+
+    def _do_reload(self):
         """Refreshes channels and contacts from storage with grouping, folding, search, and filtering."""
         if hasattr(self, "_last_conn_info") and self._last_conn_info:
             c_conn, c_port, c_mode = self._last_conn_info
@@ -491,195 +508,208 @@ class Sidebar(QWidget):
         self._yellow_star_icon = make_star_icon(fav_user_col)
 
         # Channels: Grouped, foldable, with unread notifications on folded groups
-        self.channel_list.clear()
-        channels = self.storage.get_channels() if self.storage else [
-            ChannelInfo(0, "Public", False, True)
-        ]
+        self.channel_list.setUpdatesEnabled(False)
+        try:
+            self.channel_list.clear()
+            channels = self.storage.get_channels() if self.storage else [
+                ChannelInfo(0, "Public", False, True)
+            ]
 
-        groups_dict: dict[str, list[ChannelInfo]] = {}
-        seen_chans = set()
-        for ch in channels:
-            clean = ch.name.strip().lstrip("#").lower()
-            if clean in seen_chans:
-                continue
-            seen_chans.add(clean)
-            grp = self.config.get_channel_group(ch.name) if self.config else "Channels"
-            if grp not in groups_dict:
-                groups_dict[grp] = []
-            groups_dict[grp].append(ch)
+            groups_dict: dict[str, list[ChannelInfo]] = {}
+            seen_chans = set()
+            for ch in channels:
+                clean = ch.name.strip().lstrip("#").lower()
+                if clean in seen_chans:
+                    continue
+                seen_chans.add(clean)
+                grp = self.config.get_channel_group(ch.name) if self.config else "Channels"
+                if grp not in groups_dict:
+                    groups_dict[grp] = []
+                groups_dict[grp].append(ch)
 
-        saved_group_order = [g.strip().lower() for g in (self.config.get_group_order() if self.config else [])]
-        def _grp_sort_key(g: str):
-            gl = g.strip().lower()
-            if gl in saved_group_order:
-                return (0, saved_group_order.index(gl))
-            if gl == "channels":
-                return (1, -1)
-            return (1, 0, gl)
+            saved_group_order = [g.strip().lower() for g in (self.config.get_group_order() if self.config else [])]
+            def _grp_sort_key(g: str):
+                gl = g.strip().lower()
+                if gl in saved_group_order:
+                    return (0, saved_group_order.index(gl))
+                if gl == "channels":
+                    return (1, -1)
+                return (1, 0, gl)
 
-        group_keys = sorted(groups_dict.keys(), key=_grp_sort_key)
+            group_keys = sorted(groups_dict.keys(), key=_grp_sort_key)
 
-        saved_channel_order = [c.strip().lstrip("#").lower() for c in (self.config.get_channel_order() if self.config else [])]
-        def _chan_sort_key(ch: ChannelInfo):
-            clean = ch.name.strip().lstrip("#").lower()
-            if clean in saved_channel_order:
-                return (0, saved_channel_order.index(clean))
-            is_fav = bool(ch.is_favorite or (self.config and self.config.is_channel_favorite(ch.name)))
-            return (1 if not is_fav else 0, 999999, clean)
+            saved_channel_order = [c.strip().lstrip("#").lower() for c in (self.config.get_channel_order() if self.config else [])]
+            def _chan_sort_key(ch: ChannelInfo):
+                clean = ch.name.strip().lstrip("#").lower()
+                if clean in saved_channel_order:
+                    return (0, saved_channel_order.index(clean))
+                is_fav = bool(ch.is_favorite or (self.config and self.config.is_channel_favorite(ch.name)))
+                return (1 if not is_fav else 0, 999999, clean)
 
-        for grp_name in group_keys:
-            grp_channels = groups_dict[grp_name]
-            grp_unreads = 0
-            for ch in grp_channels:
-                is_active = bool(self.active_channel and ch.name.lower().lstrip("#") == self.active_channel.lower().lstrip("#"))
-                if not is_active and self.storage:
-                    grp_unreads += int(self.storage.get_channel_unread_count(ch.name) or self.storage.get_channel_unread_count(ch.name.lstrip("#")) or 0)
+            chan_unreads_cache = {}
+            def get_unread(c_name: str) -> int:
+                if not self.storage:
+                    return 0
+                key = c_name.lower().lstrip("#")
+                if key not in chan_unreads_cache:
+                    chan_unreads_cache[key] = int(self.storage.get_channel_unread_count(c_name) or self.storage.get_channel_unread_count(key) or 0)
+                return chan_unreads_cache[key]
 
-            is_collapsed = self.config.is_group_collapsed(grp_name) if self.config else False
-
-            # Group header item
-            if is_collapsed:
-                unread_badge = f" ({grp_unreads})" if grp_unreads > 0 else ""
-                header_text = f"▶  {grp_name.upper()}{unread_badge}"
-            else:
-                header_text = f"▼  {grp_name.upper()}"
-
-            grp_item = QListWidgetItem(header_text)
-            grp_font = grp_item.font()
-            grp_font.setBold(True)
-            grp_font.setPointSize(10)
-            grp_item.setFont(grp_font)
-            if is_collapsed and grp_unreads > 0:
-                grp_item.setForeground(QColor("#38BDF8"))
-                grp_item.setToolTip(f"{grp_name} (Folded - {grp_unreads} unread messages. Click to unfold)")
-            else:
-                grp_item.setForeground(QColor("#9CA3AF"))
-                grp_item.setToolTip(f"Click to {'unfold' if is_collapsed else 'fold'} {grp_name}")
-
-            grp_item.setData(Qt.ItemDataRole.UserRole, f"__group__:{grp_name}")
-            grp_item.setData(Qt.ItemDataRole.UserRole + 1, True)
-            self.channel_list.addItem(grp_item)
-
-            if not is_collapsed:
-                grp_channels_sorted = sorted(grp_channels, key=_chan_sort_key)
-
-                for ch in grp_channels_sorted:
-                    is_fav = ch.is_favorite or (self.config and self.config.is_channel_favorite(ch.name))
+            for grp_name in group_keys:
+                grp_channels = groups_dict[grp_name]
+                grp_unreads = 0
+                for ch in grp_channels:
                     is_active = bool(self.active_channel and ch.name.lower().lstrip("#") == self.active_channel.lower().lstrip("#"))
-                    unread = 0 if is_active else (
-                        (self.storage.get_channel_unread_count(ch.name) or self.storage.get_channel_unread_count(ch.name.lstrip("#")) or 0)
-                        if self.storage else 0
-                    )
+                    if not is_active:
+                        grp_unreads += get_unread(ch.name)
 
-                    base_name = ch.name if ch.name.startswith("#") else f"#{ch.name}"
-                    display_name = f"{base_name} ({unread})" if unread > 0 else base_name
+                is_collapsed = self.config.is_group_collapsed(grp_name) if self.config else False
 
-                    if is_fav:
-                        item = QListWidgetItem(f"★ {display_name}")
-                        item.setForeground(QColor(fav_chan_col))
-                        item.setToolTip(f"Favorite Channel: {display_name}" + (f" • {unread} unread" if unread > 0 else ""))
-                    else:
-                        item = QListWidgetItem(display_name)
-                        item.setForeground(QColor("#FFFFFF") if unread > 0 else QColor("#C9D1D9"))
-                        item.setToolTip(f"Channel: {display_name}" + (f" • {unread} unread" if unread > 0 else ""))
+                # Group header item
+                if is_collapsed:
+                    unread_badge = f" ({grp_unreads})" if grp_unreads > 0 else ""
+                    header_text = f"▶  {grp_name.upper()}{unread_badge}"
+                else:
+                    header_text = f"▼  {grp_name.upper()}"
 
-                    if unread > 0:
-                        font = item.font()
-                        font.setBold(True)
-                        item.setFont(font)
+                grp_item = QListWidgetItem(header_text)
+                grp_font = grp_item.font()
+                grp_font.setBold(True)
+                grp_font.setPointSize(10)
+                grp_item.setFont(grp_font)
+                if is_collapsed and grp_unreads > 0:
+                    grp_item.setForeground(QColor("#38BDF8"))
+                    grp_item.setToolTip(f"{grp_name} (Folded - {grp_unreads} unread messages. Click to unfold)")
+                else:
+                    grp_item.setForeground(QColor("#9CA3AF"))
+                    grp_item.setToolTip(f"Click to {'unfold' if is_collapsed else 'fold'} {grp_name}")
 
-                    if is_active:
-                        item.setSelected(True)
+                grp_item.setData(Qt.ItemDataRole.UserRole, f"__group__:{grp_name}")
+                grp_item.setData(Qt.ItemDataRole.UserRole + 1, True)
+                self.channel_list.addItem(grp_item)
 
-                    item.setData(Qt.ItemDataRole.UserRole, ch.name)
-                    item.setData(Qt.ItemDataRole.UserRole + 1, False)
-                    self.channel_list.addItem(item)
+                if not is_collapsed:
+                    grp_channels_sorted = sorted(grp_channels, key=_chan_sort_key)
+
+                    for ch in grp_channels_sorted:
+                        is_fav = ch.is_favorite or (self.config and self.config.is_channel_favorite(ch.name))
+                        is_active = bool(self.active_channel and ch.name.lower().lstrip("#") == self.active_channel.lower().lstrip("#"))
+                        unread = 0 if is_active else get_unread(ch.name)
+
+                        base_name = ch.name if ch.name.startswith("#") else f"#{ch.name}"
+                        display_name = f"{base_name} ({unread})" if unread > 0 else base_name
+
+                        if is_fav:
+                            item = QListWidgetItem(f"★ {display_name}")
+                            item.setForeground(QColor(fav_chan_col))
+                            item.setToolTip(f"Favorite Channel: {display_name}" + (f" • {unread} unread" if unread > 0 else ""))
+                        else:
+                            item = QListWidgetItem(display_name)
+                            item.setForeground(QColor("#FFFFFF") if unread > 0 else QColor("#C9D1D9"))
+                            item.setToolTip(f"Channel: {display_name}" + (f" • {unread} unread" if unread > 0 else ""))
+
+                        if unread > 0:
+                            font = item.font()
+                            font.setBold(True)
+                            item.setFont(font)
+
+                        if is_active:
+                            item.setSelected(True)
+
+                        item.setData(Qt.ItemDataRole.UserRole, ch.name)
+                        item.setData(Qt.ItemDataRole.UserRole + 1, False)
+                        self.channel_list.addItem(item)
+        finally:
+            self.channel_list.setUpdatesEnabled(True)
 
         # Contacts: Filtered by searchbox, sorted by Alpha or Recent, Favorites pinned to the top!
         if not getattr(self, "show_contacts", True):
             return
-        self.contact_list.clear()
-        contacts = self.storage.get_contacts() if self.storage else []
+        self.contact_list.setUpdatesEnabled(False)
+        try:
+            self.contact_list.clear()
+            contacts = self.storage.get_contacts() if self.storage else []
 
-        search_query = self.contact_search.text().strip().lower() if hasattr(self, "contact_search") else ""
-        sort_mode = self.contact_sort.currentData() if hasattr(self, "contact_sort") else "alpha"
+            search_query = self.contact_search.text().strip().lower() if hasattr(self, "contact_search") else ""
+            sort_mode = self.contact_sort.currentData() if hasattr(self, "contact_sort") else "alpha"
 
-        # 1. Search Filtering
-        if search_query:
-            contacts = [
-                c for c in contacts
-                if search_query in c.alias.lower() or search_query in c.node_id.lower()
-            ]
+            # 1. Search Filtering
+            if search_query:
+                contacts = [
+                    c for c in contacts
+                    if search_query in c.alias.lower() or search_query in c.node_id.lower()
+                ]
 
-        # 2. Timestamp Parser for "Most Recent Heard"
-        def parse_ts(ts_str: str) -> float:
-            if not ts_str:
-                return 0.0
-            try:
-                clean = ts_str.replace("Z", "+00:00")
-                return datetime.fromisoformat(clean).timestamp()
-            except Exception:
+            # 2. Timestamp Parser for "Most Recent Heard"
+            def parse_ts(ts_str: str) -> float:
+                if not ts_str:
+                    return 0.0
                 try:
-                    return datetime.strptime(ts_str[:19], "%Y-%m-%dT%H:%M:%S").timestamp()
+                    return datetime.fromisoformat(ts_str.replace("Z", "+00:00")).timestamp()
                 except Exception:
                     return 0.0
 
-        # 3. Sorting: Favorites strictly first, then by Selected Mode
-        if sort_mode == "recent":
-            contacts_sorted = sorted(
-                contacts,
-                key=lambda c: (
-                    not (c.is_favorite or (self.config and self.config.is_user_favorite(c.node_id, c.alias))),
-                    -parse_ts(c.last_seen)
-                )
-            )
-        else:
-            contacts_sorted = sorted(
-                contacts,
-                key=lambda c: (
-                    not (c.is_favorite or (self.config and self.config.is_user_favorite(c.node_id, c.alias))),
-                    c.alias.lower()
-                )
-            )
+            # 3. Partitioning: Favorites (sorted by chosen mode), then Others (sorted by chosen mode)
+            fav_contacts = []
+            other_contacts = []
 
-        for c in contacts_sorted:
-            is_fav = c.is_favorite or (self.config and self.config.is_user_favorite(c.node_id, c.alias))
-            is_room = getattr(c, "is_room_server", False) or is_room_server_contact(c)
-            is_rep = bool(c.is_repeater) and not is_room
-            clean_alias = c.alias.lstrip("@")
+            for c in contacts:
+                is_fav = bool(c.is_favorite or (self.config and self.config.is_user_favorite(c.node_id, c.alias)))
+                if is_fav:
+                    fav_contacts.append(c)
+                else:
+                    other_contacts.append(c)
 
-            if is_room:
-                icon = "◆"
-                tag = " [Room]"
-                tip_type = "Room Server"
-                item_color = QColor("#FF55FF") if is_fav else QColor("#D946EF")
-            elif is_rep:
-                icon = "📡"
-                tag = " [R]"
-                tip_type = "Repeater Node"
-                item_color = QColor(fav_user_col) if is_fav else QColor("#C9D1D9")
+            if sort_mode == "recent":
+                fav_contacts.sort(key=lambda c: parse_ts(c.last_seen), reverse=True)
+                other_contacts.sort(key=lambda c: parse_ts(c.last_seen), reverse=True)
             else:
-                icon = "👤"
-                tag = ""
-                tip_type = "Companion Node"
-                item_color = QColor(fav_user_col) if is_fav else QColor("#C9D1D9")
+                fav_contacts.sort(key=lambda c: (c.alias or c.node_id).lower())
+                other_contacts.sort(key=lambda c: (c.alias or c.node_id).lower())
 
-            last_seen_str = f" • Last heard: {c.last_seen[11:16]}" if c.last_seen and len(c.last_seen) >= 16 else ""
+            # Only show top 50 in sidebar contacts if many
+            sorted_contacts = fav_contacts + other_contacts
 
-            if is_fav:
-                item = QListWidgetItem(f"★ {icon} @{clean_alias}{tag}")
-                item.setIcon(self._yellow_star_icon)
-                item.setForeground(item_color)
-                item.setToolTip(f"Favorite {tip_type}: @{clean_alias} ({c.node_id}){last_seen_str}")
-            else:
-                item = QListWidgetItem(f"{icon} @{clean_alias}{tag}")
-                item.setForeground(item_color)
-                item.setToolTip(f"{tip_type}: @{clean_alias} ({c.node_id}){last_seen_str}")
+            for c in sorted_contacts:
+                clean_alias = c.alias or c.node_id
+                is_rep = bool(getattr(c, "is_repeater", False) or "[rep]" in (c.alias or "").lower())
+                is_room = bool(getattr(c, "is_room_server", False) or is_room_server_contact(c))
+                is_fav = bool(c.is_favorite or (self.config and self.config.is_user_favorite(c.node_id, c.alias)))
 
-            item.setData(Qt.ItemDataRole.UserRole, c.node_id)
-            item.setData(Qt.ItemDataRole.UserRole + 1, is_rep)
-            item.setData(Qt.ItemDataRole.UserRole + 2, is_room)
-            self.contact_list.addItem(item)
+                if is_room:
+                    icon = "◆"
+                    tag = " [Room]"
+                    tip_type = "Room Server"
+                    item_color = QColor("#FF55FF") if is_fav else QColor("#D946EF")
+                elif is_rep:
+                    icon = "📡"
+                    tag = " [R]"
+                    tip_type = "Repeater Node"
+                    item_color = QColor(fav_user_col) if is_fav else QColor("#C9D1D9")
+                else:
+                    icon = "👤"
+                    tag = ""
+                    tip_type = "Companion Node"
+                    item_color = QColor(fav_user_col) if is_fav else QColor("#C9D1D9")
+
+                last_seen_str = f" • Last heard: {c.last_seen[11:16]}" if c.last_seen and len(c.last_seen) >= 16 else ""
+
+                if is_fav:
+                    item = QListWidgetItem(f"★ {icon} @{clean_alias}{tag}")
+                    item.setIcon(self._yellow_star_icon)
+                    item.setForeground(item_color)
+                    item.setToolTip(f"Favorite {tip_type}: @{clean_alias} ({c.node_id}){last_seen_str}")
+                else:
+                    item = QListWidgetItem(f"{icon} @{clean_alias}{tag}")
+                    item.setForeground(item_color)
+                    item.setToolTip(f"{tip_type}: @{clean_alias} ({c.node_id}){last_seen_str}")
+
+                item.setData(Qt.ItemDataRole.UserRole, c.node_id)
+                item.setData(Qt.ItemDataRole.UserRole + 1, is_rep)
+                item.setData(Qt.ItemDataRole.UserRole + 2, is_room)
+                self.contact_list.addItem(item)
+        finally:
+            self.contact_list.setUpdatesEnabled(True)
 
     def _show_channel_context_menu(self, pos: QPoint):
         item = self.channel_list.itemAt(pos)

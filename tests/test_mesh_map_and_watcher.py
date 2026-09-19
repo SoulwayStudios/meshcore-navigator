@@ -1619,6 +1619,80 @@ def test_visualise_message_path_outgoing_and_svg_animation(qapp, tmp_path):
     assert "stroke-dashoffset: -40" in html
 
 
+def test_packet_path_traced_multi_hop_resolution(qapp, tmp_path):
+    """Verifies that _on_packet_path_traced resolves intermediate repeaters into multi-hop coordinates."""
+    from meshcore_tray.storage import Storage
+    from meshcore_tray.config import AppConfig
+    from meshcore_tray.core.models import PacketPathInfo, NodeContact
+    import json
+    from unittest.mock import patch, MagicMock
+
+    storage = Storage(tmp_path / "map_multihop_test.db")
+    config = AppConfig()
+    config.meshcore.latitude = 54.65897
+    config.meshcore.longitude = -3.4346
+    config.meshcore.node_alias = "M7NCY"
+
+    # Save 2 repeaters with GPS
+    storage.save_contact(NodeContact(
+        node_id="rep1_id", alias="Repeater One", is_repeater=True, latitude=54.9000, longitude=-3.8000
+    ))
+    storage.save_contact(NodeContact(
+        node_id="rep2_id", alias="Repeater Two", is_repeater=True, latitude=54.7000, longitude=-3.6000
+    ))
+
+    with patch("meshcore_tray.ui.mesh_map_widget.WEBENGINE_AVAILABLE", False):
+        widget = MeshMapWidget(storage=storage, config=config)
+    widget._page_ready = True
+    widget.run_js = MagicMock()
+
+    # Packet from a GPS-less sender that traversed Repeater One and Repeater Two
+    flood_path = PacketPathInfo(
+        packet_id="path-test-1",
+        sender_id="sender_nogps",
+        sender_name="SenderNoGPS",
+        route_type="FLOOD",
+        payload_type="GRP_TXT",
+        hop_nodes=["@Repeater One", "@Repeater Two"],
+        coordinates=[]  # Empty coordinates from driver!
+    )
+
+    widget._on_packet_path_traced(flood_path)
+
+    # Verify run_js was called with drawPacketPath
+    assert widget.run_js.called
+    calls = [c[0][0] for c in widget.run_js.call_args_list]
+
+    draw_call = next((c for c in calls if "drawPacketPath" in c), None)
+    assert draw_call is not None, f"Expected drawPacketPath call, got: {calls}"
+
+    # Verify intermediate repeaters and local station are in drawPacketPath coordinates
+    assert "54.9" in draw_call
+    assert "-3.8" in draw_call
+    assert "54.7" in draw_call
+    assert "-3.6" in draw_call
+    assert "54.65897" in draw_call
+    assert "-3.4346" in draw_call
+
+    # Verify REQ packet arrives and adds to Live HUD
+    req_path = PacketPathInfo(
+        packet_id="path-req-1",
+        sender_id="mesh",
+        sender_name="RF Packet (REQ)",
+        route_type="FLOOD",
+        payload_type="REQ",
+        hop_nodes=["@Repeater One"],
+        coordinates=[[54.9000, -3.8000]]
+    )
+    widget.run_js.reset_mock()
+    widget._on_packet_path_traced(req_path)
+
+    hud_calls = [c[0][0] for c in widget.run_js.call_args_list if "addPacketToHud" in c[0][0]]
+    assert len(hud_calls) >= 1
+    assert '"payload_type": "REQ"' in hud_calls[0]
+
+
+
 
 
 

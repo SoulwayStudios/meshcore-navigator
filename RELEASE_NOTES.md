@@ -4,7 +4,41 @@
 
 ---
 
-## 🌟 What's New in v0.7.1
+## 🌟 What's New in v0.8.0 (EXPERIMENTAL)
+
+### 🗺️ CoreScope Packet Routing & Multi-Hop Sequential Path Resolution
+- **Sequential Multi-Hop Route Reconstruction**: Reconstructs complete physical travel routes across repeater chains using CoreScope's multi-hop logic (`[Sender] -> [Repeater 1] -> ... -> [Repeater N] -> [Local Station]`).
+- **Wire Request & Trace Ingestion**: Decodes and traces over-the-air `REQ` (Data Request), `ANON_REQ` (Anonymous Request), `PATH` (Path Discovery), `TRACE`, `RESPONSE`, `ADVERT`, and `GRP_TXT` packets on both the live map and packet feed.
+- **Graceful Fallback Routing**: If a transmitting node has no advertised GPS coordinates, the route dynamically starts at the first repeater with known coordinates, ensuring particle animations travel hop-by-hop rather than aborting.
+- **Anti-Collision Hop Resolution**: Strict prefix and exact alias matching preventing short hex hash collisions (e.g. `71`) with node nicknames, guaranteeing accurate identification of intermediate repeaters across Cumbria, South Scotland, and Northern Ireland.
+- **Live Feed Request Filtering**: Quick filter pill `[📥 Requests]` in the Live Feed table with dedicated payload icons (`📥 REQ`, `🛣️ PATH`, `📡 TRACE`, `📢 ADVERT`, `💬 GRP_TXT`, `✅ ACK`).
+
+### 🚀 CoreScope Live Trace Map Engine & Traveling Particle Beams
+- **60 FPS Canvas Particle Renderer**: Native implementation of CoreScope's HTML5 Canvas animation engine on Leaflet map (`animationsPane` at z-index 650).
+- **Contrail Beams & White Leading Dots**: Multi-hop LoRa packet paths now travel sequentially node-to-node with glowing particle beams, white leading photon dots, and 15-second fading route contrails.
+- **Radar Pulse Pings**: Expanding tactical double-ring radar pings at packet origin and destination nodes, with color-coded frequency badges matching packet types.
+
+### 📦 Wire-Level Packet Decoder & Channel Decryptor
+- **Full MeshCore Protocol Decoder**: Direct bitwise parsing of all 13 MeshCore payload types (`ADVERT`, `GRP_TXT`, `TXT_MSG`, `ACK`, `TRACE`, `PATH`, `CONTROL`, etc.), route types, and hop chains.
+- **AES-128-ECB Message Decryption**: Decrypts group messages using standard channel keys (including default `#Public` and SHA-256 hashtag channels) with HMAC-SHA256 message integrity verification.
+- **CoreScope Byte-by-Byte Field Breakdown**: Automatically generates detailed `Offset | Field | Value | Description` tables for any packet.
+
+### ⚡ Live Packet Feed & Byte Inspector (Replaces Heard Floods)
+- **Modern Live Feed Table**: Replaces the old heard floods view with an interactive, filterable packet stream styled with Discord dark aesthetics (`#1E1F22`, `#2B2D31`, `#313338`).
+- **Quick Filter Pills & Search**: Instantly filter by packet type (`[All]`, `[⚡ Floods]`, `[📢 Adverts]`, `[💬 Chat]`, `[📡 Traces]`, `[✅ ACKs]`) or search by node nickname, hex ID, channel, or text content.
+- **Collapsible Byte Inspector Drawer**: Click any packet to inspect its byte structure, decoded payload, and formatted hex dump with a `[📋 Copy Hex]` button.
+- **Interactive BYOP (Bring Your Own Packet) Modal**: Paste raw hex bytes from radio consoles or MQTT logs into the `[📦 Decode Hex]` tool to inspect and map traces in real time.
+
+### 🌐 MQTT Broker Ingest & Gateway Service
+- **Multi-Broker Subscription**: Connects to local or remote MQTT brokers (CoreScope, meshcoretomqtt, or Meshtastic) subscribing to configurable topics (`meshcore/#`, `msh/#`, etc.).
+- **Automatic Ingestion & Deduplication**: Ingests JSON packets and raw binary bytes with a rolling 5-second deduplication cache against local RF radio packets.
+- **Gateway Forwarding Mode**: Option to publish local radio traffic out to MQTT brokers for community network monitoring.
+- **Settings Tab**: Complete graphical controls in Settings for Broker Host, Port, Username, Password, TLS/SSL, Topics, and Gateway publishing.
+
+---
+
+## 📦 Previous Highlights (v0.7.1)
+
 
 ### 🛠️ Bug Fix: Room Server Context Menu
 - **Resolved Right-Click Crash in Room Servers View**: Fixed a missing import (`NameError: name 'QMenu' is not defined` and `QApplication`) in [room_servers_view.py](file:///home/nicky/.gemini/antigravity-ide/scratch/meshcore-pixoo-tray/meshcore_tray/ui/room_servers_view.py).
@@ -24,7 +58,7 @@
 - **Platform Plugin Initialization Fix**: Resolved a critical issue where Windows executables failed to initialize Qt's platform plugin without manual PowerShell environment variables (`QT_QPA_PLATFORM=windows` or `-platform windows`).
 - **Dynamic Platform Detection**: Corrected startup platform initialization in `main.py` to automatically detect Windows (`win32`) and default to the `windows` QPA platform plugin while preserving native Wayland/XCB on Linux and Cocoa on macOS.
 - **PyInstaller Frozen Plugin Discovery**: Integrated automated runtime Qt plugin path resolution (`addLibraryPath`) so bundled `qwindows.dll` and WebEngine binaries load effortlessly.
-- **Dual Executable Aliases**: Included both `MESHCORE-NAVIGATOR.exe` and `MESHCORENAVIGATOR.exe` in the Windows distribution package for universal compatibility across launch shortcuts and scripts.
+- **Single Standalone Executable**: Packaged cleanly with a single canonical executable `MESHCORE-NAVIGATOR.exe` to avoid confusion.
 
 ### 🛰️ Real-Time Satellite Tracking & Pass Prediction
 - **Live Orbital Propagation**: Track the International Space Station (ISS), Tiangong Space Station, NOAA Weather Satellites (NOAA 15/18/19), Meteor-M2 weather series, and amateur radio CubeSats in real time using high-precision SGP4 orbital mechanics and Keplerian two-line element sets (TLEs).

@@ -36,12 +36,24 @@ class Storage:
 
     def __init__(self, db_path: Union[str, Path] = DB_FILE):
         self.db_path = Path(db_path) if db_path else DB_FILE
+        self._contact_by_key_cache: Dict[str, Optional[NodeContact]] = {}
+        self._phantom_nodes_cache: Optional[List[Tuple[str, str]]] = None
         self._init_db()
+
+    def _invalidate_contact_cache(self):
+        if hasattr(self, "_contact_by_key_cache"):
+            self._contact_by_key_cache.clear()
 
     def _get_connection(self) -> sqlite3.Connection:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30.0)
         conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("PRAGMA synchronous = NORMAL;")
+            conn.execute("PRAGMA cache_size = -16000;")
+            conn.execute("PRAGMA temp_store = MEMORY;")
+        except Exception:
+            pass
         return conn
 
     def _init_db(self):
@@ -94,7 +106,8 @@ class Storage:
                     out_path TEXT DEFAULT '',
                     scope_name TEXT DEFAULT '',
                     allowed_regions TEXT DEFAULT '[]',
-                    is_room_server INTEGER DEFAULT 0
+                    is_room_server INTEGER DEFAULT 0,
+                    first_seen TEXT DEFAULT ''
                 )
             """)
 
@@ -112,6 +125,12 @@ class Storage:
                 cursor.execute("ALTER TABLE contacts ADD COLUMN allowed_regions TEXT DEFAULT '[]'")
             if "is_room_server" not in contact_cols:
                 cursor.execute("ALTER TABLE contacts ADD COLUMN is_room_server INTEGER DEFAULT 0")
+            if "first_seen" not in contact_cols:
+                cursor.execute("ALTER TABLE contacts ADD COLUMN first_seen TEXT DEFAULT ''")
+                try:
+                    cursor.execute("UPDATE contacts SET first_seen = '2024-01-01T00:00:00+00:00' WHERE (first_seen IS NULL OR first_seen = '')")
+                except Exception:
+                    pass
 
             # Channels table
             cursor.execute("""
@@ -226,9 +245,23 @@ class Storage:
                     hop_nodes TEXT,
                     hop_snrs TEXT,
                     route_type TEXT,
-                    coordinates TEXT
+                    coordinates TEXT,
+                    payload_type TEXT DEFAULT 'FLOOD',
+                    raw_hex TEXT,
+                    decoded_info TEXT,
+                    source TEXT DEFAULT 'radio'
                 )
             """)
+            p_cols = [c[1] for c in cursor.execute("PRAGMA table_info(packet_paths)").fetchall()]
+            if "payload_type" not in p_cols:
+                cursor.execute("ALTER TABLE packet_paths ADD COLUMN payload_type TEXT DEFAULT 'FLOOD'")
+            if "raw_hex" not in p_cols:
+                cursor.execute("ALTER TABLE packet_paths ADD COLUMN raw_hex TEXT")
+            if "decoded_info" not in p_cols:
+                cursor.execute("ALTER TABLE packet_paths ADD COLUMN decoded_info TEXT")
+            if "source" not in p_cols:
+                cursor.execute("ALTER TABLE packet_paths ADD COLUMN source TEXT DEFAULT 'radio'")
+
 
             # Hop Route Preferences table (user-chosen repeater overrides for prefixes)
             cursor.execute("""
@@ -259,6 +292,18 @@ class Storage:
                     updated_at TEXT
                 )
             """)
+
+            # One-time baseline migration: Mark all currently discovered node states as known (legacy baseline)
+            # so that "new nodes" starts clean from now.
+            cursor.execute("SELECT value FROM app_state WHERE key = 'new_nodes_baseline_v2'")
+            if not cursor.fetchone():
+                try:
+                    cursor.execute("UPDATE contacts SET first_seen = '2024-01-01T00:00:00+00:00'")
+                    cursor.execute(
+                        "INSERT OR REPLACE INTO app_state (key, value, updated_at) VALUES ('new_nodes_baseline_v2', '1', datetime('now'))"
+                    )
+                except Exception:
+                    pass
 
             # Docked Companions table (Companion Orbitals docked to first relay repeater)
             cursor.execute("""
@@ -409,6 +454,21 @@ class Storage:
 
             self._backfill_message_paths(cursor)
             self._backfill_docked_companions(cursor)
+
+            # Enable WAL mode and composite performance indexes
+            try:
+                cursor.execute("PRAGMA journal_mode = WAL")
+            except Exception:
+                pass
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_chan_unread ON messages(channel, is_direct_message, delivery_status)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_dm ON messages(is_direct_message, sender_id, recipient_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp DESC)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_contacts_last_seen ON contacts(last_seen DESC)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_contacts_alias ON contacts(alias)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_contacts_node_id ON contacts(node_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_packet_paths_ts ON packet_paths(timestamp DESC)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_neighbours_ts ON neighbours(last_heard_ts DESC)")
+
             conn.commit()
 
     def backup_database(self, reason: str = "shutdown") -> Optional[Path]:
@@ -809,6 +869,34 @@ class Storage:
     def save_message(self, msg: MessageEnvelope):
         with self._get_connection() as conn:
             cursor = conn.cursor()
+
+            # Precedence rule: Physical RF Radio messages supersede MQTT network messages
+            clean_chan = (msg.channel or "").strip()
+            clean_text = (msg.text or "").strip()
+            if clean_chan and clean_text:
+                if msg.source_driver == "mqtt":
+                    # Drop incoming MQTT message if radio already heard this exact message recently
+                    cursor.execute("""
+                        SELECT id FROM messages
+                        WHERE (source_driver != 'mqtt' OR source_driver IS NULL)
+                          AND (channel = ? OR channel = ? OR channel = ?)
+                          AND text = ?
+                          AND timestamp >= datetime('now', '-120 seconds')
+                        LIMIT 1
+                    """, (clean_chan, clean_chan.lstrip('#'), f"#{clean_chan.lstrip('#')}", clean_text))
+                    if cursor.fetchone():
+                        logger.debug("Dropped MQTT message '%s' on %s because it was already heard over RF radio", clean_text[:20], clean_chan)
+                        return
+                else:
+                    # Physical radio message: remove any earlier MQTT placeholder for the same text
+                    cursor.execute("""
+                        DELETE FROM messages
+                        WHERE source_driver = 'mqtt'
+                          AND (channel = ? OR channel = ? OR channel = ?)
+                          AND text = ?
+                          AND timestamp >= datetime('now', '-120 seconds')
+                    """, (clean_chan, clean_chan.lstrip('#'), f"#{clean_chan.lstrip('#')}", clean_text))
+
             cursor.execute("""
                 INSERT OR REPLACE INTO messages (
                     id, timestamp, source_driver, sender_id, sender_name, is_favorite,
@@ -1146,6 +1234,33 @@ class Storage:
             """, (int(is_pixoo_enabled), channel_name, clean, f"#{clean}"))
             conn.commit()
 
+    def batch_update_channel_preferences(self, prefs: List[Dict[str, Any]]):
+        """Batches updates for channel pixoo_enabled and favorite status in a single atomic transaction."""
+        if not prefs:
+            return
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            for p in prefs:
+                chan_name = p.get("name", "")
+                if not chan_name:
+                    continue
+                clean = chan_name.lstrip("#")
+                is_pix = int(p.get("is_pixoo_enabled", True))
+                is_fav = int(p.get("is_favorite", False))
+                cursor.execute("""
+                    UPDATE channels SET is_pixoo_enabled = ?, is_favorite = ?
+                    WHERE name = ? OR name = ? OR name = ?
+                """, (is_pix, is_fav, chan_name, clean, f"#{clean}"))
+                if cursor.rowcount == 0:
+                    cursor.execute("SELECT MAX(channel_id) as max_id FROM channels")
+                    row = cursor.fetchone()
+                    next_id = (row["max_id"] + 1) if (row and row["max_id"] is not None) else 1
+                    cursor.execute("""
+                        INSERT OR IGNORE INTO channels (channel_id, name, is_favorite, is_pixoo_enabled, last_activity_ts, unread_count)
+                        VALUES (?, ?, ?, ?, '', 0)
+                    """, (next_id, f"#{clean}", is_fav, is_pix))
+            conn.commit()
+
     def get_channels_by_recent_activity(self, prefix: str = "") -> List[ChannelInfo]:
         """Ranked list of channels matching prefix, sorted by most recent activity timestamp."""
         with self._get_connection() as conn:
@@ -1193,8 +1308,23 @@ class Storage:
             out_path=r["out_path"] if ("out_path" in keys and r["out_path"]) else "",
             scope_name=r["scope_name"] if ("scope_name" in keys and r["scope_name"]) else "",
             allowed_regions=allowed_reg,
-            is_room_server=bool(r["is_room_server"]) if ("is_room_server" in keys and r["is_room_server"] is not None) else False
+            is_room_server=bool(r["is_room_server"]) if ("is_room_server" in keys and r["is_room_server"] is not None) else False,
+            first_seen=r["first_seen"] if ("first_seen" in keys and r["first_seen"]) else ""
         )
+
+    def mark_all_contacts_as_known(self) -> int:
+        """Marks all currently recorded contacts as known by setting first_seen to a legacy baseline timestamp.
+        Returns the number of contacts updated."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE contacts SET first_seen = '2024-01-01T00:00:00+00:00'")
+            count = cursor.rowcount
+            cursor.execute(
+                "INSERT OR REPLACE INTO app_state (key, value, updated_at) VALUES ('new_nodes_baseline_v2', '1', datetime('now'))"
+            )
+            conn.commit()
+            self._invalidate_contact_cache()
+            return count
 
     def get_contacts(self) -> List[NodeContact]:
         with self._get_connection() as conn:
@@ -1274,11 +1404,15 @@ class Storage:
                 if cursor.fetchone():
                     is_room_flag = 1
 
+            first_seen = getattr(contact, "first_seen", "") or ""
+            if not first_seen:
+                first_seen = datetime.now(timezone.utc).isoformat()
+
             cursor.execute("""
                 INSERT INTO contacts (
                     node_id, alias, is_favorite, last_seen, public_key, is_repeater, snr_db, rssi_dbm, latitude, longitude,
-                    out_path_len, out_path_hash_mode, out_path, scope_name, allowed_regions, is_room_server
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    out_path_len, out_path_hash_mode, out_path, scope_name, allowed_regions, is_room_server, first_seen
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(node_id) DO UPDATE SET
                     alias = CASE WHEN excluded.alias != '' THEN excluded.alias ELSE contacts.alias END,
                     is_favorite = CASE WHEN excluded.is_favorite != 0 THEN excluded.is_favorite ELSE contacts.is_favorite END,
@@ -1294,7 +1428,8 @@ class Storage:
                     out_path_hash_mode = CASE WHEN excluded.out_path_hash_mode != -1 THEN excluded.out_path_hash_mode ELSE contacts.out_path_hash_mode END,
                     out_path = CASE WHEN excluded.out_path != '' THEN excluded.out_path ELSE contacts.out_path END,
                     scope_name = CASE WHEN excluded.scope_name != '' THEN excluded.scope_name ELSE contacts.scope_name END,
-                    allowed_regions = CASE WHEN excluded.allowed_regions != '[]' AND excluded.allowed_regions != '' THEN excluded.allowed_regions ELSE contacts.allowed_regions END
+                    allowed_regions = CASE WHEN excluded.allowed_regions != '[]' AND excluded.allowed_regions != '' THEN excluded.allowed_regions ELSE contacts.allowed_regions END,
+                    first_seen = CASE WHEN contacts.first_seen IS NOT NULL AND contacts.first_seen != '' THEN contacts.first_seen ELSE excluded.first_seen END
             """, (
                 nid, alias, int(contact.is_favorite), last_seen,
                 pk,
@@ -1306,12 +1441,15 @@ class Storage:
                 sc_name,
                 al_reg_json,
                 is_room_flag,
+                first_seen,
                 1 if update_role else 0,
                 1 if update_role else 0
             ))
             if is_valid_coordinate(lat, lon):
                 cursor.execute("DELETE FROM docked_companions WHERE node_id = ? OR alias = ?", (nid, alias))
             conn.commit()
+        if hasattr(self, "_contact_by_key_cache"):
+            self._contact_by_key_cache.clear()
 
     def save_contacts_bulk(self, contacts: List[NodeContact]):
         """Efficient batch insertion/update of contacts without clobbering existing coordinates."""
@@ -1382,6 +1520,10 @@ class Storage:
                 if not is_room_flag and target_id.lower().lstrip("!@") in cred_ids:
                     is_room_flag = 1
 
+                c_first_seen = getattr(c, "first_seen", "") or ""
+                if not c_first_seen:
+                    c_first_seen = c_last_seen or datetime.now(timezone.utc).isoformat()
+
                 rows.append((
                     target_id, target_alias, int(c.is_favorite), c_last_seen,
                     pk,
@@ -1391,14 +1533,15 @@ class Storage:
                     getattr(c, "out_path", ""),
                     sc_name,
                     al_reg_json,
-                    is_room_flag
+                    is_room_flag,
+                    c_first_seen
                 ))
 
             cursor.executemany("""
                 INSERT INTO contacts (
                     node_id, alias, is_favorite, last_seen, public_key, is_repeater, snr_db, rssi_dbm, latitude, longitude,
-                    out_path_len, out_path_hash_mode, out_path, scope_name, allowed_regions, is_room_server
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    out_path_len, out_path_hash_mode, out_path, scope_name, allowed_regions, is_room_server, first_seen
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(node_id) DO UPDATE SET
                     alias = CASE WHEN excluded.alias != '' THEN excluded.alias ELSE contacts.alias END,
                     is_favorite = CASE WHEN excluded.is_favorite != 0 THEN excluded.is_favorite ELSE contacts.is_favorite END,
@@ -1414,9 +1557,12 @@ class Storage:
                     out_path_hash_mode = CASE WHEN excluded.out_path_hash_mode != -1 THEN excluded.out_path_hash_mode ELSE contacts.out_path_hash_mode END,
                     out_path = CASE WHEN excluded.out_path != '' THEN excluded.out_path ELSE contacts.out_path END,
                     scope_name = CASE WHEN excluded.scope_name != '' THEN excluded.scope_name ELSE contacts.scope_name END,
-                    allowed_regions = CASE WHEN excluded.allowed_regions != '[]' AND excluded.allowed_regions != '' THEN excluded.allowed_regions ELSE contacts.allowed_regions END
+                    allowed_regions = CASE WHEN excluded.allowed_regions != '[]' AND excluded.allowed_regions != '' THEN excluded.allowed_regions ELSE contacts.allowed_regions END,
+                    first_seen = CASE WHEN contacts.first_seen IS NOT NULL AND contacts.first_seen != '' THEN contacts.first_seen ELSE excluded.first_seen END
             """, rows)
             conn.commit()
+        if hasattr(self, "_contact_by_key_cache"):
+            self._contact_by_key_cache.clear()
 
     def save_contact_scope(self, node_id: str, scope_name: str, allowed_regions: Optional[List[str]] = None):
         """Updates scope attribution for a repeater node."""
@@ -1437,6 +1583,7 @@ class Storage:
                     WHERE lower(node_id) = lower(?) OR lower(node_id) = lower(?) OR lower(public_key) LIKE ?
                 """, (scope_name, clean_id, f"!{clean_id}", f"{clean_id}%"))
             conn.commit()
+        self._invalidate_contact_cache()
 
     def discover_scopes_from_text(
         self,
@@ -1754,6 +1901,7 @@ class Storage:
                    OR alias = ? COLLATE NOCASE
             """, (int(is_repeater), raw_id, clean_id, clean_id))
             conn.commit()
+            self._invalidate_contact_cache()
             return updated
 
     def set_contact_room_server_status(self, node_id: str, is_room_server: bool) -> bool:
@@ -1789,6 +1937,7 @@ class Storage:
                    OR alias = ? COLLATE NOCASE
             """, (int(is_room_server), raw_id, clean_id, clean_id))
             conn.commit()
+            self._invalidate_contact_cache()
             return updated
 
     def has_room_credentials(self, node_id: str) -> bool:
@@ -1843,6 +1992,7 @@ class Storage:
                 )
             """)
             conn.commit()
+            self._invalidate_contact_cache()
             contacts = []
             for r in rows:
                 c = self._row_to_contact(r)
@@ -1869,6 +2019,7 @@ class Storage:
                    OR lower(alias) = ?
             """, (clean_id, clean_id, clean_id, clean_id))
             conn.commit()
+            self._invalidate_contact_cache()
 
     def get_room_password(self, node_id: str) -> Optional[str]:
         """Retrieves the saved password for a room server, if any."""
@@ -1892,6 +2043,10 @@ class Storage:
         if not clean_id:
             return None
 
+        cache_key = raw_id.lower()
+        if hasattr(self, "_contact_by_key_cache") and cache_key in self._contact_by_key_cache:
+            return self._contact_by_key_cache[cache_key]
+
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
@@ -1907,7 +2062,12 @@ class Storage:
             """, (raw_id, clean_id, clean_id, raw_id))
             r = cursor.fetchone()
             if r:
-                return self._row_to_contact(r)
+                res = self._row_to_contact(r)
+                if hasattr(self, "_contact_by_key_cache"):
+                    if len(self._contact_by_key_cache) > 2048:
+                        self._contact_by_key_cache.clear()
+                    self._contact_by_key_cache[cache_key] = res
+                return res
 
             # 2. Exact match on alias (case-insensitive, companion/client prioritized over repeater)
             cursor.execute("""
@@ -1919,7 +2079,12 @@ class Storage:
             """, (clean_id, raw_id))
             r = cursor.fetchone()
             if r:
-                return self._row_to_contact(r)
+                res = self._row_to_contact(r)
+                if hasattr(self, "_contact_by_key_cache"):
+                    if len(self._contact_by_key_cache) > 2048:
+                        self._contact_by_key_cache.clear()
+                    self._contact_by_key_cache[cache_key] = res
+                return res
 
             # 3. Exact match on public_key (case-insensitive)
             cursor.execute("""
@@ -1930,7 +2095,12 @@ class Storage:
             """, (clean_id,))
             r = cursor.fetchone()
             if r:
-                return self._row_to_contact(r)
+                res = self._row_to_contact(r)
+                if hasattr(self, "_contact_by_key_cache"):
+                    if len(self._contact_by_key_cache) > 2048:
+                        self._contact_by_key_cache.clear()
+                    self._contact_by_key_cache[cache_key] = res
+                return res
 
             # 4. Prefix match on node_id or public_key (min 4 hex chars, wildcard-escaped)
             if len(clean_id) >= 4 and all(c in "0123456789abcdefABCDEF" for c in clean_id):
@@ -1943,7 +2113,12 @@ class Storage:
                 """, (safe_prefix, safe_prefix))
                 r = cursor.fetchone()
                 if r:
-                    return self._row_to_contact(r)
+                    res = self._row_to_contact(r)
+                    if hasattr(self, "_contact_by_key_cache"):
+                        if len(self._contact_by_key_cache) > 2048:
+                            self._contact_by_key_cache.clear()
+                        self._contact_by_key_cache[cache_key] = res
+                    return res
 
             # 5. Prefix match on alias (min 3 chars, wildcard-escaped, companion first)
             if len(clean_id) >= 3:
@@ -1956,7 +2131,12 @@ class Storage:
                 """, (safe_prefix,))
                 r = cursor.fetchone()
                 if r:
-                    return self._row_to_contact(r)
+                    res = self._row_to_contact(r)
+                    if hasattr(self, "_contact_by_key_cache"):
+                        if len(self._contact_by_key_cache) > 2048:
+                            self._contact_by_key_cache.clear()
+                        self._contact_by_key_cache[cache_key] = res
+                    return res
 
             # 6. Fallback substring match on alias (min 3 chars, wildcard-escaped, companion first)
             if len(clean_id) >= 3:
@@ -1969,8 +2149,17 @@ class Storage:
                 """, (safe_substr,))
                 r = cursor.fetchone()
                 if r:
-                    return self._row_to_contact(r)
+                    res = self._row_to_contact(r)
+                    if hasattr(self, "_contact_by_key_cache"):
+                        if len(self._contact_by_key_cache) > 2048:
+                            self._contact_by_key_cache.clear()
+                        self._contact_by_key_cache[cache_key] = res
+                    return res
 
+            if hasattr(self, "_contact_by_key_cache"):
+                if len(self._contact_by_key_cache) > 2048:
+                    self._contact_by_key_cache.clear()
+                self._contact_by_key_cache[cache_key] = None
             return None
 
     def get_discovered_nodes(self) -> List[dict]:
@@ -2320,6 +2509,7 @@ class Storage:
                 VALUES (?, ?, ?)
             """, (clean_id, alias or "", now_ts))
             conn.commit()
+            self._phantom_nodes_cache = None
             return True
 
     def unmark_phantom_node(self, node_id_or_alias: str) -> bool:
@@ -2334,6 +2524,7 @@ class Storage:
                 WHERE lower(node_id) = ? OR (alias != '' AND lower(alias) = ?)
             """, (clean, clean))
             conn.commit()
+            self._phantom_nodes_cache = None
             return cur.rowcount > 0
 
     def is_phantom_node(self, node_id: str, alias: Optional[str] = None) -> bool:
@@ -2342,25 +2533,25 @@ class Storage:
             return False
         clean_id = (node_id or "").lstrip("!@").strip().lower()
         clean_alias = (alias or "").strip().lower()
-        with self._get_connection() as conn:
-            cur = conn.cursor()
-            # 1. Exact match
-            cur.execute("""
-                SELECT 1 FROM phantom_nodes
-                WHERE lower(node_id) = ? OR (alias != '' AND lower(alias) = ?)
-            """, (clean_id, clean_alias))
-            if cur.fetchone():
+
+        if getattr(self, "_phantom_nodes_cache", None) is None:
+            try:
+                with self._get_connection() as conn:
+                    cur = conn.cursor()
+                    cur.execute("SELECT node_id, alias FROM phantom_nodes")
+                    self._phantom_nodes_cache = [
+                        ((r["node_id"] or "").lstrip("!@").strip().lower(), (r["alias"] or "").strip().lower())
+                        for r in cur.fetchall()
+                    ]
+            except Exception:
+                self._phantom_nodes_cache = []
+
+        for p_id, p_al in self._phantom_nodes_cache:
+            if clean_id and p_id and (clean_id == p_id or clean_id.startswith(p_id) or p_id.startswith(clean_id)):
                 return True
-            # 2. Check prefix matching
-            cur.execute("SELECT node_id, alias FROM phantom_nodes")
-            for r in cur.fetchall():
-                p_id = (r["node_id"] or "").lower()
-                p_al = (r["alias"] or "").lower()
-                if clean_id and p_id and (clean_id.startswith(p_id) or p_id.startswith(clean_id)):
-                    return True
-                if clean_alias and p_al and (clean_alias == p_al or clean_alias.startswith(p_al)):
-                    return True
-            return False
+            if clean_alias and p_al and (clean_alias == p_al or clean_alias.startswith(p_al)):
+                return True
+        return False
 
     def get_all_phantom_nodes(self) -> List[Dict[str, Any]]:
         """Returns all user-marked phantom nodes."""
@@ -2375,6 +2566,7 @@ class Storage:
             cur = conn.cursor()
             cur.execute("DELETE FROM phantom_nodes")
             conn.commit()
+            self._phantom_nodes_cache = None
             return cur.rowcount
 
     @staticmethod
@@ -2401,12 +2593,23 @@ class Storage:
 
         preferred_node_id = self.get_hop_preference(clean_id)
 
+        # Check if clean_id is a short hex hop hash (e.g. 1-byte 'dd' or 2-byte '71cb')
+        is_hex_hash = len(clean_id) <= 4 and all(c in "0123456789abcdef" for c in clean_id)
+
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("""
-                SELECT * FROM contacts
-                WHERE lower(node_id) LIKE ? OR lower(node_id) LIKE ? OR lower(public_key) LIKE ? OR lower(alias) = ? OR lower(alias) LIKE ?
-            """, (f"{clean_id}%", f"!{clean_id}%", f"{clean_id}%", clean_id, f"%{clean_id}%"))
+            if is_hex_hash:
+                # Protocol-valid hop hash: match node_id prefix, public_key prefix, or exact alias
+                cursor.execute("""
+                    SELECT * FROM contacts
+                    WHERE lower(node_id) LIKE ? OR lower(node_id) LIKE ? OR lower(public_key) LIKE ? OR lower(alias) = ?
+                """, (f"{clean_id}%", f"!{clean_id}%", f"{clean_id}%", clean_id))
+            else:
+                # Long identifier or name search: allow alias substring match
+                cursor.execute("""
+                    SELECT * FROM contacts
+                    WHERE lower(node_id) LIKE ? OR lower(node_id) LIKE ? OR lower(public_key) LIKE ? OR lower(alias) = ? OR lower(alias) LIKE ?
+                """, (f"{clean_id}%", f"!{clean_id}%", f"{clean_id}%", clean_id, f"%{clean_id}%"))
             rows = cursor.fetchall()
             if not rows:
                 return None, [], False
@@ -2732,17 +2935,71 @@ class Storage:
 
     def save_packet_path(self, path: PacketPathInfo):
         """Saves a multi-hop message packet path for map visualization."""
+        p_src = (getattr(path, "source", "radio") or "radio").lower()
+        is_radio = (p_src != "mqtt" and not path.packet_id.startswith("mqtt-"))
         with self._get_connection() as conn:
             cursor = conn.cursor()
+
+            raw_hex = (getattr(path, "raw_hex", "") or "").strip().upper()
+            txt = ""
+            if getattr(path, "decoded_info", None) and isinstance(path.decoded_info, dict):
+                txt = str(path.decoded_info.get("text", "") or "").strip()
+
+            if is_radio:
+                # If physical radio path arrives, clean up any matching MQTT path recorded in the last 120s
+                if raw_hex and len(raw_hex) >= 8:
+                    cursor.execute("""
+                        DELETE FROM packet_paths
+                        WHERE (source = 'mqtt' OR packet_id LIKE 'mqtt-%')
+                          AND UPPER(raw_hex) = ?
+                          AND timestamp >= datetime('now', '-120 seconds')
+                    """, (raw_hex,))
+                if txt:
+                    cursor.execute("""
+                        DELETE FROM packet_paths
+                        WHERE (source = 'mqtt' OR packet_id LIKE 'mqtt-%')
+                          AND decoded_info LIKE ?
+                          AND timestamp >= datetime('now', '-120 seconds')
+                    """, (f'%"{txt}"%',))
+            else:
+                # Incoming is MQTT: drop if radio already heard this packet in the last 120s
+                if raw_hex and len(raw_hex) >= 8:
+                    cursor.execute("""
+                        SELECT packet_id FROM packet_paths
+                        WHERE (source != 'mqtt' AND packet_id NOT LIKE 'mqtt-%')
+                          AND UPPER(raw_hex) = ?
+                          AND timestamp >= datetime('now', '-120 seconds')
+                        LIMIT 1
+                    """, (raw_hex,))
+                    if cursor.fetchone():
+                        logger.debug("Dropped MQTT packet path (already recorded from RF radio)")
+                        return
+                if txt:
+                    cursor.execute("""
+                        SELECT packet_id FROM packet_paths
+                        WHERE (source != 'mqtt' AND packet_id NOT LIKE 'mqtt-%')
+                          AND decoded_info LIKE ?
+                          AND timestamp >= datetime('now', '-120 seconds')
+                        LIMIT 1
+                    """, (f'%"{txt}"%',))
+                    if cursor.fetchone():
+                        logger.debug("Dropped MQTT packet path text (already recorded from RF radio)")
+                        return
+
             cursor.execute("""
                 INSERT OR REPLACE INTO packet_paths (
                     packet_id, sender_id, sender_name, recipient_id, timestamp,
-                    hop_nodes, hop_snrs, route_type, coordinates
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    hop_nodes, hop_snrs, route_type, coordinates,
+                    payload_type, raw_hex, decoded_info, source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 path.packet_id, path.sender_id, path.sender_name, path.recipient_id,
                 path.timestamp, json.dumps(path.hop_nodes), json.dumps(path.hop_snrs),
-                path.route_type, json.dumps(path.coordinates)
+                path.route_type, json.dumps(path.coordinates),
+                getattr(path, "payload_type", "FLOOD") or "FLOOD",
+                getattr(path, "raw_hex", "") or "",
+                json.dumps(path.decoded_info) if getattr(path, "decoded_info", None) else None,
+                getattr(path, "source", "radio") or "radio"
             ))
             conn.commit()
 
@@ -2755,8 +3012,19 @@ class Storage:
                 ORDER BY timestamp DESC
                 LIMIT ?
             """, (limit,))
-            return [
-                PacketPathInfo(
+            results = []
+            for r in cursor.fetchall():
+                keys = r.keys() if hasattr(r, "keys") else []
+                p_type = r["payload_type"] if "payload_type" in keys and r["payload_type"] else "FLOOD"
+                r_hex = r["raw_hex"] if "raw_hex" in keys and r["raw_hex"] else ""
+                r_source = r["source"] if "source" in keys and r["source"] else "radio"
+                dec_info = None
+                if "decoded_info" in keys and r["decoded_info"]:
+                    try:
+                        dec_info = json.loads(r["decoded_info"])
+                    except Exception:
+                        pass
+                results.append(PacketPathInfo(
                     packet_id=r["packet_id"],
                     sender_id=r["sender_id"] or "",
                     sender_name=r["sender_name"] or "",
@@ -2765,10 +3033,68 @@ class Storage:
                     hop_nodes=json.loads(r["hop_nodes"]) if r["hop_nodes"] else [],
                     hop_snrs=json.loads(r["hop_snrs"]) if r["hop_snrs"] else [],
                     route_type=r["route_type"] or "FLOOD",
-                    coordinates=json.loads(r["coordinates"]) if r["coordinates"] else []
-                )
-                for r in cursor.fetchall()
-            ]
+                    coordinates=json.loads(r["coordinates"]) if r["coordinates"] else [],
+                    payload_type=p_type,
+                    raw_hex=r_hex,
+                    decoded_info=dec_info,
+                    source=r_source
+                ))
+            return results
+
+    def get_packet_timeline_timestamps(self, hours: int = 24) -> List[float]:
+        """Retrieves list of packet/message timestamps in epoch milliseconds over the given hours window."""
+        timestamps: List[float] = []
+        now_utc = datetime.now(timezone.utc)
+        cutoff_dt = now_utc - timedelta(hours=max(1, hours))
+        cutoff_iso = cutoff_dt.isoformat()
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            # 1. From packet_paths
+            try:
+                cursor.execute("""
+                    SELECT timestamp FROM packet_paths
+                    WHERE timestamp >= ?
+                    ORDER BY timestamp ASC
+                """, (cutoff_iso,))
+                for row in cursor.fetchall():
+                    raw_ts = row["timestamp"]
+                    if raw_ts:
+                        try:
+                            dt = datetime.fromisoformat(str(raw_ts).replace("Z", "+00:00"))
+                            if dt.tzinfo is None:
+                                dt = dt.replace(tzinfo=timezone.utc)
+                            if dt >= cutoff_dt:
+                                timestamps.append(dt.timestamp() * 1000.0)
+                        except Exception:
+                            pass
+            except Exception as e:
+                logger.debug(f"Error querying packet_paths timestamps: {e}")
+
+            # 2. From messages
+            try:
+                cursor.execute("""
+                    SELECT timestamp FROM messages
+                    WHERE timestamp >= ?
+                    ORDER BY timestamp ASC
+                """, (cutoff_iso,))
+                for row in cursor.fetchall():
+                    raw_ts = row["timestamp"]
+                    if raw_ts:
+                        try:
+                            dt = datetime.fromisoformat(str(raw_ts).replace("Z", "+00:00"))
+                            if dt.tzinfo is None:
+                                dt = dt.replace(tzinfo=timezone.utc)
+                            if dt >= cutoff_dt:
+                                timestamps.append(dt.timestamp() * 1000.0)
+                        except Exception:
+                            pass
+            except Exception as e:
+                logger.debug(f"Error querying messages timestamps: {e}")
+
+        timestamps.sort()
+        return timestamps
+
 
     def get_node_activity_counts(self, timeframe_hours: int = 1) -> Dict[str, int]:
         """Aggregates message and packet transit counts per node/repeater over the specified timeframe."""
@@ -2965,6 +3291,8 @@ class Storage:
                    OR ('!' || lower(node_id)) = ?
             """, (clean_id.lower(), clean_id.lower(), clean_id.lower()))
             conn.commit()
+        if hasattr(self, "_contact_by_key_cache"):
+            self._contact_by_key_cache.clear()
 
     def set_contact_favorite(self, node_id: str, is_favorite: bool):
         """Updates favorite status for a contact."""
@@ -2972,6 +3300,8 @@ class Storage:
             cursor = conn.cursor()
             cursor.execute("UPDATE contacts SET is_favorite = ? WHERE node_id = ? OR alias = ?", (int(is_favorite), node_id, node_id))
             conn.commit()
+        if hasattr(self, "_contact_by_key_cache"):
+            self._contact_by_key_cache.clear()
 
     def set_channel_favorite(self, channel_name: str, is_favorite: bool):
         """Updates favorite status for a channel."""
@@ -3033,6 +3363,7 @@ class Storage:
             cursor.execute("UPDATE channels SET is_favorite = 0")
             cursor.execute("UPDATE messages SET is_favorite = 0")
             conn.commit()
+        self._invalidate_contact_cache()
 
     def set_app_state(self, key: str, value: str):
         """Saves an application state key-value pair."""

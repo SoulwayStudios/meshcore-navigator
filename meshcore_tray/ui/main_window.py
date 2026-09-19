@@ -39,15 +39,17 @@ logger = logging.getLogger("meshcore_tray.main_window")
 class MainWindow(QMainWindow):
     """Primary application window featuring Left Navigation Dock, Main Chat & Map, DMs, and Repeaters Views."""
 
-    def __init__(self, config: AppConfig, storage=None, radio_driver=None, pixoo_service=None, gateway=None, parent=None):
+    def __init__(self, config: AppConfig, storage=None, radio_driver=None, pixoo_service=None, gateway=None, mqtt_service=None, parent=None):
         super().__init__(parent)
         self.config = config
         self.storage = storage
         self.radio_driver = radio_driver
         self.pixoo_service = pixoo_service
         self.gateway = gateway
+        self.mqtt_service = mqtt_service
         self._tray_icon = None
         self._is_shutting_down = False
+
         set_global_avatar_style(getattr(self.config, "user_avatar_style", "droid"))
         self._shutdown_completed = False
         self._is_cleaned_up = False
@@ -162,6 +164,7 @@ class MainWindow(QMainWindow):
         self.chat_widget.reply_requested.connect(self._on_reply_requested)
         self.chat_widget.dm_requested.connect(self._on_dm_requested)
         self.chat_widget.visualise_path_requested.connect(self._on_visualise_message_path)
+        self.chat_widget.resend_requested.connect(self._on_resend_message_requested)
         center_chat_layout.addWidget(self.chat_widget, 1)
 
         self.composer = PowerComposer(storage=self.storage, config=self.config)
@@ -200,6 +203,18 @@ class MainWindow(QMainWindow):
         self.mesh_map.search_node_id_toggled.connect(
             lambda active: self.map_layer_dock.set_layer_active("search_node_id", active)
         )
+        if hasattr(self.mesh_map, "packet_hud_toggled"):
+            self.mesh_map.packet_hud_toggled.connect(
+                lambda active: self.map_layer_dock.set_layer_active("packet_hud", active)
+            )
+        if hasattr(self.mesh_map, "activity_timeline_toggled"):
+            self.mesh_map.activity_timeline_toggled.connect(
+                lambda active: self.map_layer_dock.set_layer_active("activity_timeline", active)
+            )
+        if hasattr(self.mesh_map, "map_legend_toggled"):
+            self.mesh_map.map_legend_toggled.connect(
+                lambda active: self.map_layer_dock.set_layer_active("map_legend", active)
+            )
         self.mesh_map.lightning_proximity_alert.connect(self._on_lightning_proximity_alert)
         self.nav_dock.node_filter_changed.connect(self.mesh_map.set_node_filter_mode)
         self.main_splitter.addWidget(self.mesh_map)
@@ -209,7 +224,10 @@ class MainWindow(QMainWindow):
         self.heard_floods_view.flood_hovered.connect(self.mesh_map.preview_packet_path)
         self.heard_floods_view.flood_unhovered.connect(self.mesh_map.clear_preview_packet_path)
         self.heard_floods_view.flood_selected.connect(self._on_visualise_packet_path_info)
+        if hasattr(self.heard_floods_view, "packet_traced"):
+            self.heard_floods_view.packet_traced.connect(self.mesh_map.trigger_corescope_trace)
         self.heard_floods_view.back_to_chat_requested.connect(lambda: self.nav_dock.switch_view("main"))
+
 
         # 1d. Pixoo Preview Panel - Pane 3 (Hidden by default, toggleable in Settings)
         self.pixoo_panel = PixooPreviewWidget(pixoo_service=self.pixoo_service)
@@ -409,34 +427,28 @@ class MainWindow(QMainWindow):
         if view_name == "main":
             if hasattr(self, "sidebar"):
                 self.sidebar.setVisible(True)
-            self.main_stack.setCurrentWidget(self.main_splitter)
             self.center_stack.setCurrentIndex(0)
+            self.main_stack.setCurrentWidget(self.main_splitter)
         elif view_name == "floods":
             if hasattr(self, "sidebar"):
                 self.sidebar.setVisible(False)
-            self.main_stack.setCurrentWidget(self.main_splitter)
             self.center_stack.setCurrentIndex(2)
-            if hasattr(self, "heard_floods_view"):
-                self.heard_floods_view.reload()
+            self.main_stack.setCurrentWidget(self.main_splitter)
         elif view_name == "dms":
             if hasattr(self, "sidebar"):
                 self.sidebar.setVisible(False)
-            self.dms_view.reload_contacts()
             self.main_stack.setCurrentWidget(self.dms_view)
         elif view_name == "rooms":
             if hasattr(self, "sidebar"):
                 self.sidebar.setVisible(False)
-            self.rooms_view.reload_rooms()
             self.main_stack.setCurrentWidget(self.rooms_view)
         elif view_name == "repeaters":
             if hasattr(self, "sidebar"):
                 self.sidebar.setVisible(False)
-            self.repeaters_view.reload_repeaters()
             self.main_stack.setCurrentWidget(self.repeaters_view)
         elif view_name == "satellites":
             if hasattr(self, "sidebar"):
                 self.sidebar.setVisible(False)
-            self.satellites_view.reload_satellites()
             self.main_stack.setCurrentWidget(self.satellites_view)
 
     def _on_dock_layer_toggled(self, layer_key: str, is_active: bool):
@@ -467,6 +479,30 @@ class MainWindow(QMainWindow):
         elif layer_key == "search_node_id":
             if hasattr(self.mesh_map, "set_search_node_id"):
                 self.mesh_map.set_search_node_id(is_active)
+        elif layer_key == "packet_hud":
+            if self.config and hasattr(self.config, "meshcore"):
+                self.config.meshcore.map_show_packet_hud = is_active
+                try:
+                    self.config.save()
+                except Exception:
+                    pass
+            if hasattr(self.mesh_map, "set_packet_hud_visible"):
+                self.mesh_map.set_packet_hud_visible(is_active)
+        elif layer_key == "activity_timeline":
+            if self.config and hasattr(self.config, "meshcore"):
+                self.config.meshcore.map_show_activity_timeline = is_active
+                try:
+                    self.config.save()
+                except Exception:
+                    pass
+            if hasattr(self.mesh_map, "set_activity_timeline_visible"):
+                self.mesh_map.set_activity_timeline_visible(is_active)
+        elif layer_key == "map_legend":
+            if hasattr(self.mesh_map, "set_map_legend_visible"):
+                self.mesh_map.set_map_legend_visible(is_active)
+        elif layer_key == "new_nodes":
+            if hasattr(self.mesh_map, "set_new_nodes"):
+                self.mesh_map.set_new_nodes(is_active)
         elif layer_key == "age_fade":
             if self.config and hasattr(self.config, "meshcore"):
                 self.config.meshcore.node_freshness_fading = is_active
@@ -655,10 +691,6 @@ class MainWindow(QMainWindow):
             self.storage.set_app_state("last_active_channel", channel_name)
         if self.config and hasattr(self.config, "last_active_channel"):
             self.config.last_active_channel = channel_name
-            try:
-                self.config.save()
-            except Exception as e:
-                logger.debug("Failed saving config on channel select: %s", e)
 
     def _on_join_channel(self, raw_channel_name: str):
         raw = raw_channel_name.strip()
@@ -826,6 +858,9 @@ class MainWindow(QMainWindow):
         if hasattr(self, "repeaters_view"):
             self.repeaters_view.reload_repeaters()
         self.chat_widget.reload_messages()
+        if hasattr(self, "mqtt_service") and self.mqtt_service:
+            self.mqtt_service.restart()
+
 
     def _open_settings(self):
         """Opens embedded settings view, hiding channels, chat and map."""
@@ -859,6 +894,16 @@ class MainWindow(QMainWindow):
         if not cur:
             self.composer.input_field.setText(reply_prefix)
         self.composer.focus()
+
+    def _on_resend_message_requested(self, msg: MessageEnvelope):
+        if not msg:
+            return
+        if hasattr(self, "composer"):
+            self.composer.populate_resend(msg.text)
+        if getattr(msg, "is_direct_message", False) or getattr(msg, "recipient_id", None):
+            self._on_send_message("DM", msg.recipient_id, msg.text)
+        else:
+            self._on_send_message(msg.channel or "Public", None, msg.text)
 
     def _on_visualise_message_path(self, msg: MessageEnvelope):
         """Switches to main view and visualises the message's multi-hop path."""
@@ -1040,6 +1085,12 @@ class MainWindow(QMainWindow):
             VersionChecker.get_instance().stop(100)
         except Exception:
             pass
+        if hasattr(self, "mqtt_service") and self.mqtt_service:
+            try:
+                self.mqtt_service.stop()
+            except Exception as e:
+                logger.debug(f"MQTT service stop note: {e}")
+
 
     def closeEvent(self, event):
         """Handles window close. If tray is active and quit is not forced, hide to tray."""

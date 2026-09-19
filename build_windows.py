@@ -33,6 +33,12 @@ def build():
         "--hidden-import=PyQt6.QtNetwork",
         "--hidden-import=qasync",
         "--hidden-import=serial",
+        "--collect-all=Crypto",
+        "--collect-all=paho",
+        "--hidden-import=paho.mqtt.client",
+        "--hidden-import=Crypto.Cipher.AES",
+        "--hidden-import=Crypto.Hash.HMAC",
+        "--hidden-import=Crypto.Hash.SHA256",
         "--hidden-import=serial.tools",
         "--hidden-import=serial.tools.list_ports",
     ]
@@ -42,12 +48,10 @@ def build():
     PyInstaller.__main__.run(args)
 
     dist_dir = os.path.join(script_dir, "dist", "MESHCORE-NAVIGATOR")
-    exe_with_hyphen = os.path.join(dist_dir, "MESHCORE-NAVIGATOR.exe")
     exe_without_hyphen = os.path.join(dist_dir, "MESHCORENAVIGATOR.exe")
-    if os.path.exists(exe_with_hyphen) and not os.path.exists(exe_without_hyphen):
-        import shutil
-        print(f"Creating binary compatibility alias: {exe_without_hyphen}")
-        shutil.copy2(exe_with_hyphen, exe_without_hyphen)
+    if os.path.exists(exe_without_hyphen):
+        print(f"Removing duplicate binary alias: {exe_without_hyphen}")
+        os.remove(exe_without_hyphen)
 
     print("Windows build completed successfully.")
 

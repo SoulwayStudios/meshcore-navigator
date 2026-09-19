@@ -231,6 +231,7 @@ class MessageBubble(QFrame):
     favorite_toggled = pyqtSignal(str, bool) # (sender_name, is_fav)
     user_blocked = pyqtSignal(str)           # (sender_name)
     visualise_path_requested = pyqtSignal(object) # (msg: MessageEnvelope)
+    resend_requested = pyqtSignal(object)         # (msg: MessageEnvelope)
 
     def __init__(self, msg: MessageEnvelope, config=None, storage=None, parent=None):
         super().__init__(parent)
@@ -403,18 +404,24 @@ class MessageBubble(QFrame):
         if not hasattr(self, "repeats_badge"):
             return
         if repeats == 0:
-            self.repeats_badge.setText("🔁 0 repeats heard")
+            self.repeats_badge.setText("🔁 0 repeats heard (Click to resend)")
+            self.repeats_badge.setCursor(Qt.CursorShape.PointingHandCursor)
             self.repeats_badge.setStyleSheet(
-                "background-color: #414143; color: #9CA3AF; border-radius: 4px; padding: 1px 6px; font-size: 10px; font-weight: bold;"
+                "background-color: #374151; color: #FBBF24; border: 1px solid #F59E0B; border-radius: 4px; padding: 1px 6px; font-size: 10px; font-weight: bold;"
             )
-            self.repeats_badge.setToolTip("Sent over LoRa. No repeater rebroadcasts heard yet.")
+            self.repeats_badge.setToolTip("Sent over LoRa. No repeater rebroadcasts heard yet. Click to resend or press Enter in chat!")
+            self.repeats_badge.mousePressEvent = lambda e: self.resend_requested.emit(self.msg)
         elif repeats == 1:
+            self.repeats_badge.setCursor(Qt.CursorShape.ArrowCursor)
+            self.repeats_badge.mousePressEvent = None
             self.repeats_badge.setText("🔁 1 repeat heard")
             self.repeats_badge.setStyleSheet(
                 "background-color: #163828; color: #34D399; border: 1px solid #10B981; border-radius: 4px; padding: 1px 6px; font-size: 10px; font-weight: bold;"
             )
             self.repeats_badge.setToolTip("Heard 1 repeater rebroadcast. Message is getting out!")
         else:
+            self.repeats_badge.setCursor(Qt.CursorShape.ArrowCursor)
+            self.repeats_badge.mousePressEvent = None
             self.repeats_badge.setText(f"🔁 {repeats} repeats heard")
             self.repeats_badge.setStyleSheet(
                 "background-color: #163828; color: #34D399; border: 1px solid #10B981; border-radius: 4px; padding: 1px 6px; font-size: 10px; font-weight: bold;"
@@ -448,6 +455,10 @@ class MessageBubble(QFrame):
                     url_actions.append((act_open_u, "open", u))
                     url_actions.append((act_copy_u, "copy", u))
 
+        act_resend = None
+        if self.msg.is_outgoing and getattr(self.msg, "repeats_heard", 0) == 0:
+            act_resend = menu.addAction("🔁 Resend Message (0 repeats)")
+
         act_reply = menu.addAction(f"💬 Reply to @{self.msg.sender_name}")
         act_dm = menu.addAction(f"✉️ Direct Message @{self.msg.sender_name}")
         act_path = menu.addAction("🗺️ Visualise Path")
@@ -477,7 +488,9 @@ class MessageBubble(QFrame):
                         clip.setText(u)
                 return
 
-        if chosen == act_copy:
+        if act_resend and chosen == act_resend:
+            self.resend_requested.emit(self.msg)
+        elif chosen == act_copy:
             text_to_copy = selected_text if selected_text else html.unescape(self.msg.text)
             clip = QApplication.clipboard()
             if clip:
@@ -542,6 +555,7 @@ class ChatWidget(QWidget):
     reply_requested = pyqtSignal(str)
     dm_requested = pyqtSignal(str)
     visualise_path_requested = pyqtSignal(object) # (msg: MessageEnvelope)
+    resend_requested = pyqtSignal(object)         # (msg: MessageEnvelope)
 
     def __init__(self, storage=None, config=None, parent=None):
         super().__init__(parent)
@@ -558,8 +572,24 @@ class ChatWidget(QWidget):
         self._init_ui()
 
     def _on_settings_updated(self, config):
+        old_config = self.config
         self.config = config
-        self.reload_messages()
+        old_sig = (
+            getattr(old_config, "show_chat_avatars", True) if old_config else None,
+            getattr(old_config, "user_avatar_style", "droid") if old_config else None,
+            tuple(getattr(old_config, "blocked_users", [])) if old_config else None,
+            getattr(old_config.app_colors, "new_messages_bar_color", None) if old_config and hasattr(old_config, "app_colors") else None,
+            getattr(old_config.app_colors, "favorite_user_color", None) if old_config and hasattr(old_config, "app_colors") else None,
+        )
+        new_sig = (
+            getattr(config, "show_chat_avatars", True) if config else None,
+            getattr(config, "user_avatar_style", "droid") if config else None,
+            tuple(getattr(config, "blocked_users", [])) if config else None,
+            getattr(config.app_colors, "new_messages_bar_color", None) if config and hasattr(config, "app_colors") else None,
+            getattr(config.app_colors, "favorite_user_color", None) if config and hasattr(config, "app_colors") else None,
+        )
+        if old_sig != new_sig:
+            self.reload_messages()
 
     def _init_ui(self):
         main_layout = QVBoxLayout(self)
@@ -672,7 +702,7 @@ class ChatWidget(QWidget):
                 messages = self.storage.get_messages(contact_id=self.current_dm)
             else:
                 unread_cnt = self.storage.get_channel_unread_count(self.current_channel)
-                fetch_limit = max(150, unread_cnt + 50)
+                fetch_limit = min(max(60, unread_cnt + 20), 150)
                 messages = self.storage.get_messages(channel=self.current_channel, limit=fetch_limit)
 
         # Filter blocked users
@@ -736,21 +766,25 @@ class ChatWidget(QWidget):
 
         first_unread_widget = None
 
-        for msg in messages:
-            if msg is first_unread_msg:
-                bar_col = getattr(self.config.app_colors, "new_messages_bar_color", "#F85149") if (self.config and hasattr(self.config, "app_colors")) else "#F85149"
-                divider = UnreadDivider(color=bar_col)
-                self.container_layout.addWidget(divider)
-                first_unread_widget = divider
+        self.container.setUpdatesEnabled(False)
+        try:
+            for msg in messages:
+                if msg is first_unread_msg:
+                    bar_col = getattr(self.config.app_colors, "new_messages_bar_color", "#F85149") if (self.config and hasattr(self.config, "app_colors")) else "#F85149"
+                    divider = UnreadDivider(color=bar_col)
+                    self.container_layout.addWidget(divider)
+                    first_unread_widget = divider
 
-            bubble = self._create_bubble(msg)
-            self.container_layout.addWidget(bubble)
+                bubble = self._create_bubble(msg)
+                self.container_layout.addWidget(bubble)
 
-            if msg is first_unread_msg and not first_unread_widget:
-                first_unread_widget = bubble
+                if msg is first_unread_msg and not first_unread_widget:
+                    first_unread_widget = bubble
 
-        self.container_layout.addStretch()
-        self._last_target_widget = first_unread_widget
+            self.container_layout.addStretch()
+            self._last_target_widget = first_unread_widget
+        finally:
+            self.container.setUpdatesEnabled(True)
 
         # Defer marking as read so opening/refreshing doesn't prematurely erase unread position
         if self.storage and messages:
@@ -861,6 +895,7 @@ class ChatWidget(QWidget):
         bubble.favorite_toggled.connect(lambda _n, _f: self.reload_messages())
         bubble.user_blocked.connect(lambda _: self.reload_messages())
         bubble.visualise_path_requested.connect(self.visualise_path_requested.emit)
+        bubble.resend_requested.connect(self.resend_requested.emit)
         if not hasattr(self, "_bubbles"):
             self._bubbles = {}
         self._bubbles[msg.id] = bubble

@@ -384,52 +384,56 @@ class RepeatersViewWidget(QWidget):
         if not self.storage:
             return
 
-        all_contacts = self.storage.get_contacts()
-        query = self.search_input.text().strip().lower()
+        self.repeater_list.setUpdatesEnabled(False)
+        try:
+            all_contacts = self.storage.get_contacts()
+            query = self.search_input.text().strip().lower()
 
-        favorites = []
-        others = []
+            favorites = []
+            others = []
 
-        for c in all_contacts:
-            is_rep = c.is_repeater or "[rep]" in (c.alias or "").lower()
-            if not is_rep:
-                continue
-
-            if query:
-                name_match = c.alias and query in c.alias.lower()
-                id_match = c.node_id and query in c.node_id.lower()
-                if not (name_match or id_match):
+            for c in all_contacts:
+                is_rep = c.is_repeater or "[rep]" in (c.alias or "").lower()
+                if not is_rep:
                     continue
 
-            is_fav = bool(c.is_favorite or (self.config and self.config.is_user_favorite(c.node_id, c.alias or "")))
-            if is_fav:
-                favorites.append((c, is_fav))
-            else:
-                others.append((c, is_fav))
+                if query:
+                    name_match = c.alias and query in c.alias.lower()
+                    id_match = c.node_id and query in c.node_id.lower()
+                    if not (name_match or id_match):
+                        continue
 
-        def get_sort_key(item_tuple):
-            c = item_tuple[0]
-            if self.sort_mode == "recent":
-                ts = getattr(c, "last_seen", None) or getattr(c, "last_heard", None) or ""
-                return str(ts)
-            return (c.alias or c.node_id).lower()
+                is_fav = bool(c.is_favorite or (self.config and self.config.is_user_favorite(c.node_id, c.alias or "")))
+                if is_fav:
+                    favorites.append((c, is_fav))
+                else:
+                    others.append((c, is_fav))
 
-        reverse_sort = (self.sort_mode == "recent")
-        favorites.sort(key=get_sort_key, reverse=reverse_sort)
-        others.sort(key=get_sort_key, reverse=reverse_sort)
+            def get_sort_key(item_tuple):
+                c = item_tuple[0]
+                if self.sort_mode == "recent":
+                    ts = getattr(c, "last_seen", None) or getattr(c, "last_heard", None) or ""
+                    return str(ts)
+                return (c.alias or c.node_id).lower()
 
-        # Add Favorites (no top divider)
-        if favorites:
-            for c, fav in favorites:
-                self._add_row(c, fav)
+            reverse_sort = (self.sort_mode == "recent")
+            favorites.sort(key=get_sort_key, reverse=reverse_sort)
+            others.sort(key=get_sort_key, reverse=reverse_sort)
 
-        # Thin divider between favorites and other repeaters
-        if favorites and others:
-            self._add_thin_divider()
+            # Add Favorites (no top divider)
+            if favorites:
+                for c, fav in favorites:
+                    self._add_row(c, fav)
 
-        if others:
-            for c, fav in others:
-                self._add_row(c, fav)
+            # Thin divider between favorites and other repeaters
+            if favorites and others:
+                self._add_thin_divider()
+
+            if others:
+                for c, fav in others:
+                    self._add_row(c, fav)
+        finally:
+            self.repeater_list.setUpdatesEnabled(True)
 
     def _add_thin_divider(self):
         item = QListWidgetItem()

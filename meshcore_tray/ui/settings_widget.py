@@ -8,7 +8,8 @@ from PyQt6.QtWidgets import (
     QWidget, QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QStackedWidget,
     QScrollArea, QFrame, QLabel, QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox,
     QSlider, QCheckBox, QPushButton, QListWidget, QListWidgetItem,
-    QColorDialog, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox
+    QColorDialog, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
+    QApplication
 )
 from meshcore_tray import __version__, __coffee_url__
 from meshcore_tray.config import AppConfig
@@ -437,6 +438,8 @@ class SettingsWidget(QWidget):
         btn_bar.addWidget(self.btn_save)
         main_layout.addWidget(bottom_bar)
 
+        bus.subscribe(EventType.HARDWARE_CONTACTS_UPDATED, self._on_hardware_contacts_updated)
+
     # --- Tab 1: Node & Radio ---
     def _build_node_tab(self):
         self.tab_node = QWidget()
@@ -582,6 +585,27 @@ class SettingsWidget(QWidget):
         self.chk_autoadd.setChecked(getattr(self.config.meshcore, "autoadd_contacts", True))
         card_proto.add_row("Auto-Add Adverts:", self.chk_autoadd, 160)
 
+        self.chk_auto_prune_hardware = QCheckBox("Automatically prune oldest non-favorite contacts from radio hardware flash (prevents table full)")
+        self.chk_auto_prune_hardware.setChecked(getattr(self.config.meshcore, "auto_prune_hardware_contacts", True))
+        card_proto.add_row("Auto-Prune Flash:", self.chk_auto_prune_hardware, 160)
+
+        hw_widget = QWidget()
+        hw_box = QHBoxLayout(hw_widget)
+        hw_box.setContentsMargins(0, 0, 0, 0)
+        hw_count = getattr(self.radio_driver, "hardware_contacts_count", 0) if self.radio_driver else 0
+        hw_limit = getattr(self.config.meshcore, "hardware_contact_limit", 64)
+        self.lbl_hw_capacity = QLabel(f"📻 Flash Table: {hw_count} / {hw_limit} slots used")
+        self.lbl_hw_capacity.setStyleSheet("color: #FBBF24; font-size: 11px; font-weight: 600;")
+        hw_box.addWidget(self.lbl_hw_capacity)
+
+        self.btn_prune_hw_contacts = QPushButton("🧹 Prune Stale Contacts on Radio Flash")
+        self.btn_prune_hw_contacts.setToolTip("Safely removes oldest non-favorite contacts from the Heltec V3's hardware memory so new contacts can be learned.\nIMPORTANT: Pruned contacts remain 100% saved in your application database and map!")
+        self.btn_prune_hw_contacts.setStyleSheet("background-color: #2D3340; color: #F2F3F5; padding: 4px 10px; font-size: 11px; border-radius: 4px;")
+        self.btn_prune_hw_contacts.clicked.connect(self._on_prune_hardware_clicked)
+        hw_box.addWidget(self.btn_prune_hw_contacts)
+        hw_box.addStretch()
+        card_proto.add_row("Hardware Capacity:", hw_widget, 160)
+
         self.loc_policy_combo = QComboBox()
         self.loc_policy_combo.addItem("Precise Coordinates (Full GPS Broadcast)", 0)
         self.loc_policy_combo.addItem("Approximate / Low Precision Location", 1)
@@ -701,6 +725,8 @@ class SettingsWidget(QWidget):
         self.config.meshcore.tx_power_dbm = tx
         self.config.meshcore.path_hash_mode = path_mode
         self.config.meshcore.autoadd_contacts = autoadd
+        if hasattr(self, "chk_auto_prune_hardware"):
+            self.config.meshcore.auto_prune_hardware_contacts = self.chk_auto_prune_hardware.isChecked()
         self.config.meshcore.advert_loc_policy = loc_policy
         self.config.meshcore.multi_acks = multi_acks
         self.config.meshcore.rx_delay_ms = rx_dly
@@ -728,6 +754,37 @@ class SettingsWidget(QWidget):
         idx = self.port_combo.findData(current)
         if idx >= 0:
             self.port_combo.setCurrentIndex(idx)
+
+    def _on_hardware_contacts_updated(self, data: dict):
+        if not hasattr(self, "lbl_hw_capacity"):
+            return
+        count = data.get("count", 0)
+        limit = data.get("limit", 64)
+        self.lbl_hw_capacity.setText(f"📻 Flash Table: {count} / {limit} slots used")
+
+    def _on_prune_hardware_clicked(self):
+        if not self.radio_driver or not self.radio_driver.is_connected():
+            QMessageBox.information(self, "Radio Offline", "Cannot prune hardware contacts: radio is not connected.")
+            return
+        res = QMessageBox.question(
+            self,
+            "Prune Radio Hardware Contacts",
+            "Are you sure you want to prune stale contacts from your physical Heltec V3's flash memory?\n\n"
+            "• This frees up slots on the radio hardware so new contacts can be discovered over RF.\n"
+            "• Favorites, repeaters, room servers, and contacts heard in the last 48h are protected.\n"
+            "• IMPORTANT: All contacts remain 100% saved in your application database and on your map.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes
+        )
+        if res == QMessageBox.StandardButton.Yes:
+            if hasattr(self.radio_driver, "prune_hardware_contacts_now"):
+                self.radio_driver.prune_hardware_contacts_now()
+                self.btn_prune_hw_contacts.setEnabled(False)
+                self.btn_prune_hw_contacts.setText("🧹 Pruning Radio Flash...")
+                QTimer.singleShot(4000, lambda: (
+                    self.btn_prune_hw_contacts.setEnabled(True),
+                    self.btn_prune_hw_contacts.setText("🧹 Prune Stale Contacts on Radio Flash")
+                ))
 
     # --- Tab 2: Pixoo & Quiet Hours ---
     def _build_pixoo_tab(self):
@@ -992,17 +1049,17 @@ class SettingsWidget(QWidget):
 
         self.btn_col_map_rep = ColorPickerButton(self.config.app_colors.map_repeater_color)
         c2.add_row("📡 Repeater Node Dot Color:", self.btn_col_map_rep, 250)
-        self.btn_col_map_rep_hover = ColorPickerButton(getattr(self.config.app_colors, "map_repeater_hover_color", "#FF55FF"))
+        self.btn_col_map_rep_hover = ColorPickerButton(getattr(self.config.app_colors, "map_repeater_hover_color", "#60A5FA"))
         c2.add_row("📡 Repeater Node Hover Color:", self.btn_col_map_rep_hover, 250)
 
         self.btn_col_map_comp = ColorPickerButton(self.config.app_colors.map_companion_color)
         c2.add_row("👤 Companion Node Dot Color:", self.btn_col_map_comp, 250)
-        self.btn_col_map_comp_hover = ColorPickerButton(getattr(self.config.app_colors, "map_companion_hover_color", "#00FFFF"))
+        self.btn_col_map_comp_hover = ColorPickerButton(getattr(self.config.app_colors, "map_companion_hover_color", "#22D3EE"))
         c2.add_row("👤 Companion Node Hover Color:", self.btn_col_map_comp_hover, 250)
 
-        self.btn_col_map_room = ColorPickerButton(getattr(self.config.app_colors, "map_room_server_color", "#FF00FF"))
+        self.btn_col_map_room = ColorPickerButton(getattr(self.config.app_colors, "map_room_server_color", "#A855F7"))
         c2.add_row("🏢 Room Server Diamond Color:", self.btn_col_map_room, 250)
-        self.btn_col_map_room_hover = ColorPickerButton(getattr(self.config.app_colors, "map_room_server_hover_color", "#FF55FF"))
+        self.btn_col_map_room_hover = ColorPickerButton(getattr(self.config.app_colors, "map_room_server_hover_color", "#C084FC"))
         c2.add_row("🏢 Room Server Hover Color:", self.btn_col_map_room_hover, 250)
 
         self.btn_col_map_orbital_rep = ColorPickerButton(getattr(self.config.app_colors, "map_orbital_repeater_color", "#FFD335"))
@@ -1012,6 +1069,85 @@ class SettingsWidget(QWidget):
         self.chk_freshness.setChecked(getattr(self.config.meshcore, "node_freshness_fading", True))
         c2.add_widget(self.chk_freshness)
         layout.addWidget(c2)
+
+        # Card 2B: Map Base Layer & CARTO Key
+        c_map_tiles = SettingsCard("🗺️ Map Base Layer & CARTO Basemap Key")
+
+        row_base = QHBoxLayout()
+        lbl_base = QLabel("Default Base Map:")
+        lbl_base.setFixedWidth(250)
+        row_base.addWidget(lbl_base)
+        self.combo_map_base = QComboBox()
+        self.combo_map_base.setStyleSheet("""
+            QComboBox {
+                background-color: #2B2F38;
+                color: #FFFFFF;
+                border: 1px solid #414143;
+                border-radius: 4px;
+                padding: 4px 10px;
+                font-size: 11px;
+                min-width: 220px;
+            }
+            QComboBox::drop-down { border: none; }
+            QComboBox QAbstractItemView {
+                background-color: #1E2024;
+                color: #FFFFFF;
+                selection-background-color: #3B82F6;
+            }
+        """)
+        self.combo_map_base.addItem("🌌 CoreScope Dark (Black Land / Grey Sea)", "corescope")
+        self.combo_map_base.addItem("🗺️ Esri Dark Canvas", "canvas")
+        self.combo_map_base.addItem("🏔️ OpenTopoMap Relief", "topo")
+        cur_base = getattr(self.config, "map_base_layer", "canvas")
+        idx_b = self.combo_map_base.findData(cur_base)
+        if idx_b >= 0:
+            self.combo_map_base.setCurrentIndex(idx_b)
+        row_base.addWidget(self.combo_map_base, 1)
+        c_map_tiles.add_layout(row_base)
+
+        row_key = QHBoxLayout()
+        lbl_k = QLabel("CARTO Basemaps API Key:")
+        lbl_k.setFixedWidth(250)
+        row_key.addWidget(lbl_k)
+        self.txt_carto_key = QLineEdit(getattr(self.config, "carto_api_key", ""))
+        self.txt_carto_key.setPlaceholderText("Paste free key from carto.com to remove watermark")
+        self.txt_carto_key.setStyleSheet("""
+            QLineEdit {
+                background-color: #2B2F38;
+                color: #FFFFFF;
+                border: 1px solid #414143;
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 11px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #3B82F6;
+            }
+        """)
+        row_key.addWidget(self.txt_carto_key, 1)
+
+        btn_get_free_key = QPushButton("🌐 Get Free Key")
+        btn_get_free_key.setToolTip("Open carto.com/basemaps/apikey in browser (free, no credit card required)")
+        btn_get_free_key.setStyleSheet("""
+            QPushButton {
+                background-color: #1E3A8A;
+                color: #93C5FD;
+                border: 1px solid #3B82F6;
+                border-radius: 4px;
+                padding: 4px 10px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #2563EB;
+                color: #FFFFFF;
+            }
+        """)
+        btn_get_free_key.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://carto.com/basemaps/apikey")))
+        row_key.addWidget(btn_get_free_key)
+        c_map_tiles.add_layout(row_key)
+
+        layout.addWidget(c_map_tiles)
 
         # Card 3: Trajectory & Status Gradients
         c3 = SettingsCard("⚡ Map Trajectory & Status Gradients")
@@ -1249,6 +1385,10 @@ class SettingsWidget(QWidget):
         c.adsb_dist_mid_close = self.btn_col_adsb_dist_mid_close.current_hex
         c.adsb_dist_mid_far = self.btn_col_adsb_dist_mid_far.current_hex
         c.adsb_dist_far = self.btn_col_adsb_dist_far.current_hex
+        if hasattr(self, "combo_map_base"):
+            self.config.map_base_layer = self.combo_map_base.currentData() or "canvas"
+        if hasattr(self, "txt_carto_key"):
+            self.config.carto_api_key = self.txt_carto_key.text().strip()
 
     def _sync_config_to_color_pickers(self):
         c = self.config.app_colors
@@ -1300,22 +1440,60 @@ class SettingsWidget(QWidget):
             self.combo_adsb_mode.setCurrentIndex(2)
         else:
             self.combo_adsb_mode.setCurrentIndex(0)
+        if hasattr(self, "combo_map_base"):
+            idx_b = self.combo_map_base.findData(getattr(self.config, "map_base_layer", "canvas"))
+            if idx_b >= 0:
+                self.combo_map_base.setCurrentIndex(idx_b)
+        if hasattr(self, "txt_carto_key"):
+            self.txt_carto_key.setText(getattr(self.config, "carto_api_key", ""))
 
     def _on_save_theme_clicked(self):
-        self._sync_color_pickers_to_config()
-        self.config.save()
-        bus.emit(EventType.SETTINGS_UPDATED, self.config)
-        self.theme_status_lbl.setText("💾 Theme successfully saved to config.json and active!")
-        QTimer.singleShot(3000, lambda: self.theme_status_lbl.setText(""))
+        btn = getattr(self, "btn_save_theme", None)
+        orig_txt = btn.text() if btn else ""
+        if btn:
+            btn.setEnabled(False)
+            btn.setText("⏳ Saving...")
+            QApplication.processEvents()
+        try:
+            self._sync_color_pickers_to_config()
+            self.config.save()
+            bus.emit(EventType.SETTINGS_UPDATED, self.config)
+            if btn:
+                btn.setText("✓ Saved!")
+                btn.setStyleSheet("background-color: #059669; color: #FFFFFF; font-weight: bold; border-radius: 4px;")
+            self.theme_status_lbl.setText("💾 Theme successfully saved to config.json and active!")
+            if btn:
+                QTimer.singleShot(1800, lambda: (btn.setText(orig_txt), btn.setStyleSheet(""), btn.setEnabled(True)))
+            QTimer.singleShot(3000, lambda: self.theme_status_lbl.setText(""))
+        except Exception as e:
+            if btn:
+                btn.setText("❌ Error")
+                QTimer.singleShot(2000, lambda: (btn.setText(orig_txt), btn.setStyleSheet(""), btn.setEnabled(True)))
 
     def _on_set_default_theme_clicked(self):
         from dataclasses import asdict
-        self._sync_color_pickers_to_config()
-        self.config.default_app_colors = asdict(self.config.app_colors)
-        self.config.save()
-        bus.emit(EventType.SETTINGS_UPDATED, self.config)
-        self.theme_status_lbl.setText("⭐ Current theme successfully saved as default!")
-        QTimer.singleShot(3000, lambda: self.theme_status_lbl.setText(""))
+        btn = getattr(self, "btn_set_default_theme", None)
+        orig_txt = btn.text() if btn else ""
+        if btn:
+            btn.setEnabled(False)
+            btn.setText("⏳ Saving...")
+            QApplication.processEvents()
+        try:
+            self._sync_color_pickers_to_config()
+            self.config.default_app_colors = asdict(self.config.app_colors)
+            self.config.save()
+            bus.emit(EventType.SETTINGS_UPDATED, self.config)
+            if btn:
+                btn.setText("✓ Saved as Default!")
+                btn.setStyleSheet("background-color: #059669; color: #FFFFFF; font-weight: bold; border-radius: 4px;")
+            self.theme_status_lbl.setText("⭐ Current theme successfully saved as default!")
+            if btn:
+                QTimer.singleShot(1800, lambda: (btn.setText(orig_txt), btn.setStyleSheet(""), btn.setEnabled(True)))
+            QTimer.singleShot(3000, lambda: self.theme_status_lbl.setText(""))
+        except Exception as e:
+            if btn:
+                btn.setText("❌ Error")
+                QTimer.singleShot(2000, lambda: (btn.setText(orig_txt), btn.setStyleSheet(""), btn.setEnabled(True)))
 
     def _on_reset_default_theme_clicked(self):
         from dataclasses import asdict
@@ -1752,8 +1930,189 @@ class SettingsWidget(QWidget):
 
         layout.addWidget(card_sat)
 
+        # MQTT Broker & Feed Card (CoreScope / meshcoretomqtt Ingest)
+        card_mqtt = SettingsCard("📡 MQTT Broker & CoreScope Feed")
+        mqtt_cfg = getattr(self.config, "mqtt", None)
+
+        self.chk_mqtt_enabled = QCheckBox("Enable MQTT Packet Ingest / Gateway")
+        self.chk_mqtt_enabled.setChecked(mqtt_cfg.enabled if mqtt_cfg else False)
+        card_mqtt.add_widget(self.chk_mqtt_enabled)
+
+        m_preset_row = QHBoxLayout()
+        lbl_mpre = QLabel("Public Community Presets:")
+        lbl_mpre.setFixedWidth(180)
+        m_preset_row.addWidget(lbl_mpre)
+        self.combo_mqtt_preset = QComboBox()
+        self.combo_mqtt_preset.addItems([
+            "-- Select an Open MeshCore MQTT Stream --",
+            "Lincomatic MeshCore (mqtt.lincomatic.com:8883 - TLS)",
+            "🇬🇧 IPNet UK MeshCore Observer (mqtt.ipnt.uk:1883)",
+            "🇬🇧 NorthMesh UK MeshCore Network (mqtt.northmesh.co.uk:1883)",
+            "Local Bridge / meshcoretomqtt (localhost:1883)",
+            "EMQX Public Sandbox (broker.emqx.io:1883)"
+        ])
+
+        # Restore saved preset if available, or find matching preset by broker_host
+        saved_preset = getattr(mqtt_cfg, "preset_name", "") if mqtt_cfg else ""
+        match_idx = -1
+        if saved_preset:
+            match_idx = self.combo_mqtt_preset.findText(saved_preset)
+        if match_idx <= 0 and mqtt_cfg and mqtt_cfg.broker_host and mqtt_cfg.broker_host != "localhost":
+            for i in range(1, self.combo_mqtt_preset.count()):
+                if mqtt_cfg.broker_host in self.combo_mqtt_preset.itemText(i):
+                    match_idx = i
+                    break
+        elif match_idx <= 0 and mqtt_cfg and mqtt_cfg.broker_host == "localhost":
+            if mqtt_cfg.broker_port == 1883:
+                for i in range(1, self.combo_mqtt_preset.count()):
+                    if "localhost" in self.combo_mqtt_preset.itemText(i):
+                        match_idx = i
+                        break
+        if match_idx > 0:
+            self.combo_mqtt_preset.blockSignals(True)
+            self.combo_mqtt_preset.setCurrentIndex(match_idx)
+            self.combo_mqtt_preset.blockSignals(False)
+
+        self.combo_mqtt_preset.currentIndexChanged.connect(self._on_mqtt_preset_selected)
+        m_preset_row.addWidget(self.combo_mqtt_preset, 1)
+        card_mqtt.add_layout(m_preset_row)
+
+        m_host_row = QHBoxLayout()
+        lbl_mh = QLabel("Broker Host:")
+        lbl_mh.setFixedWidth(180)
+        m_host_row.addWidget(lbl_mh)
+        self.mqtt_host_input = QLineEdit(mqtt_cfg.broker_host if mqtt_cfg else "localhost")
+        self.mqtt_host_input.setPlaceholderText("localhost or broker.emqx.io")
+        m_host_row.addWidget(self.mqtt_host_input, 1)
+        card_mqtt.add_layout(m_host_row)
+
+        m_port_row = QHBoxLayout()
+        lbl_mp = QLabel("Broker Port:")
+        lbl_mp.setFixedWidth(180)
+        m_port_row.addWidget(lbl_mp)
+        self.mqtt_port_spin = QSpinBox()
+        self.mqtt_port_spin.setRange(1, 65535)
+        self.mqtt_port_spin.setValue(mqtt_cfg.broker_port if mqtt_cfg else 1883)
+        m_port_row.addWidget(self.mqtt_port_spin, 1)
+        card_mqtt.add_layout(m_port_row)
+
+        m_user_row = QHBoxLayout()
+        lbl_mu = QLabel("Username (Optional):")
+        lbl_mu.setFixedWidth(180)
+        m_user_row.addWidget(lbl_mu)
+        self.mqtt_user_input = QLineEdit(mqtt_cfg.username if mqtt_cfg else "")
+        m_user_row.addWidget(self.mqtt_user_input, 1)
+        card_mqtt.add_layout(m_user_row)
+
+        m_pass_row = QHBoxLayout()
+        lbl_mps = QLabel("Password (Optional):")
+        lbl_mps.setFixedWidth(180)
+        m_pass_row.addWidget(lbl_mps)
+        self.mqtt_pass_input = QLineEdit(mqtt_cfg.password if mqtt_cfg else "")
+        self.mqtt_pass_input.setEchoMode(QLineEdit.EchoMode.Password)
+        m_pass_row.addWidget(self.mqtt_pass_input, 1)
+        card_mqtt.add_layout(m_pass_row)
+
+        self.chk_mqtt_tls = QCheckBox("Enable TLS / SSL Connection")
+        self.chk_mqtt_tls.setChecked(mqtt_cfg.use_tls if mqtt_cfg else False)
+        card_mqtt.add_widget(self.chk_mqtt_tls)
+
+        m_top_row = QHBoxLayout()
+        lbl_mt = QLabel("Subscribe Topics (comma-separated):")
+        lbl_mt.setFixedWidth(220)
+        m_top_row.addWidget(lbl_mt)
+        topics_str = ", ".join(mqtt_cfg.subscribe_topics) if (mqtt_cfg and mqtt_cfg.subscribe_topics) else "meshcore/#, meshcore/uk/#"
+        self.mqtt_topics_input = QLineEdit(topics_str)
+        self.mqtt_topics_input.setPlaceholderText("meshcore/#, meshcore/uk/#, meshcoretomqtt/#")
+        m_top_row.addWidget(self.mqtt_topics_input, 1)
+        card_mqtt.add_layout(m_top_row)
+
+        self.chk_mqtt_publish = QCheckBox("Publish Local Radio Packets to MQTT (Gateway Forwarding)")
+        self.chk_mqtt_publish.setChecked(mqtt_cfg.publish_enabled if mqtt_cfg else False)
+        card_mqtt.add_widget(self.chk_mqtt_publish)
+
+        m_pub_row = QHBoxLayout()
+        lbl_mpub = QLabel("Publish Topic:")
+        lbl_mpub.setFixedWidth(180)
+        m_pub_row.addWidget(lbl_mpub)
+        self.mqtt_pub_topic_input = QLineEdit(mqtt_cfg.publish_topic if mqtt_cfg else "meshcore/packets")
+        m_pub_row.addWidget(self.mqtt_pub_topic_input, 1)
+        card_mqtt.add_layout(m_pub_row)
+
+        # Dedicated Save Button for Gateway, Satellites & MQTT
+        save_gate_box = QHBoxLayout()
+        self.btn_save_gateway = QPushButton("💾 Save Gateway & MQTT Settings")
+        self.btn_save_gateway.setObjectName("primaryButton")
+        self.btn_save_gateway.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_save_gateway.clicked.connect(self._save_gateway_and_mqtt)
+        save_gate_box.addWidget(self.btn_save_gateway)
+
+        self.lbl_gateway_status = QLabel("")
+        self.lbl_gateway_status.setStyleSheet("color: #34D399; font-size: 11px; font-weight: bold;")
+        save_gate_box.addWidget(self.lbl_gateway_status)
+        save_gate_box.addStretch()
+        card_mqtt.add_layout(save_gate_box)
+
+        layout.addWidget(card_mqtt)
+
         layout.addStretch()
         return self.tab_gateway
+
+    def _save_gateway_and_mqtt(self):
+        """Dedicated save handler for Gateway, Satellites and MQTT settings."""
+        btn = getattr(self, "btn_save_gateway", None)
+        orig_txt = btn.text() if btn else ""
+        if btn:
+            btn.setEnabled(False)
+            btn.setText("⏳ Saving...")
+            QApplication.processEvents()
+        self._apply_settings(close_on_finish=False)
+        if btn:
+            btn.setText("✓ Saved & Active!")
+            btn.setStyleSheet("background-color: #059669; color: #FFFFFF; font-weight: bold; border-radius: 6px; padding: 6px 16px;")
+        self.lbl_gateway_status.setText("✓ Gateway, Satellite & MQTT settings saved & applied live!")
+        if btn:
+            QTimer.singleShot(2000, lambda: (btn.setText(orig_txt), btn.setStyleSheet(""), btn.setEnabled(True)))
+        QTimer.singleShot(4000, lambda: self.lbl_gateway_status.setText(""))
+
+    def _on_mqtt_preset_selected(self, index: int):
+        """Pre-populates connection parameters for open community MeshCore MQTT brokers."""
+        if index == 1:  # Lincomatic MeshCore Community Broker
+            self.mqtt_host_input.setText("mqtt.lincomatic.com")
+            self.mqtt_port_spin.setValue(8883)
+            self.mqtt_user_input.setText("")
+            self.mqtt_pass_input.setText("")
+            self.chk_mqtt_tls.setChecked(True)
+            self.mqtt_topics_input.setText("meshcore/#, meshcore/+/+/packets")
+        elif index == 2:  # 🇬🇧 IPNet UK MeshCore Observer
+            self.mqtt_host_input.setText("mqtt.ipnt.uk")
+            self.mqtt_port_spin.setValue(1883)
+            self.mqtt_user_input.setText("")
+            self.mqtt_pass_input.setText("")
+            self.chk_mqtt_tls.setChecked(False)
+            self.mqtt_topics_input.setText("meshcore/uk/#, meshcore/#")
+        elif index == 3:  # 🇬🇧 NorthMesh UK MeshCore Network
+            self.mqtt_host_input.setText("mqtt.northmesh.co.uk")
+            self.mqtt_port_spin.setValue(1883)
+            self.mqtt_user_input.setText("")
+            self.mqtt_pass_input.setText("")
+            self.chk_mqtt_tls.setChecked(False)
+            self.mqtt_topics_input.setText("meshcore/uk/#, meshcore/#")
+        elif index == 4:  # Local Ingestor / meshcoretomqtt bridge
+            self.mqtt_host_input.setText("localhost")
+            self.mqtt_port_spin.setValue(1883)
+            self.mqtt_user_input.setText("")
+            self.mqtt_pass_input.setText("")
+            self.chk_mqtt_tls.setChecked(False)
+            self.mqtt_topics_input.setText("meshcore/#, meshcoretomqtt/#")
+        elif index == 5:  # EMQX Public Sandbox
+            self.mqtt_host_input.setText("broker.emqx.io")
+            self.mqtt_port_spin.setValue(1883)
+            self.mqtt_user_input.setText("")
+            self.mqtt_pass_input.setText("")
+            self.chk_mqtt_tls.setChecked(False)
+            self.mqtt_topics_input.setText("meshcore/#")
+
 
     # --- Tab 8: About & Support ---
     def _build_about_tab(self):
@@ -1933,6 +2292,14 @@ class SettingsWidget(QWidget):
     # --- Save & Apply Handler ---
     def _apply_settings(self, close_on_finish: bool = True):
         """Applies all form settings, writes config.json to disk, emits bus event, and updates hardware."""
+        target_btn = getattr(self, "btn_save" if close_on_finish else "btn_apply", None)
+        orig_text = target_btn.text() if target_btn else ""
+        orig_style = target_btn.styleSheet() if target_btn else ""
+        if target_btn:
+            target_btn.setEnabled(False)
+            target_btn.setText("⏳ Saving..." if close_on_finish else "⏳ Applying...")
+            QApplication.processEvents()
+
         # 1. Update Node & Radio
         self.config.meshcore.serial_port = self.port_combo.currentData() or "auto"
         self.config.meshcore.baudrate = self.baud_combo.currentData() or 115200
@@ -1966,18 +2333,23 @@ class SettingsWidget(QWidget):
         self.config.meshcore.tx_power_dbm = tx
         self.config.meshcore.path_hash_mode = path_mode
         self.config.meshcore.autoadd_contacts = autoadd
+        if hasattr(self, "chk_auto_prune_hardware"):
+            self.config.meshcore.auto_prune_hardware_contacts = self.chk_auto_prune_hardware.isChecked()
         self.config.meshcore.advert_loc_policy = loc_policy
         self.config.meshcore.multi_acks = multi_acks
         self.config.meshcore.rx_delay_ms = rx_dly
 
         if self.radio_driver:
-            if new_alias:
-                self.radio_driver.set_node_name(new_alias)
-            self.radio_driver.set_radio_params(freq, bw, sf, cr, tx, path_hash_mode=path_mode)
-            self.radio_driver.set_autoadd_contacts(autoadd)
-            self.radio_driver.set_advert_location_policy(loc_policy)
-            self.radio_driver.set_multi_acks(multi_acks)
-            self.radio_driver.set_tuning_params(rx_delay_ms=rx_dly)
+            try:
+                if new_alias:
+                    self.radio_driver.set_node_name(new_alias)
+                self.radio_driver.set_radio_params(freq, bw, sf, cr, tx, path_hash_mode=path_mode)
+                self.radio_driver.set_autoadd_contacts(autoadd)
+                self.radio_driver.set_advert_location_policy(loc_policy)
+                self.radio_driver.set_multi_acks(multi_acks)
+                self.radio_driver.set_tuning_params(rx_delay_ms=rx_dly)
+            except Exception as e:
+                logger.warning(f"Could not apply radio parameters to hardware: {e}")
 
         # 2. Update Pixoo
         self.config.pixoo.ip_address = self.ip_input.text().strip()
@@ -1997,65 +2369,96 @@ class SettingsWidget(QWidget):
         # 3. Update Channel Filters & Favorites
         new_filters: Dict[str, bool] = {}
         new_favorites = []
-        for row in range(self.channel_table.rowCount()):
-            item = self.channel_table.item(row, 0)
-            if not item:
-                continue
-            chan_name = item.text().lstrip("#")
-            pixoo_chk = self.channel_table.cellWidget(row, 1)
-            fav_chk = self.channel_table.cellWidget(row, 2)
+        batch_prefs = []
+        if hasattr(self, "channel_table"):
+            for row in range(self.channel_table.rowCount()):
+                item = self.channel_table.item(row, 0)
+                if not item:
+                    continue
+                chan_name = item.text().lstrip("#")
+                pixoo_chk = self.channel_table.cellWidget(row, 1)
+                fav_chk = self.channel_table.cellWidget(row, 2)
 
-            is_pix = True
-            if pixoo_chk and isinstance(pixoo_chk, QCheckBox):
-                is_pix = pixoo_chk.isChecked()
+                is_pix = True
+                if pixoo_chk and isinstance(pixoo_chk, QCheckBox):
+                    is_pix = pixoo_chk.isChecked()
                 new_filters[chan_name] = is_pix
-                if self.storage:
-                    self.storage.update_channel_pixoo_enabled(chan_name, is_pix)
 
-            is_fav = False
-            if fav_chk and isinstance(fav_chk, QCheckBox):
-                is_fav = fav_chk.isChecked()
+                is_fav = False
+                if fav_chk and isinstance(fav_chk, QCheckBox):
+                    is_fav = fav_chk.isChecked()
                 if is_fav:
                     new_favorites.append(chan_name)
-            if self.storage:
-                self.storage.set_channel_favorite(chan_name, is_fav)
 
-        self.config.pixoo.channel_filters = new_filters
-        self.config.favorite_channels = new_favorites
-        self.config.favorites = list(new_favorites)
-        bus.emit(EventType.CHANNELS_UPDATED, None)
-        bus.emit(EventType.FAVORITES_UPDATED, None)
+                batch_prefs.append({
+                    "name": chan_name,
+                    "is_pixoo_enabled": is_pix,
+                    "is_favorite": is_fav
+                })
+
+            if self.storage and batch_prefs:
+                try:
+                    self.storage.batch_update_channel_preferences(batch_prefs)
+                except Exception as e:
+                    logger.warning(f"Failed to batch update channel preferences: {e}")
+
+            self.config.pixoo.channel_filters = new_filters
+            self.config.favorite_channels = new_favorites
+            self.config.favorites = list(new_favorites)
+            try:
+                bus.emit(EventType.CHANNELS_UPDATED, None)
+                bus.emit(EventType.FAVORITES_UPDATED, None)
+            except Exception as e:
+                logger.warning(f"Failed to emit channel update events: {e}")
 
         # 4. Update App UI Colors & Map Settings
-        self.config.meshcore.node_freshness_fading = self.chk_freshness.isChecked()
+        if hasattr(self, "chk_freshness"):
+            self.config.meshcore.node_freshness_fading = self.chk_freshness.isChecked()
         self._sync_color_pickers_to_config()
 
         # 5. Update Pixoo Matrix Colors
-        self.config.pixoo_colors.channel_color = self.btn_col_channel.current_hex
-        self.config.pixoo_colors.alert_color = self.btn_col_alert.current_hex
-        self.config.pixoo_colors.message_color = self.btn_col_msg.current_hex
-        self.config.pixoo_colors.background_color = self.btn_col_bg.current_hex
-        self.config.pixoo_colors.sender_color = self.btn_col_sender.current_hex
-        self.config.pixoo_colors.favorite_star_color = self.btn_col_star.current_hex
+        if hasattr(self, "btn_col_channel"):
+            self.config.pixoo_colors.channel_color = self.btn_col_channel.current_hex
+        if hasattr(self, "btn_col_alert"):
+            self.config.pixoo_colors.alert_color = self.btn_col_alert.current_hex
+        if hasattr(self, "btn_col_msg"):
+            self.config.pixoo_colors.message_color = self.btn_col_msg.current_hex
+        if hasattr(self, "btn_col_bg"):
+            self.config.pixoo_colors.background_color = self.btn_col_bg.current_hex
+        if hasattr(self, "btn_col_sender"):
+            self.config.pixoo_colors.sender_color = self.btn_col_sender.current_hex
+        if hasattr(self, "btn_col_star"):
+            self.config.pixoo_colors.favorite_star_color = self.btn_col_star.current_hex
 
         # 6. Update Notifications
-        self.config.notifications.desktop_notifications = self.chk_desktop_notif.isChecked()
-        self.config.notifications.notify_on_node_mentions = self.chk_mention_notif.isChecked()
-        kw_list = []
-        for i in range(self.kw_list.count()):
-            kw_list.append(self.kw_list.item(i).text())
-        self.config.notifications.watched_keywords = kw_list
+        if hasattr(self, "chk_desktop_notif"):
+            self.config.notifications.desktop_notifications = self.chk_desktop_notif.isChecked()
+        if hasattr(self, "chk_mention_notif"):
+            self.config.notifications.notify_on_node_mentions = self.chk_mention_notif.isChecked()
+        if hasattr(self, "kw_list"):
+            kw_list = []
+            for i in range(self.kw_list.count()):
+                kw_list.append(self.kw_list.item(i).text())
+            self.config.notifications.watched_keywords = kw_list
 
         # 7. Update Rotations & Gateway
-        self.config.telemetry.enabled = self.chk_telem_rot.isChecked()
-        self.config.telemetry.interval_mins = self.telem_interval_spin.value()
-        self.config.neighbours.enabled = self.chk_neigh_rot.isChecked()
-        self.config.neighbours.interval_mins = self.neigh_interval_spin.value()
-        self.config.neighbours.source = self.neigh_src_combo.currentData() or "local"
-        self.config.neighbours.target_repeater_node_id = self.target_rep_input.text().strip()
+        if hasattr(self, "chk_telem_rot"):
+            self.config.telemetry.enabled = self.chk_telem_rot.isChecked()
+        if hasattr(self, "telem_interval_spin"):
+            self.config.telemetry.interval_mins = self.telem_interval_spin.value()
+        if hasattr(self, "chk_neigh_rot"):
+            self.config.neighbours.enabled = self.chk_neigh_rot.isChecked()
+        if hasattr(self, "neigh_interval_spin"):
+            self.config.neighbours.interval_mins = self.neigh_interval_spin.value()
+        if hasattr(self, "neigh_src_combo"):
+            self.config.neighbours.source = self.neigh_src_combo.currentData() or "local"
+        if hasattr(self, "target_rep_input"):
+            self.config.neighbours.target_repeater_node_id = self.target_rep_input.text().strip()
 
-        self.config.gateway.http_bridge_enabled = self.chk_gate.isChecked()
-        self.config.gateway.http_port = self.gate_port_spin.value()
+        if hasattr(self, "chk_gate"):
+            self.config.gateway.http_bridge_enabled = self.chk_gate.isChecked()
+        if hasattr(self, "gate_port_spin"):
+            self.config.gateway.http_port = self.gate_port_spin.value()
 
         if hasattr(self, "chk_sat_enabled"):
             self.config.satellites.enabled = self.chk_sat_enabled.isChecked()
@@ -2071,6 +2474,23 @@ class SettingsWidget(QWidget):
             if self.chk_sat_cubesat.isChecked(): grps.append("cubesat")
             self.config.satellites.active_groups = grps or ["stations", "amateur"]
 
+        if hasattr(self, "chk_mqtt_enabled"):
+            self.config.mqtt.enabled = self.chk_mqtt_enabled.isChecked()
+            self.config.mqtt.broker_host = self.mqtt_host_input.text().strip() or "localhost"
+            self.config.mqtt.broker_port = self.mqtt_port_spin.value()
+            self.config.mqtt.username = self.mqtt_user_input.text().strip()
+            self.config.mqtt.password = self.mqtt_pass_input.text()
+            self.config.mqtt.use_tls = self.chk_mqtt_tls.isChecked()
+            raw_topics = self.mqtt_topics_input.text().split(",")
+            self.config.mqtt.subscribe_topics = [t.strip() for t in raw_topics if t.strip()]
+            self.config.mqtt.publish_enabled = self.chk_mqtt_publish.isChecked()
+            self.config.mqtt.publish_topic = self.mqtt_pub_topic_input.text().strip() or "meshcore/packets"
+            if hasattr(self, "combo_mqtt_preset"):
+                if self.combo_mqtt_preset.currentIndex() > 0:
+                    self.config.mqtt.preset_name = self.combo_mqtt_preset.currentText()
+                else:
+                    self.config.mqtt.preset_name = ""
+
         if hasattr(self, "chk_show_splash"):
             self.config.show_splash_screen = self.chk_show_splash.isChecked()
 
@@ -2083,18 +2503,245 @@ class SettingsWidget(QWidget):
         if hasattr(self, "combo_avatar_style"):
             new_style = self.combo_avatar_style.currentData() or "droid"
             self.config.user_avatar_style = new_style
-            from meshcore_tray.ui.avatar_generator import set_global_avatar_style
-            set_global_avatar_style(new_style)
+            try:
+                from meshcore_tray.ui.avatar_generator import set_global_avatar_style
+                set_global_avatar_style(new_style)
+            except Exception as e:
+                logger.warning(f"Failed to set global avatar style: {e}")
 
         # Save to disk
-        self.config.save()
-        bus.emit(EventType.SETTINGS_UPDATED, self.config)
+        try:
+            self.config.save()
+            logger.info("Successfully saved AppConfig to disk.")
 
-        if close_on_finish:
-            self.accept()
-        else:
-            self.apply_status_lbl.setText("✓ Saved to config.json & applied live!")
-            QTimer.singleShot(3000, lambda: self.apply_status_lbl.setText(""))
+            try:
+                bus.emit(EventType.SETTINGS_UPDATED, self.config)
+            except Exception as e:
+                logger.warning(f"Failed to emit SETTINGS_UPDATED event: {e}")
+
+            success_style = """
+                QPushButton {
+                    background-color: #059669;
+                    color: #FFFFFF;
+                    font-weight: bold;
+                    border: 1px solid #10B981;
+                    border-radius: 6px;
+                    padding: 6px 16px;
+                }
+            """
+            if close_on_finish:
+                if hasattr(self, "btn_save"):
+                    self.btn_save.setStyleSheet(success_style)
+                    self.btn_save.setText("✓ Saved!")
+                if hasattr(self, "apply_status_lbl"):
+                    self.apply_status_lbl.setText("✓ Settings saved to disk and applied live!")
+                QTimer.singleShot(450, self.accept)
+            else:
+                if hasattr(self, "btn_apply"):
+                    self.btn_apply.setStyleSheet(success_style)
+                    self.btn_apply.setText("✓ Applied!")
+                if hasattr(self, "apply_status_lbl"):
+                    self.apply_status_lbl.setText("✓ Saved to config.json & applied live!")
+                    QTimer.singleShot(3000, lambda: self.apply_status_lbl.setText(""))
+
+                def _restore_apply():
+                    try:
+                        if hasattr(self, "btn_apply"):
+                            self.btn_apply.setText(orig_text)
+                            self.btn_apply.setStyleSheet(orig_style)
+                            self.btn_apply.setEnabled(True)
+                    except Exception:
+                        pass
+                QTimer.singleShot(1800, _restore_apply)
+        except Exception as err:
+            logger.error(f"Failed to write config.json to disk: {err}", exc_info=True)
+            if target_btn:
+                target_btn.setStyleSheet("background-color: #DC2626; color: #FFFFFF;")
+                target_btn.setText("❌ Error")
+                QTimer.singleShot(2500, lambda: (target_btn.setText(orig_text), target_btn.setStyleSheet(orig_style), target_btn.setEnabled(True)))
+            if hasattr(self, "apply_status_lbl"):
+                self.apply_status_lbl.setText(f"❌ Error: {err}")
+
+    def _load_settings_into_form(self):
+        """Populates all UI input widgets with the latest values from self.config."""
+        try:
+            # 1. Radio & Node
+            if hasattr(self, "port_combo"):
+                idx = self.port_combo.findData(self.config.meshcore.serial_port)
+                if idx >= 0:
+                    self.port_combo.setCurrentIndex(idx)
+            if hasattr(self, "baud_combo"):
+                idx = self.baud_combo.findData(self.config.meshcore.baudrate)
+                if idx >= 0:
+                    self.baud_combo.setCurrentIndex(idx)
+            if hasattr(self, "mode_combo"):
+                idx = self.mode_combo.findData(self.config.meshcore.connection_type)
+                if idx >= 0:
+                    self.mode_combo.setCurrentIndex(idx)
+            if hasattr(self, "alias_input"):
+                self.alias_input.setText(self.config.meshcore.node_alias or "")
+            if hasattr(self, "node_id_input"):
+                self.node_id_input.setText(self.config.meshcore.node_id or "")
+            if hasattr(self, "home_lat_input") and hasattr(self, "home_lon_input"):
+                self.home_lat_input.setValue(self.config.meshcore.latitude)
+                self.home_lon_input.setValue(self.config.meshcore.longitude)
+            if hasattr(self, "preset_combo"):
+                idx = self.preset_combo.findText(self.config.meshcore.radio_preset)
+                if idx >= 0:
+                    self.preset_combo.setCurrentIndex(idx)
+            if hasattr(self, "freq_spin"):
+                self.freq_spin.setValue(self.config.meshcore.frequency_mhz)
+            if hasattr(self, "bw_combo"):
+                idx = self.bw_combo.findData(self.config.meshcore.bandwidth_khz)
+                if idx >= 0:
+                    self.bw_combo.setCurrentIndex(idx)
+            if hasattr(self, "sf_combo"):
+                idx = self.sf_combo.findData(self.config.meshcore.spreading_factor)
+                if idx >= 0:
+                    self.sf_combo.setCurrentIndex(idx)
+            if hasattr(self, "cr_combo"):
+                idx = self.cr_combo.findData(self.config.meshcore.coding_rate)
+                if idx >= 0:
+                    self.cr_combo.setCurrentIndex(idx)
+            if hasattr(self, "tx_spin"):
+                self.tx_spin.setValue(self.config.meshcore.tx_power_dbm)
+            if hasattr(self, "path_mode_combo"):
+                idx = self.path_mode_combo.findData(self.config.meshcore.path_hash_mode)
+                if idx >= 0:
+                    self.path_mode_combo.setCurrentIndex(idx)
+            if hasattr(self, "chk_autoadd"):
+                self.chk_autoadd.setChecked(self.config.meshcore.autoadd_contacts)
+            if hasattr(self, "chk_auto_prune_hardware"):
+                self.chk_auto_prune_hardware.setChecked(getattr(self.config.meshcore, "auto_prune_hardware_contacts", True))
+            if hasattr(self, "loc_policy_combo"):
+                idx = self.loc_policy_combo.findData(self.config.meshcore.advert_loc_policy)
+                if idx >= 0:
+                    self.loc_policy_combo.setCurrentIndex(idx)
+            if hasattr(self, "chk_multi_acks"):
+                self.chk_multi_acks.setChecked(self.config.meshcore.multi_acks)
+            if hasattr(self, "rx_delay_spin"):
+                self.rx_delay_spin.setValue(self.config.meshcore.rx_delay_ms)
+
+            # 2. Pixoo
+            if hasattr(self, "ip_input"):
+                self.ip_input.setText(self.config.pixoo.ip_address)
+            if hasattr(self, "bright_slider"):
+                self.bright_slider.setValue(self.config.pixoo.brightness)
+            if hasattr(self, "alert_dur_spin"):
+                self.alert_dur_spin.setValue(self.config.pixoo.alert_duration_secs)
+            if hasattr(self, "flash_count_spin"):
+                self.flash_count_spin.setValue(self.config.pixoo.flash_count)
+            if hasattr(self, "page_dur_spin"):
+                self.page_dur_spin.setValue(self.config.pixoo.page_duration_secs)
+            if hasattr(self, "chk_show_live_mirror"):
+                self.chk_show_live_mirror.setChecked(self.config.pixoo.show_live_mirror)
+            if hasattr(self, "chk_quiet"):
+                self.chk_quiet.setChecked(self.config.quiet_hours.enabled)
+            if hasattr(self, "quiet_start"):
+                self.quiet_start.setText(self.config.quiet_hours.start_time)
+            if hasattr(self, "quiet_end"):
+                self.quiet_end.setText(self.config.quiet_hours.end_time)
+            if hasattr(self, "quiet_mode"):
+                idx = self.quiet_mode.findData(self.config.quiet_hours.action)
+                if idx >= 0:
+                    self.quiet_mode.setCurrentIndex(idx)
+
+            # 3. App Colors & Map
+            if hasattr(self, "chk_freshness"):
+                self.chk_freshness.setChecked(self.config.meshcore.node_freshness_fading)
+            if hasattr(self, "_sync_config_to_color_pickers"):
+                self._sync_config_to_color_pickers()
+            if hasattr(self, "combo_map_base"):
+                cur_layer = getattr(self.config, "map_base_layer", "canvas")
+                idx = self.combo_map_base.findData(cur_layer)
+                if idx >= 0:
+                    self.combo_map_base.setCurrentIndex(idx)
+            if hasattr(self, "txt_carto_key"):
+                self.txt_carto_key.setText(getattr(self.config, "carto_api_key", ""))
+
+            # 4. Pixoo Colors
+            if hasattr(self, "btn_col_channel"):
+                self.btn_col_channel.set_color(self.config.pixoo_colors.channel_color)
+            if hasattr(self, "btn_col_alert"):
+                self.btn_col_alert.set_color(self.config.pixoo_colors.alert_color)
+            if hasattr(self, "btn_col_msg"):
+                self.btn_col_msg.set_color(self.config.pixoo_colors.message_color)
+            if hasattr(self, "btn_col_bg"):
+                self.btn_col_bg.set_color(self.config.pixoo_colors.background_color)
+            if hasattr(self, "btn_col_sender"):
+                self.btn_col_sender.set_color(self.config.pixoo_colors.sender_color)
+            if hasattr(self, "btn_col_star"):
+                self.btn_col_star.set_color(self.config.pixoo_colors.favorite_star_color)
+
+            # 5. Notifications
+            if hasattr(self, "chk_desktop_notif"):
+                self.chk_desktop_notif.setChecked(self.config.notifications.desktop_notifications)
+            if hasattr(self, "chk_mention_notif"):
+                self.chk_mention_notif.setChecked(self.config.notifications.notify_on_node_mentions)
+
+            # 6. Rotations & Gateway
+            if hasattr(self, "chk_telem_rot"):
+                self.chk_telem_rot.setChecked(self.config.telemetry.enabled)
+            if hasattr(self, "telem_interval_spin"):
+                self.telem_interval_spin.setValue(self.config.telemetry.interval_mins)
+            if hasattr(self, "chk_neigh_rot"):
+                self.chk_neigh_rot.setChecked(self.config.neighbours.enabled)
+            if hasattr(self, "neigh_interval_spin"):
+                self.neigh_interval_spin.setValue(self.config.neighbours.interval_mins)
+            if hasattr(self, "neigh_src_combo"):
+                idx = self.neigh_src_combo.findData(self.config.neighbours.source)
+                if idx >= 0:
+                    self.neigh_src_combo.setCurrentIndex(idx)
+            if hasattr(self, "target_rep_input"):
+                self.target_rep_input.setText(self.config.neighbours.target_repeater_node_id)
+            if hasattr(self, "chk_gate"):
+                self.chk_gate.setChecked(self.config.gateway.http_bridge_enabled)
+            if hasattr(self, "gate_port_spin"):
+                self.gate_port_spin.setValue(self.config.gateway.http_port)
+
+            # Satellites
+            if hasattr(self, "chk_sat_enabled"):
+                sat_cfg = getattr(self.config, "satellites", None)
+                if sat_cfg:
+                    self.chk_sat_enabled.setChecked(sat_cfg.enabled)
+                    self.chk_sat_footprints.setChecked(sat_cfg.show_footprints)
+                    self.chk_sat_tracks.setChecked(sat_cfg.show_ground_tracks)
+                    self.sat_interval_spin.setValue(sat_cfg.update_interval_hours)
+                    self.sat_min_el_spin.setValue(sat_cfg.min_pass_elevation_deg)
+                    grps = sat_cfg.active_groups or []
+                    self.chk_sat_stations.setChecked("stations" in grps)
+                    self.chk_sat_amateur.setChecked("amateur" in grps)
+                    self.chk_sat_weather.setChecked("weather" in grps)
+                    self.chk_sat_cubesat.setChecked("cubesat" in grps)
+
+            # MQTT
+            if hasattr(self, "chk_mqtt_enabled"):
+                mqtt_cfg = getattr(self.config, "mqtt", None)
+                if mqtt_cfg:
+                    self.chk_mqtt_enabled.setChecked(mqtt_cfg.enabled)
+                    self.mqtt_host_input.setText(mqtt_cfg.broker_host or "localhost")
+                    self.mqtt_port_spin.setValue(mqtt_cfg.broker_port or 1883)
+                    self.mqtt_user_input.setText(mqtt_cfg.username or "")
+                    self.mqtt_pass_input.setText(mqtt_cfg.password or "")
+                    self.chk_mqtt_tls.setChecked(mqtt_cfg.use_tls)
+                    self.mqtt_topics_input.setText(", ".join(mqtt_cfg.subscribe_topics or []))
+                    self.chk_mqtt_publish.setChecked(mqtt_cfg.publish_enabled)
+                    self.mqtt_pub_topic_input.setText(mqtt_cfg.publish_topic or "meshcore/packets")
+
+            # General / Startup
+            if hasattr(self, "chk_show_splash"):
+                self.chk_show_splash.setChecked(getattr(self.config, "show_splash_screen", True))
+            if hasattr(self, "chk_check_updates"):
+                self.chk_check_updates.setChecked(getattr(self.config, "check_updates_on_startup", True))
+            if hasattr(self, "chk_show_chat_avatars"):
+                self.chk_show_chat_avatars.setChecked(getattr(self.config, "show_chat_avatars", True))
+            if hasattr(self, "combo_avatar_style"):
+                style = getattr(self.config, "user_avatar_style", "droid")
+                idx = self.combo_avatar_style.findData(style)
+                if idx >= 0:
+                    self.combo_avatar_style.setCurrentIndex(idx)
+        except Exception as e:
+            logger.error(f"Error loading settings into form: {e}", exc_info=True)
 
     def _save_and_close(self):
         """Saves and closes the dialog/view."""
@@ -2122,7 +2769,8 @@ class SettingsWidget(QWidget):
         self.show()
 
     def reload(self):
-        """Refreshes dynamic settings tabs such as hop preferences and channel tables."""
+        """Refreshes dynamic settings tabs such as hop preferences, channel tables, and form inputs."""
+        self._load_settings_into_form()
         if hasattr(self, "_refresh_hop_preferences_ui"):
             self._refresh_hop_preferences_ui()
         if hasattr(self, "_refresh_phantom_nodes_ui"):

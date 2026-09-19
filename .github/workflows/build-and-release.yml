@@ -42,7 +42,7 @@ jobs:
       - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install PyQt6 PyQt6-WebEngine qasync pyserial pillow requests packaging pytest pytest-asyncio
+          pip install PyQt6 PyQt6-WebEngine qasync pyserial pillow requests packaging pytest pytest-asyncio pycryptodome paho-mqtt
           pip install -e ./vendor/pixoo
           pip install -e ./vendor/meshcore_py
 
@@ -101,7 +101,7 @@ jobs:
       - name: Install Dependencies & PyInstaller
         run: |
           python -m pip install --upgrade pip
-          pip install PyQt6 PyQt6-WebEngine qasync pyserial pillow requests packaging pyinstaller
+          pip install PyQt6 PyQt6-WebEngine qasync pyserial pillow requests packaging pyinstaller pycryptodome paho-mqtt
           pip install -e ./vendor/pixoo
           pip install -e ./vendor/meshcore_py
 
@@ -112,6 +112,10 @@ jobs:
       - name: Compress Windows Package
         shell: pwsh
         run: |
+          if (Test-Path "dist/MESHCORE-NAVIGATOR/MESHCORENAVIGATOR.exe") {
+            Remove-Item "dist/MESHCORE-NAVIGATOR/MESHCORENAVIGATOR.exe" -Force
+          }
+          Get-ChildItem -Path dist/MESHCORE-NAVIGATOR -Filter *.exe | ForEach-Object { Write-Host "Package root executable: $($_.Name)" }
           Compress-Archive -Path dist/MESHCORE-NAVIGATOR -DestinationPath dist/meshcore-navigator-windows-x64.zip -Force
 
       - name: Upload Windows Artifact

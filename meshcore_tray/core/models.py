@@ -192,6 +192,7 @@ class NodeContact:
     out_path: str = ""
     scope_name: Optional[str] = None
     allowed_regions: Optional[List[str]] = field(default_factory=list)
+    first_seen: str = field(default_factory=current_iso_time)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -258,6 +259,10 @@ class PacketPathInfo:
     hop_snrs: List[float] = field(default_factory=list)          # SNR at each hop
     route_type: str = "FLOOD"                                    # "DIRECT", "FLOOD", "ROUTED"
     coordinates: List[List[float]] = field(default_factory=list) # [[lat, lon], ...] along the path
+    payload_type: str = "FLOOD"                                  # e.g. "GRP_TXT", "ADVERT", "ACK", "TRACE"
+    raw_hex: str = ""                                            # Raw packet bytes if captured
+    decoded_info: Optional[Dict[str, Any]] = None                # Structured decoder payload
+    source: str = "radio"                                        # "radio" (local hardware LoRa) or "mqtt" (network broker)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

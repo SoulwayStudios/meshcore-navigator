@@ -235,3 +235,31 @@ def test_mesh_map_satellite_layer_toggle(ensure_qapp):
     finally:
         if os.path.exists(db_path):
             os.unlink(db_path)
+
+
+def test_satellite_service_refresh_tles_alias(ensure_qapp, monkeypatch):
+    """Verifies that SatelliteService.refresh_tles exists and delegates to refresh_now."""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
+        db_path = tf.name
+    try:
+        storage = Storage(db_path)
+        cfg = AppConfig()
+        svc = SatelliteService(storage=storage, config=cfg)
+
+        called = []
+        monkeypatch.setattr(svc, "refresh_now", lambda force=False: called.append(force))
+
+        assert hasattr(svc, "refresh_tles")
+        svc.refresh_tles()
+        assert len(called) == 1
+        assert called[0] is True
+
+        svc.refresh_tles(force=False)
+        assert len(called) == 2
+        assert called[1] is False
+
+        svc.stop()
+    finally:
+        if os.path.exists(db_path):
+            os.unlink(db_path)
+

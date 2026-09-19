@@ -36,6 +36,14 @@ LAYER_SVGS = {
     "satellites": '<rect x="9" y="8" width="6" height="7" rx="1" stroke="{color}" stroke-width="1.8" fill="none"/><rect x="2" y="9" width="5" height="5" stroke="{color}" stroke-width="1.5" fill="none"/><line x1="7" y1="11.5" x2="9" y2="11.5" stroke="{color}" stroke-width="1.5"/><rect x="17" y="9" width="5" height="5" stroke="{color}" stroke-width="1.5" fill="none"/><line x1="15" y1="11.5" x2="17" y2="11.5" stroke="{color}" stroke-width="1.5"/><line x1="12" y1="8" x2="12" y2="4" stroke="{color}" stroke-width="1.5"/><circle cx="12" cy="3" r="1" fill="{color}"/><path d="M8 18a5 5 0 0 0 8 0M6 21a8 8 0 0 0 12 0" stroke="{color}" stroke-width="1.6" stroke-linecap="round" fill="none"/>',
     # Search Node IDs: Vector magnifying glass with center mesh node dot
     "search_node_id": '<circle cx="11" cy="11" r="7" stroke="{color}" stroke-width="1.8" fill="none"/><line x1="16.5" y1="16.5" x2="22" y2="22" stroke="{color}" stroke-width="2" stroke-linecap="round"/><circle cx="11" cy="11" r="2" fill="{color}"/>',
+    # Live Packet Feed HUD: Terminal window card with live activity stream lines
+    "packet_hud": '<rect x="3" y="4" width="18" height="16" rx="2" stroke="{color}" stroke-width="1.8" fill="none"/><line x1="7" y1="8" x2="17" y2="8" stroke="{color}" stroke-width="1.8" stroke-linecap="round"/><line x1="7" y1="12" x2="13" y2="12" stroke="{color}" stroke-width="1.8" stroke-linecap="round"/><line x1="7" y1="16" x2="11" y2="16" stroke="{color}" stroke-width="1.8" stroke-linecap="round"/><circle cx="16.5" cy="15.5" r="1.5" fill="{color}"/>',
+    # Network Activity Timeline: Bar histogram over time with playhead scrubber
+    "activity_timeline": '<rect x="3" y="4" width="18" height="16" rx="2" stroke="{color}" stroke-width="1.8" fill="none"/><line x1="6" y1="16" x2="6" y2="13" stroke="{color}" stroke-width="1.8" stroke-linecap="round"/><line x1="9" y1="16" x2="9" y2="10" stroke="{color}" stroke-width="1.8" stroke-linecap="round"/><line x1="12" y1="16" x2="12" y2="7" stroke="{color}" stroke-width="1.8" stroke-linecap="round"/><line x1="15" y1="16" x2="15" y2="11" stroke="{color}" stroke-width="1.8" stroke-linecap="round"/><line x1="18" y1="16" x2="18" y2="14" stroke="{color}" stroke-width="1.8" stroke-linecap="round"/>',
+    # Map Legend: Card outline with color bullet list items
+    "map_legend": '<rect x="3" y="4" width="18" height="16" rx="2" stroke="{color}" stroke-width="1.8" fill="none"/><circle cx="7" cy="8" r="1.5" fill="{color}"/><line x1="11" y1="8" x2="17" y2="8" stroke="{color}" stroke-width="1.5" stroke-linecap="round"/><circle cx="7" cy="12" r="1.5" fill="{color}"/><line x1="11" y1="12" x2="17" y2="12" stroke="{color}" stroke-width="1.5" stroke-linecap="round"/><circle cx="7" cy="16" r="1.5" fill="{color}"/><line x1="11" y1="16" x2="17" y2="16" stroke="{color}" stroke-width="1.5" stroke-linecap="round"/>',
+    # Newly Discovered Nodes: Waving hand greeting glyph (Friendly "Hello / New Node" wave)
+    "new_nodes": '<path d="M7.5 11.5V5.5a1.8 1.8 0 0 1 3.6 0v5M11.1 5.5a1.8 1.8 0 0 1 3.6 0v5M14.7 7a1.8 1.8 0 0 1 3.6 0v5.5c0 4.2-3 7-7.2 7S4 16.7 4 12.5v-2a1.8 1.8 0 0 1 3.5 0v3" stroke="{color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M19 4a4.5 4.5 0 0 1 2.2 4M17.5 1.5a7.5 7.5 0 0 1 4 6.5" stroke="{color}" stroke-width="1.5" stroke-linecap="round" fill="none"/>',
 }
 
 # Primary navigation action bar vector glyphs (white inactive, glowing emerald active)
@@ -63,7 +71,10 @@ def create_layer_icon(icon_name: str, active: bool = False) -> Optional[QIcon]:
     if not inner_svg:
         return None
     try:
-        color = "#34D399" if active else "#FFFFFF"
+        if icon_name == "new_nodes" and active:
+            color = "#FFD700"
+        else:
+            color = "#34D399" if active else "#FFFFFF"
         svg_str = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">{inner_svg.format(color=color)}</svg>'
         renderer = QSvgRenderer(QByteArray(svg_str.encode("utf-8")))
         pix = QPixmap(32, 32)
@@ -71,11 +82,15 @@ def create_layer_icon(icon_name: str, active: bool = False) -> Optional[QIcon]:
         painter = QPainter(pix)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         if active:
-            # Subtle radial glowing emerald halo
             glow = QRadialGradient(16, 16, 13)
-            glow.setColorAt(0.0, QColor(52, 211, 153, 90))
-            glow.setColorAt(0.6, QColor(16, 185, 129, 35))
-            glow.setColorAt(1.0, QColor(16, 185, 129, 0))
+            if icon_name == "new_nodes":
+                glow.setColorAt(0.0, QColor(255, 215, 0, 110))
+                glow.setColorAt(0.6, QColor(218, 165, 32, 45))
+                glow.setColorAt(1.0, QColor(218, 165, 32, 0))
+            else:
+                glow.setColorAt(0.0, QColor(52, 211, 153, 90))
+                glow.setColorAt(0.6, QColor(16, 185, 129, 35))
+                glow.setColorAt(1.0, QColor(16, 185, 129, 0))
             painter.setBrush(QBrush(glow))
             painter.setPen(Qt.PenStyle.NoPen)
             painter.drawEllipse(2, 2, 28, 28)
@@ -273,8 +288,14 @@ class LayerButton(QPushButton):
             "satellites": "satellites",
             "🔍": "search_node_id",
             "search_node_id": "search_node_id",
+            "packet_hud": "packet_hud",
+            "activity_timeline": "activity_timeline",
+            "map_legend": "map_legend",
+            "🎨": "map_legend",
+            "new_nodes": "new_nodes",
+            "👋": "new_nodes",
         }
-        return mapping.get(text)
+        return mapping.get(text) or (text if text in LAYER_SVGS else None)
 
     def _on_toggled(self, checked: bool):
         self._update_style(checked)
@@ -287,22 +308,40 @@ class LayerButton(QPushButton):
                 self.setText("")
             else:
                 self.setText(self.raw_text)
-            self.setStyleSheet("""
-                QPushButton {
-                    background: qlineargradient(x1:0, y1:0, x2:0.8, y2:1, stop:0 #064E3B, stop:1 #022C22);
-                    color: #34D399;
-                    border: 1.5px solid #10B981;
-                    border-radius: 14px;
-                    font-size: 18px;
-                    padding: 0px;
-                    text-align: center;
-                }
-                QPushButton:hover {
-                    background: qlineargradient(x1:0, y1:0, x2:0.8, y2:1, stop:0 #047857, stop:1 #064E3B);
-                    border-color: #34D399;
-                    color: #FFFFFF;
-                }
-            """)
+            if self.icon_name == "new_nodes":
+                self.setStyleSheet("""
+                    QPushButton {
+                        background: qlineargradient(x1:0, y1:0, x2:0.8, y2:1, stop:0 #78350F, stop:1 #451A03);
+                        color: #FFD700;
+                        border: 1.5px solid #F59E0B;
+                        border-radius: 14px;
+                        font-size: 18px;
+                        padding: 0px;
+                        text-align: center;
+                    }
+                    QPushButton:hover {
+                        background: qlineargradient(x1:0, y1:0, x2:0.8, y2:1, stop:0 #B45309, stop:1 #78350F);
+                        border-color: #FCD34D;
+                        color: #FFFFFF;
+                    }
+                """)
+            else:
+                self.setStyleSheet("""
+                    QPushButton {
+                        background: qlineargradient(x1:0, y1:0, x2:0.8, y2:1, stop:0 #064E3B, stop:1 #022C22);
+                        color: #34D399;
+                        border: 1.5px solid #10B981;
+                        border-radius: 14px;
+                        font-size: 18px;
+                        padding: 0px;
+                        text-align: center;
+                    }
+                    QPushButton:hover {
+                        background: qlineargradient(x1:0, y1:0, x2:0.8, y2:1, stop:0 #047857, stop:1 #064E3B);
+                        border-color: #34D399;
+                        color: #FFFFFF;
+                    }
+                """)
         else:
             if self._icon_inactive:
                 self.setIcon(self._icon_inactive)
@@ -480,9 +519,10 @@ class MapLayerDockWidget(QWidget):
         layout.addWidget(self.btn_space_weather)
 
         # 12. Satellite Tracking (ISS, Ham, Weather, Cubesats)
+        init_sats = getattr(self.config.satellites, "enabled", False) if (self.config and hasattr(self.config, "satellites")) else False
         self.btn_satellites = LayerButton("satellites", "Satellite Tracking (ISS, Ham, Weather, Cubesats)", parent=self)
-        self.btn_satellites.setChecked(False)
-        self.btn_satellites.toggled.connect(lambda ch: self.layer_toggled.emit("satellites", ch))
+        self.btn_satellites.setChecked(init_sats)
+        self.btn_satellites.toggled.connect(self._on_satellites_toggled)
         layout.addWidget(self.btn_satellites)
 
         # 13. Search Node IDs (Byte / Prefix Match)
@@ -490,6 +530,32 @@ class MapLayerDockWidget(QWidget):
         self.btn_search_node_id.setChecked(False)
         self.btn_search_node_id.toggled.connect(lambda ch: self.layer_toggled.emit("search_node_id", ch))
         layout.addWidget(self.btn_search_node_id)
+
+        # 14. Live Packet Feed HUD Overlay
+        self.btn_packet_hud = LayerButton("packet_hud", "Live Packet Feed HUD Overlay (CoreScope Map Ticker)", parent=self)
+        init_hud = getattr(self.config.meshcore, "map_show_packet_hud", False) if (self.config and hasattr(self.config, "meshcore")) else False
+        self.btn_packet_hud.setChecked(init_hud)
+        self.btn_packet_hud.toggled.connect(lambda ch: self.layer_toggled.emit("packet_hud", ch))
+        layout.addWidget(self.btn_packet_hud)
+
+        # 15. Network Activity Timeline (Bottom Split View)
+        self.btn_activity_timeline = LayerButton("activity_timeline", "Network Activity Timeline (CoreScope Bottom Split)", parent=self)
+        init_timeline = getattr(self.config.meshcore, "map_show_activity_timeline", False) if (self.config and hasattr(self.config, "meshcore")) else False
+        self.btn_activity_timeline.setChecked(init_timeline)
+        self.btn_activity_timeline.toggled.connect(lambda ch: self.layer_toggled.emit("activity_timeline", ch))
+        layout.addWidget(self.btn_activity_timeline)
+
+        # 16. Map Legend Overlay (CoreScope Colors & Roles)
+        self.btn_map_legend = LayerButton("map_legend", "Map Legend (Packet Types & Node Roles)", parent=self)
+        self.btn_map_legend.setChecked(False)
+        self.btn_map_legend.toggled.connect(lambda ch: self.layer_toggled.emit("map_legend", ch))
+        layout.addWidget(self.btn_map_legend)
+
+        # 17. Newly Discovered Nodes View (Gold Highlight & Waving Hand)
+        self.btn_new_nodes = LayerButton("new_nodes", "Newly Discovered Nodes (Gold Highlight & Waving Hand Discovery View)", parent=self)
+        self.btn_new_nodes.setChecked(False)
+        self.btn_new_nodes.toggled.connect(lambda ch: self.layer_toggled.emit("new_nodes", ch))
+        layout.addWidget(self.btn_new_nodes)
 
         layout.addStretch()
 
@@ -508,12 +574,25 @@ class MapLayerDockWidget(QWidget):
             "space_weather": self.btn_space_weather,
             "satellites": self.btn_satellites,
             "search_node_id": self.btn_search_node_id,
+            "packet_hud": self.btn_packet_hud,
+            "activity_timeline": self.btn_activity_timeline,
+            "map_legend": self.btn_map_legend,
+            "new_nodes": self.btn_new_nodes,
         }
         btn = mapping.get(layer_key)
         if btn:
             btn.blockSignals(True)
             btn.setChecked(bool(is_active))
             btn.blockSignals(False)
+
+    def _on_satellites_toggled(self, is_active: bool):
+        if self.config and hasattr(self.config, "satellites"):
+            self.config.satellites.enabled = bool(is_active)
+            try:
+                self.config.save()
+            except Exception:
+                pass
+        self.layer_toggled.emit("satellites", is_active)
 
 
 class NavDockWidget(QWidget):
@@ -560,6 +639,8 @@ class NavDockWidget(QWidget):
         self.btn_rf_los = self.map_layers.btn_rf_los
         self.btn_space_weather = self.map_layers.btn_space_weather
         self.btn_satellites = self.map_layers.btn_satellites
+        self.btn_packet_hud = self.map_layers.btn_packet_hud
+        self.btn_activity_timeline = self.map_layers.btn_activity_timeline
 
         self.map_layers.layer_toggled.connect(self.layer_toggled.emit)
         self.map_layers.node_filter_changed.connect(self.node_filter_changed.emit)

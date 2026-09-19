@@ -50,9 +50,13 @@ class MeshcoreConfig:
     map_show_adsb: bool = False
     map_show_rf_los: bool = False
     map_show_space_weather: bool = False
+    map_show_packet_hud: bool = False
+    map_show_activity_timeline: bool = False
+    map_timeline_scope_hours: int = 24
     space_weather_opacity: float = 0.60
     space_weather_poll_interval_min: int = 15
-    map_base_layer: str = "canvas"  # "canvas" or "topo"
+    map_base_layer: str = "canvas"  # "corescope", "canvas", or "topo"
+    carto_api_key: str = ""  # Free key from https://carto.com/basemaps/apikey for CoreScope Dark tiles
     adsb_radius_nm: int = 50
     adsb_target_node_id: str = ""
     adsb_target_alias: str = ""
@@ -61,6 +65,12 @@ class MeshcoreConfig:
     advert_loc_policy: int = 0  # 0 = Precise GPS, 1 = Approximate, 2 = Private / None
     multi_acks: bool = False
     rx_delay_ms: int = 0
+    # Hardware contact management for radio flash memory
+    auto_prune_hardware_contacts: bool = True
+    hardware_contact_limit: int = 64
+    hardware_prune_threshold: int = 52
+    hardware_prune_target_free: int = 15
+    map_new_nodes_timeframe_hours: int = 72
 
 
 @dataclass
@@ -70,12 +80,12 @@ class AppColors:
     send_button_color: str = "#00FF7F"
     send_button_text_color: str = "#000000"
     new_messages_bar_color: str = "#00FF7F"
-    map_repeater_color: str = "#AA55FF"
-    map_repeater_hover_color: str = "#FF55FF"
-    map_companion_color: str = "#00FF7F"
-    map_companion_hover_color: str = "#00FFFF"
-    map_room_server_color: str = "#FF00FF"
-    map_room_server_hover_color: str = "#FF55FF"
+    map_repeater_color: str = "#3B82F6"
+    map_repeater_hover_color: str = "#60A5FA"
+    map_companion_color: str = "#06B6D4"
+    map_companion_hover_color: str = "#22D3EE"
+    map_room_server_color: str = "#A855F7"
+    map_room_server_hover_color: str = "#C084FC"
     map_watcher_line_start: str = "#AA55FF"
     map_watcher_line_end: str = "#67397A"
     map_message_line_start: str = "#00FFFF"
@@ -192,9 +202,27 @@ class SatelliteConfig:
 
 
 @dataclass
+class MqttConfig:
+    enabled: bool = False
+    broker_host: str = "localhost"
+    broker_port: int = 1883
+    username: str = ""
+    password: str = ""
+    use_tls: bool = False
+    client_id: str = ""
+    subscribe_topics: List[str] = field(default_factory=lambda: ["meshcore/#", "meshcore/uk/#", "meshcoretomqtt/#"])
+    publish_enabled: bool = False
+    publish_topic: str = "meshcore/packets"
+    dedup_window_secs: float = 5.0
+    preset_name: str = ""
+
+
+@dataclass
 class AppConfig:
     meshcore: MeshcoreConfig = field(default_factory=MeshcoreConfig)
     satellites: SatelliteConfig = field(default_factory=SatelliteConfig)
+    mqtt: MqttConfig = field(default_factory=MqttConfig)
+
     pixoo_colors: PixooColors = field(default_factory=PixooColors)
     quiet_hours: PixooQuietHours = field(default_factory=PixooQuietHours)
     telemetry: PixooTelemetryConfig = field(default_factory=PixooTelemetryConfig)
@@ -222,6 +250,8 @@ class AppConfig:
     check_updates_on_startup: bool = True
     show_chat_avatars: bool = True
     user_avatar_style: str = "droid"  # "droid" (Cyberpunk Radio Droid) or "letters" (Decorated 2-letter Initials)
+    map_base_layer: str = "canvas"  # "corescope", "canvas", or "topo"
+    carto_api_key: str = ""  # Free key from https://carto.com/basemaps/apikey for CoreScope Dark tiles
 
     def is_channel_favorite(self, channel_name: str) -> bool:
         if not channel_name:
@@ -368,6 +398,9 @@ class AppConfig:
             config.gateway = GatewayConfig(**{k: v for k, v in data["gateway"].items() if k in GatewayConfig.__dataclass_fields__})
         if "satellites" in data:
             config.satellites = SatelliteConfig(**{k: v for k, v in data["satellites"].items() if k in SatelliteConfig.__dataclass_fields__})
+        if "mqtt" in data:
+            config.mqtt = MqttConfig(**{k: v for k, v in data["mqtt"].items() if k in MqttConfig.__dataclass_fields__})
+
         if "favorite_channels" in data:
             config.favorite_channels = list(data["favorite_channels"])
         if "favorite_users" in data:
@@ -404,6 +437,17 @@ class AppConfig:
             config.show_chat_avatars = bool(data["show_chat_avatars"])
         if "user_avatar_style" in data:
             config.user_avatar_style = str(data["user_avatar_style"])
+        if "map_base_layer" in data:
+            config.map_base_layer = str(data["map_base_layer"])
+            config.meshcore.map_base_layer = config.map_base_layer
+        elif hasattr(config.meshcore, "map_base_layer") and config.meshcore.map_base_layer:
+            config.map_base_layer = config.meshcore.map_base_layer
+
+        if "carto_api_key" in data:
+            config.carto_api_key = str(data["carto_api_key"])
+            config.meshcore.carto_api_key = config.carto_api_key
+        elif hasattr(config.meshcore, "carto_api_key") and config.meshcore.carto_api_key:
+            config.carto_api_key = config.meshcore.carto_api_key
         return config
 
     def save(self, filepath: Optional[Path] = None):
@@ -414,8 +458,6 @@ class AppConfig:
             with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(self.to_dict(), f, indent=2)
                 f.flush()
-                import os
-                os.fsync(f.fileno())
             import os
             os.replace(tmp_path, target_path)
             logger.info(f"Saved configuration to {target_path}")

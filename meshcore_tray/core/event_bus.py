@@ -34,6 +34,7 @@ class EventType:
     SATELLITES_UPDATED = "satellites_updated"
     SATELLITE_PASS_ALERT = "satellite_pass_alert"
     CONTACT_DELETED = "contact_deleted"
+    HARDWARE_CONTACTS_UPDATED = "hardware_contacts_updated"
 
 
 class EventBus:

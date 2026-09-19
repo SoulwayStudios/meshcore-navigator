@@ -389,4 +389,99 @@ def test_splash_and_chat_avatar_settings_persistence(qapp, tmp_path):
     assert reloaded.user_avatar_style == "letters"
 
 
+def test_gateway_mqtt_and_satellite_settings_persistence(qapp, tmp_path, monkeypatch):
+    """Verifies that Satellite, MQTT, and Map Base Layer settings correctly load into the form,
+
+    survive driver exceptions, and persist across AppConfig load/save cycles."""
+    from unittest.mock import MagicMock
+
+    cfg_file = tmp_path / "config.json"
+    monkeypatch.setattr("meshcore_tray.config.CONFIG_FILE", cfg_file)
+    config = AppConfig()
+    config.satellites.enabled = False
+    config.mqtt.enabled = False
+    config.save(cfg_file)
+
+    storage = Storage(tmp_path / "gateway_test.db")
+    
+    # Mock radio driver that raises on hardware write to ensure config save is not aborted
+    mock_driver = MagicMock()
+    mock_driver.set_radio_params.side_effect = RuntimeError("Serial port timeout")
+
+    widget = SettingsWidget(config=config, storage=storage, radio_driver=mock_driver)
+
+    # Verify initial form states
+    assert widget.chk_sat_enabled.isChecked() is False
+    assert widget.chk_mqtt_enabled.isChecked() is False
+
+    # Modify Satellite and MQTT settings
+    widget.chk_sat_enabled.setChecked(True)
+    widget.chk_sat_tracks.setChecked(True)
+    widget.sat_interval_spin.setValue(12)
+    widget.sat_min_el_spin.setValue(15)
+    widget.chk_sat_cubesat.setChecked(True)
+
+    widget.chk_mqtt_enabled.setChecked(True)
+    widget.mqtt_host_input.setText("mqtt.ipnt.uk")
+    widget.mqtt_port_spin.setValue(1883)
+    widget.mqtt_user_input.setText("")
+    widget.mqtt_pass_input.setText("")
+    widget.chk_mqtt_tls.setChecked(False)
+    widget.mqtt_topics_input.setText("meshcore/uk/#, meshcore/#")
+    widget.chk_mqtt_publish.setChecked(True)
+    widget.mqtt_pub_topic_input.setText("meshcore/my_packets")
+
+    # Modify Map Layer settings
+    topo_idx = widget.combo_map_base.findData("topo")
+    assert topo_idx >= 0
+    widget.combo_map_base.setCurrentIndex(topo_idx)
+    widget.txt_carto_key.setText("test_carto_key_123")
+
+    # Use the dedicated save button handler
+    widget._save_gateway_and_mqtt()
+
+    # Verify in-memory config updated despite mock_driver raising RuntimeError
+    assert config.satellites.enabled is True
+    assert config.satellites.update_interval_hours == 12
+    assert config.satellites.min_pass_elevation_deg == 15
+    assert "cubesat" in config.satellites.active_groups
+    assert config.mqtt.enabled is True
+    assert config.mqtt.broker_host == "mqtt.ipnt.uk"
+    assert config.mqtt.broker_port == 1883
+    assert config.mqtt.username == ""
+    assert config.mqtt.password == ""
+    assert config.mqtt.publish_enabled is True
+    assert config.mqtt.publish_topic == "meshcore/my_packets"
+    assert "meshcore/uk/#" in config.mqtt.subscribe_topics
+    assert config.map_base_layer == "topo"
+    assert config.carto_api_key == "test_carto_key_123"
+
+    # Verify disk persistence via AppConfig.load
+    disk_config = AppConfig.load(cfg_file)
+    assert disk_config.satellites.enabled is True
+    assert disk_config.satellites.update_interval_hours == 12
+    assert disk_config.satellites.min_pass_elevation_deg == 15
+    assert "cubesat" in disk_config.satellites.active_groups
+    assert disk_config.mqtt.enabled is True
+    assert disk_config.mqtt.broker_host == "mqtt.ipnt.uk"
+    assert disk_config.mqtt.broker_port == 1883
+    assert disk_config.mqtt.username == ""
+    assert disk_config.mqtt.password == ""
+    assert disk_config.mqtt.publish_enabled is True
+    assert disk_config.mqtt.publish_topic == "meshcore/my_packets"
+    assert "meshcore/uk/#" in disk_config.mqtt.subscribe_topics
+    assert disk_config.map_base_layer == "topo"
+    assert disk_config.carto_api_key == "test_carto_key_123"
+
+    # Test widget.reload() repopulates inputs from updated config
+    disk_config.satellites.update_interval_hours = 48
+    disk_config.mqtt.broker_host = "broker.emqx.io"
+    widget.config = disk_config
+    widget.reload()
+
+    assert widget.sat_interval_spin.value() == 48
+    assert widget.mqtt_host_input.text() == "broker.emqx.io"
+
+
+
 

@@ -308,3 +308,29 @@ def test_satellites_view_observation_metadata_and_lightbox_triggers(qapp, test_s
     assert "No Earth Observation Camera Payload" in view.lbl_no_obs.text()
 
 
+def test_satellites_view_sync_tles_action(qapp, test_storage, monkeypatch):
+    """Verifies that clicking Sync TLEs calls satellite_service without AttributeError."""
+    config = AppConfig()
+    view = SatellitesViewWidget(storage=test_storage, config=config)
+
+    called = []
+    monkeypatch.setattr(view.satellite_service, "refresh_now", lambda force=False: called.append(force))
+
+    assert hasattr(view, "btn_sync")
+    assert "Sync TLEs" in view.btn_sync.text()
+    assert view.btn_sync.isEnabled() is True
+
+    # Trigger click
+    view.btn_sync.click()
+
+    # Verify service was invoked
+    assert len(called) == 1
+    assert view.btn_sync.isEnabled() is False
+    assert "Syncing..." in view.btn_sync.text()
+
+    # Reset button on reload
+    view.reload_satellites()
+    assert view.btn_sync.isEnabled() is True
+    assert "Sync TLEs" in view.btn_sync.text()
+
+

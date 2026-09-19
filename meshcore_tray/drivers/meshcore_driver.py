@@ -16,6 +16,8 @@ from meshcore_tray.core.models import (
     is_valid_alias, is_valid_node_id, is_valid_coordinate, is_plausible_rf_coordinate, is_room_server_contact
 )
 from meshcore_tray.core.event_bus import bus, EventType
+from meshcore_tray.core.packet_decoder import decode_meshcore_packet
+from meshcore_tray.core.deduplicator import get_deduplicator
 from meshcore_tray.drivers.base_driver import BaseRadioDriver
 
 logger = logging.getLogger("meshcore_tray.meshcore_driver")
@@ -38,6 +40,8 @@ class MeshCoreDriver(BaseRadioDriver):
         self._recent_rx_logs: List[Dict[str, Any]] = []
         self._recent_heard_msg_ids: set = set()
         self._cmd_lock: Optional[asyncio.Lock] = None
+        self.hardware_contacts_count: int = 0
+        self._is_pruning_hardware: bool = False
 
     def _get_cmd_lock(self) -> asyncio.Lock:
         if not hasattr(self, "_cmd_lock") or self._cmd_lock is None:
@@ -502,6 +506,8 @@ class MeshCoreDriver(BaseRadioDriver):
         self._schedule_reconnect()
 
     def _extract_payload(self, event_data: Any) -> Dict[str, Any]:
+        if hasattr(event_data, "payload") and isinstance(event_data.payload, dict):
+            return event_data.payload
         if isinstance(event_data, Event):
             return event_data.payload if isinstance(event_data.payload, dict) else {}
         elif isinstance(event_data, dict):
@@ -591,6 +597,7 @@ class MeshCoreDriver(BaseRadioDriver):
             path_len = int(raw.get("path_len", 0) or 0)
             route_typename = str(raw.get("route_typename", raw.get("route_type", "FLOOD")))
             hop_nodes = []
+            hop_coords = []
 
             # Correlate with recent RX_LOG_DATA to recover the packet path if empty
             if hasattr(self, "_recent_rx_logs") and self._recent_rx_logs:
@@ -601,12 +608,14 @@ class MeshCoreDriver(BaseRadioDriver):
                             path_str = rx["path"]
                             route_typename = rx["route_typename"]
                             hop_nodes = list(rx["hop_nodes"])
+                            hop_coords = list(rx.get("hop_coords") or [])
                             break
                         elif not path_str and rx["path"]:
                             path_str = rx["path"]
                             path_len = rx["path_len"]
                             route_typename = rx["route_typename"]
                             hop_nodes = list(rx["hop_nodes"])
+                            hop_coords = list(rx.get("hop_coords") or [])
                             break
 
             # If we have path_str but hop_nodes wasn't resolved yet
@@ -638,6 +647,8 @@ class MeshCoreDriver(BaseRadioDriver):
                         sub_h = item.get("hash", "")
                         if c:
                             hop_nodes.append(f"@{c.alias}")
+                            if c.latitude is not None and c.longitude is not None and not (self.storage and self.storage.is_phantom_node(c.node_id, c.alias)):
+                                hop_coords.append([float(c.latitude), float(c.longitude)])
                         else:
                             hop_nodes.append(f"<Unknown Repeater {sub_h}>")
                 else:
@@ -647,6 +658,7 @@ class MeshCoreDriver(BaseRadioDriver):
                         if c:
                             hop_nodes.append(f"@{c.alias}")
                             if c.latitude is not None and c.longitude is not None:
+                                hop_coords.append([float(c.latitude), float(c.longitude)])
                                 last_ref_lat = float(c.latitude)
                                 last_ref_lon = float(c.longitude)
                         else:
@@ -734,6 +746,55 @@ class MeshCoreDriver(BaseRadioDriver):
                 )
 
             bus.emit(EventType.MESSAGE_RECEIVED, msg)
+
+            # Ingest into Heard Floods & map trace pipeline
+            coords = []
+            if self.storage:
+                sender_c = self.storage.get_contact(sender_id)
+                if sender_c and sender_c.latitude is not None and sender_c.longitude is not None:
+                    coords.append([float(sender_c.latitude), float(sender_c.longitude)])
+            for pt in hop_coords:
+                if not coords or coords[-1] != pt:
+                    coords.append(pt)
+            if len(coords) <= 1 and hop_nodes and self.storage:
+                for hn in hop_nodes:
+                    clean_h = hn.lstrip("@!🌐☁️ ").strip()
+                    c_h = self.storage.get_best_contact_for_hop(clean_h) if hasattr(self.storage, "get_best_contact_for_hop") else None
+                    if not c_h:
+                        c_h = self.storage.get_contact(clean_h)
+                    if not c_h:
+                        for n in (self.storage.get_contacts() if hasattr(self.storage, "get_contacts") else []):
+                            if n.alias and (n.alias.lower() == clean_h.lower() or clean_h.lower() in n.alias.lower()):
+                                c_h = n
+                                break
+                    if c_h and c_h.latitude is not None and c_h.longitude is not None and not (hasattr(self.storage, "is_phantom_node") and self.storage.is_phantom_node(c_h.node_id, c_h.alias)):
+                        h_pt = [float(c_h.latitude), float(c_h.longitude)]
+                        if not coords or coords[-1] != h_pt:
+                            coords.append(h_pt)
+            chat_path = PacketPathInfo(
+                packet_id=f"path-{msg_id}",
+                sender_id=sender_id,
+                sender_name=f"@{sender_name} [{channel_name}]",
+                timestamp=iso_timestamp,
+                hop_nodes=hop_nodes,
+                hop_snrs=[snr],
+                route_type=route_typename,
+                coordinates=coords,
+                payload_type="GRP_TXT",
+                decoded_info={"text": clean_text, "channel": channel_name},
+                source="radio"
+            )
+            raw_payload = raw.get("raw") or raw.get("payload") or ""
+            raw_hex_str = raw_payload.hex() if isinstance(raw_payload, (bytes, bytearray)) else str(raw_payload or "")
+            get_deduplicator().register_radio_packet(
+                raw_hex=raw_hex_str,
+                sender_id=sender_id,
+                channel=channel_name,
+                text=clean_text
+            )
+            if self.storage:
+                self.storage.save_packet_path(chat_path)
+            bus.emit(EventType.PACKET_PATH_TRACED, chat_path)
         except Exception as e:
             logger.error(f"Error handling channel msg: {e}", exc_info=True)
 
@@ -771,6 +832,7 @@ class MeshCoreDriver(BaseRadioDriver):
             path_len = int(raw.get("path_len", 0) or 0)
             route_typename = str(raw.get("route_typename", raw.get("route_type", "DIRECT")))
             hop_nodes = []
+            hop_coords = []
 
             # Correlate with recent RX_LOG_DATA to recover the packet path if empty
             if hasattr(self, "_recent_rx_logs") and self._recent_rx_logs:
@@ -781,12 +843,14 @@ class MeshCoreDriver(BaseRadioDriver):
                             path_str = rx["path"]
                             route_typename = rx["route_typename"]
                             hop_nodes = list(rx["hop_nodes"])
+                            hop_coords = list(rx.get("hop_coords") or [])
                             break
                         elif not path_str and rx["path"]:
                             path_str = rx["path"]
                             path_len = rx["path_len"]
                             route_typename = rx["route_typename"]
                             hop_nodes = list(rx["hop_nodes"])
+                            hop_coords = list(rx.get("hop_coords") or [])
                             break
 
             if path_str and path_len > 0 and not hop_nodes:
@@ -817,6 +881,8 @@ class MeshCoreDriver(BaseRadioDriver):
                         sub_h = item.get("hash", "")
                         if c:
                             hop_nodes.append(f"@{c.alias}")
+                            if c.latitude is not None and c.longitude is not None and not (self.storage and self.storage.is_phantom_node(c.node_id, c.alias)):
+                                hop_coords.append([float(c.latitude), float(c.longitude)])
                         else:
                             hop_nodes.append(f"<Unknown Repeater {sub_h}>")
                 else:
@@ -826,6 +892,7 @@ class MeshCoreDriver(BaseRadioDriver):
                         if c:
                             hop_nodes.append(f"@{c.alias}")
                             if c.latitude is not None and c.longitude is not None:
+                                hop_coords.append([float(c.latitude), float(c.longitude)])
                                 last_ref_lat = float(c.latitude)
                                 last_ref_lon = float(c.longitude)
                         else:
@@ -887,6 +954,55 @@ class MeshCoreDriver(BaseRadioDriver):
                 )
 
             bus.emit(EventType.MESSAGE_RECEIVED, msg)
+
+            # Ingest into Heard Floods & map trace pipeline
+            coords = []
+            if self.storage:
+                sender_c = self.storage.get_contact(pubkey_prefix)
+                if sender_c and sender_c.latitude is not None and sender_c.longitude is not None:
+                    coords.append([float(sender_c.latitude), float(sender_c.longitude)])
+            for pt in hop_coords:
+                if not coords or coords[-1] != pt:
+                    coords.append(pt)
+            if len(coords) <= 1 and hop_nodes and self.storage:
+                for hn in hop_nodes:
+                    clean_h = hn.lstrip("@!🌐☁️ ").strip()
+                    c_h = self.storage.get_best_contact_for_hop(clean_h) if hasattr(self.storage, "get_best_contact_for_hop") else None
+                    if not c_h:
+                        c_h = self.storage.get_contact(clean_h)
+                    if not c_h:
+                        for n in (self.storage.get_contacts() if hasattr(self.storage, "get_contacts") else []):
+                            if n.alias and (n.alias.lower() == clean_h.lower() or clean_h.lower() in n.alias.lower()):
+                                c_h = n
+                                break
+                    if c_h and c_h.latitude is not None and c_h.longitude is not None and not (hasattr(self.storage, "is_phantom_node") and self.storage.is_phantom_node(c_h.node_id, c_h.alias)):
+                        h_pt = [float(c_h.latitude), float(c_h.longitude)]
+                        if not coords or coords[-1] != h_pt:
+                            coords.append(h_pt)
+            dm_path = PacketPathInfo(
+                packet_id=f"path-{msg.id}",
+                sender_id=pubkey_prefix,
+                sender_name=f"@{sender_name} (DM)",
+                recipient_id="me",
+                timestamp=iso_timestamp,
+                hop_nodes=hop_nodes,
+                hop_snrs=[snr],
+                route_type="DIRECT",
+                coordinates=coords,
+                payload_type="TXT_MSG",
+                decoded_info={"text": text},
+                source="radio"
+            )
+            raw_payload = raw.get("raw") or raw.get("payload") or ""
+            raw_hex_str = raw_payload.hex() if isinstance(raw_payload, (bytes, bytearray)) else str(raw_payload or "")
+            get_deduplicator().register_radio_packet(
+                raw_hex=raw_hex_str,
+                sender_id=pubkey_prefix,
+                text=text
+            )
+            if self.storage:
+                self.storage.save_packet_path(dm_path)
+            bus.emit(EventType.PACKET_PATH_TRACED, dm_path)
         except Exception as e:
             logger.error(f"Error handling contact msg: {e}", exc_info=True)
 
@@ -999,6 +1115,23 @@ class MeshCoreDriver(BaseRadioDriver):
             if now_ts - out_msg["time"] <= 60.0:
                 self._increment_message_repeat(out_msg["msg_id"])
                 break
+
+        ack_path = PacketPathInfo(
+            packet_id=f"ack-{int(datetime.now().timestamp()*1000)}",
+            sender_id="ack",
+            sender_name="Packet ACK",
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            hop_nodes=[],
+            hop_snrs=[],
+            route_type="DIRECT",
+            coordinates=[],
+            payload_type="ACK",
+            decoded_info=raw if isinstance(raw, dict) else None,
+            source="radio"
+        )
+        if self.storage:
+            self.storage.save_packet_path(ack_path)
+        bus.emit(EventType.PACKET_PATH_TRACED, ack_path)
 
     def _handle_telemetry(self, event_data: Any):
         try:
@@ -1171,7 +1304,22 @@ class MeshCoreDriver(BaseRadioDriver):
                 bus.emit(EventType.NEIGHBOURS_UPDATED, neighbours_list)
             if contacts_list:
                 bus.emit(EventType.MAP_NODES_UPDATED, None)
-            logger.info(f"Synchronized {len(contacts_list)} mesh contacts from node flash.")
+            
+            self.hardware_contacts_count = len(raw)
+            mc_cfg = self.config.meshcore if (self.config and hasattr(self.config, "meshcore")) else self.config
+            limit = getattr(mc_cfg, "hardware_contact_limit", 64) if mc_cfg else 64
+            bus.emit(EventType.HARDWARE_CONTACTS_UPDATED, {
+                "count": self.hardware_contacts_count,
+                "limit": limit
+            })
+            logger.info(f"Synchronized {len(contacts_list)} mesh contacts from node flash ({self.hardware_contacts_count}/{limit} slots used).")
+
+            # Check if auto-pruning should trigger to keep slots free on the radio hardware
+            if mc_cfg and getattr(mc_cfg, "auto_prune_hardware_contacts", True):
+                threshold = getattr(mc_cfg, "hardware_prune_threshold", 52)
+                if self.hardware_contacts_count >= threshold and not self._is_pruning_hardware:
+                    logger.info(f"Radio flash contacts ({self.hardware_contacts_count}/{limit}) reached auto-prune threshold ({threshold}). Scheduling hardware contact pruning...")
+                    self._dispatch_task(self.prune_hardware_contacts())
         except Exception as e:
             logger.error(f"Error handling contacts: {e}", exc_info=True)
 
@@ -1330,6 +1478,50 @@ class MeshCoreDriver(BaseRadioDriver):
                 if lat is not None and lon is not None:
                     bus.emit(EventType.MAP_NODES_UPDATED, None)
             bus.emit(EventType.NEIGHBOURS_UPDATED, [info])
+
+            # Ingest into Heard Floods & map trace pipeline
+            coords = []
+            if lat is not None and lon is not None:
+                coords.append([float(lat), float(lon)])
+
+            adv_hops = [f"@{alias}"]
+            if hasattr(self, "_recent_rx_logs") and self._recent_rx_logs:
+                now_s = datetime.now(timezone.utc).timestamp()
+                for rx in reversed(self._recent_rx_logs):
+                    if now_s - rx["time"] <= 4.0:
+                        if rx.get("hop_nodes"):
+                            adv_hops = list(rx["hop_nodes"])
+                            for pt in (rx.get("hop_coords") or []):
+                                if not coords or coords[-1] != pt:
+                                    coords.append(pt)
+                            break
+
+            raw_p = raw.get("raw") or raw.get("payload") or ""
+            raw_hex_adv = raw_p.hex() if isinstance(raw_p, (bytes, bytearray)) else str(raw_p or "")
+            adv_node_id = (pubkey[:12] if pubkey else (alias or "adv")).lower()
+            # Deduplicate against recent advert receptions
+            if get_deduplicator().is_duplicate_or_radio(raw_hex=raw_hex_adv, sender_id=adv_node_id):
+                logger.debug("Suppressing duplicate advert path trace for %s", adv_node_id)
+                return
+
+            get_deduplicator().register_radio_packet(raw_hex=raw_hex_adv, sender_id=adv_node_id)
+
+            adv_path = PacketPathInfo(
+                packet_id=f"adv-{adv_node_id}-{int(datetime.now().timestamp()*1000)}",
+                sender_id=adv_node_id,
+                sender_name=f"@{alias} (Advert)",
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                hop_nodes=adv_hops,
+                hop_snrs=[float(raw.get("snr", 0.0))],
+                route_type="FLOOD",
+                coordinates=coords,
+                payload_type="ADVERT",
+                raw_hex=raw_hex_adv,
+                source="radio"
+            )
+            if self.storage:
+                self.storage.save_packet_path(adv_path)
+            bus.emit(EventType.PACKET_PATH_TRACED, adv_path)
         except Exception as e:
             logger.error(f"Error handling advertisement: {e}", exc_info=True)
 
@@ -1411,23 +1603,84 @@ class MeshCoreDriver(BaseRadioDriver):
                 raw_hex = raw_payload
 
             pkt_id = f"path-{int(datetime.now().timestamp()*1000)}"
-            path_info = PacketPathInfo(
-                packet_id=pkt_id,
-                sender_id="mesh",
-                sender_name=f"RF Packet ({route_typename})",
-                timestamp=datetime.now(timezone.utc).isoformat(),
-                hop_nodes=hop_nodes,
-                hop_snrs=hop_snrs,
-                route_type=route_typename,
-                coordinates=hop_coords
-            )
-            if self.storage and hop_coords:
-                self.storage.save_packet_path(path_info)
-            bus.emit(EventType.PACKET_PATH_TRACED, path_info)
+            inferred_payload = str(data.get("payload_typename") or "").strip().upper()
+            decoded_struct = None
+            if not inferred_payload or inferred_payload in ("FLOOD", "UNK", "UNKNOWN"):
+                if raw_hex:
+                    try:
+                        dec = decode_meshcore_packet(raw_hex)
+                        if dec and dec.header and dec.header.payload_type_name:
+                            inferred_payload = dec.header.payload_type_name.upper()
+                            decoded_struct = dec.to_dict()
+                    except Exception:
+                        pass
+            if not inferred_payload or inferred_payload in ("FLOOD", "UNK", "UNKNOWN"):
+                if data.get("adv_key") or "adv" in str(data).lower():
+                    inferred_payload = "ADVERT"
+                elif data.get("text") or data.get("message") or data.get("msg_text"):
+                    inferred_payload = "GRP_TXT"
+                elif "trace" in route_typename.lower():
+                    inferred_payload = "TRACE"
+                elif "req" in route_typename.lower():
+                    inferred_payload = "REQ"
+                else:
+                    inferred_payload = "FLOOD"
 
             # Check if this packet carries decrypted channel payload
             msg_text = data.get("message") or data.get("msg_text") or data.get("text")
-            if msg_text and str(msg_text).strip():
+            has_channel_msg = bool(msg_text and str(msg_text).strip())
+
+            adv_key = str(data.get("adv_key") or "").strip().lower()
+            is_advert = bool(inferred_payload == "ADVERT" or (adv_key and is_valid_node_id(adv_key)))
+
+            # Check deduplication before registering
+            is_dup = get_deduplicator().is_duplicate_or_radio(
+                raw_hex=raw_hex,
+                sender_id=adv_key or "mesh",
+                channel=data.get("chan_name", ""),
+                text=str(msg_text or "")
+            )
+
+            # Register in cross-source deduplicator
+            get_deduplicator().register_radio_packet(
+                raw_hex=raw_hex,
+                sender_id=adv_key or "mesh",
+                channel=data.get("chan_name", ""),
+                text=str(msg_text or "")
+            )
+
+            # Suppress generic path emission if a rich channel message
+            # or rich advertisement path will be created for this exact event
+            is_rich_payload = bool(
+                has_channel_msg or 
+                is_advert or 
+                inferred_payload in ("GRP_TXT", "TXT_MSG", "ADVERT", "CHANNEL_MSG")
+            )
+
+            if not is_rich_payload and not is_dup:
+                display_sender = f"RF Packet ({inferred_payload})"
+                if hop_nodes:
+                    display_sender = f"{hop_nodes[0]} ({inferred_payload})"
+
+                path_info = PacketPathInfo(
+                    packet_id=pkt_id,
+                    sender_id="mesh",
+                    sender_name=display_sender,
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    hop_nodes=hop_nodes,
+                    hop_snrs=hop_snrs,
+                    route_type=route_typename,
+                    coordinates=hop_coords,
+                    payload_type=inferred_payload,
+                    raw_hex=raw_hex,
+                    decoded_info=decoded_struct,
+                    source="radio"
+                )
+                if self.storage:
+                    self.storage.save_packet_path(path_info)
+                bus.emit(EventType.PACKET_PATH_TRACED, path_info)
+
+            if has_channel_msg:
                 chan_name = data.get("chan_name", "")
                 logger.info(f"Live OTA decrypted channel message on '{chan_name}': {str(msg_text)[:40]}")
                 if "channel_idx" not in data and chan_name and self.storage:
@@ -1676,9 +1929,11 @@ class MeshCoreDriver(BaseRadioDriver):
                 hop_nodes=hop_nodes,
                 hop_snrs=path_snrs,
                 route_type="TRACEROUTE",
-                coordinates=hop_coords
+                coordinates=hop_coords,
+                payload_type="TRACE",
+                source="radio"
             )
-            if self.storage and hop_coords:
+            if self.storage:
                 self.storage.save_packet_path(path_info)
             bus.emit(EventType.PACKET_PATH_TRACED, path_info)
         except Exception as e:
@@ -1707,8 +1962,12 @@ class MeshCoreDriver(BaseRadioDriver):
                 hop_nodes=[f"@{alias} ({out_len} hops)"],
                 hop_snrs=[],
                 route_type="DISCOVERY",
-                coordinates=coords
+                coordinates=coords,
+                payload_type="PATH",
+                source="radio"
             )
+            if self.storage:
+                self.storage.save_packet_path(path_info)
             bus.emit(EventType.PACKET_PATH_TRACED, path_info)
         except Exception as e:
             logger.debug(f"Error in _handle_path_response: {e}")
@@ -2755,3 +3014,141 @@ class MeshCoreDriver(BaseRadioDriver):
                 self._handle_contacts(contacts_event)
         except Exception as e:
             logger.error(f"Failed re-syncing contacts: {e}")
+
+    async def prune_hardware_contacts(self, target_free_slots: Optional[int] = None) -> int:
+        """Safely prunes stale non-favorite, non-repeater, non-room contacts from radio flash memory.
+
+        CRITICAL SAFETY CONSTRAINTS:
+        - NEVER deletes any contacts from the desktop application's SQLite database or map.
+        - NEVER removes user favorites, repeaters, room servers, or contacts active within the last 48 hours.
+        - Strictly issues remove_contact on the connected radio hardware to free up flash slots for new contacts.
+        """
+        if not self.client or not self.is_connected():
+            logger.debug("Cannot prune hardware contacts: radio not connected")
+            return 0
+
+        if self._is_pruning_hardware:
+            logger.debug("Hardware contact pruning is already in progress")
+            return 0
+
+        self._is_pruning_hardware = True
+        try:
+            mc_cfg = self.config.meshcore if (self.config and hasattr(self.config, "meshcore")) else self.config
+            limit = getattr(mc_cfg, "hardware_contact_limit", 64) if mc_cfg else 64
+            if target_free_slots is None:
+                target_free_slots = getattr(mc_cfg, "hardware_prune_target_free", 15) if mc_cfg else 15
+
+            # Retrieve current contacts from hardware
+            async with self._get_cmd_lock():
+                contacts_event = await self.client.commands.get_contacts()
+            if not contacts_event or contacts_event.type == McEventType.ERROR:
+                logger.warning("Failed to query contacts from radio hardware for pruning")
+                return 0
+
+            raw = self._extract_payload(contacts_event)
+            if not isinstance(raw, dict) or not raw:
+                return 0
+
+            self.hardware_contacts_count = len(raw)
+            desired_max = max(0, limit - target_free_slots)
+            num_to_prune = max(1, len(raw) - desired_max) if len(raw) > desired_max else target_free_slots
+
+            now_utc = datetime.now(timezone.utc)
+            cutoff_48h = now_utc - timedelta(hours=48)
+
+            candidates = []
+            for pubkey, c in raw.items():
+                if not isinstance(c, dict):
+                    continue
+                pubkey_str = str(pubkey or "").strip().lower()
+                if not is_valid_node_id(pubkey_str):
+                    continue
+                nid = pubkey_str[:12]
+                raw_alias = str(c.get("adv_name") or "").strip()
+                alias = raw_alias if is_valid_alias(raw_alias) else nid[:8]
+
+                # Exclusion 1: User favorites (starred in app or radio)
+                is_fav = bool(mc_cfg and hasattr(mc_cfg, "is_user_favorite") and mc_cfg.is_user_favorite(nid, alias))
+                if not is_fav and self.storage:
+                    existing = self.storage.get_contact(nid)
+                    if existing and existing.is_favorite:
+                        is_fav = True
+                if is_fav:
+                    continue
+
+                # Exclusion 2: Repeaters
+                if c.get("type") == 2 or c.get("adv_type") == 2:
+                    continue
+                if self.storage:
+                    existing = self.storage.get_contact(nid)
+                    if existing and existing.is_repeater:
+                        continue
+
+                # Exclusion 3: Room servers
+                if c.get("type") == 3 or c.get("adv_type") == 3 or is_room_server_contact(c) or is_room_server_contact({"alias": alias, "node_id": nid}):
+                    continue
+                if self.storage:
+                    existing = self.storage.get_contact(nid)
+                    if existing and (existing.is_room_server or (hasattr(self.storage, "has_room_credentials") and self.storage.has_room_credentials(nid))):
+                        continue
+
+                # Exclusion 4: Active within last 48 hours
+                last_adv = c.get("last_advert") or c.get("lastmod") or 0
+                last_active_dt = None
+                if last_adv:
+                    try:
+                        last_active_dt = datetime.fromtimestamp(int(last_adv), tz=timezone.utc)
+                    except Exception:
+                        pass
+                if not last_active_dt and self.storage:
+                    existing = self.storage.get_contact(nid)
+                    if existing and existing.last_seen:
+                        try:
+                            dt = datetime.fromisoformat(existing.last_seen.replace("Z", "+00:00"))
+                            if dt.tzinfo is None:
+                                dt = dt.replace(tzinfo=timezone.utc)
+                            last_active_dt = dt
+                        except Exception:
+                            pass
+
+                if last_active_dt and last_active_dt > cutoff_48h:
+                    continue
+
+                # Eligible candidate
+                sort_ts = last_active_dt.timestamp() if last_active_dt else float(last_adv or 0)
+                candidates.append((sort_ts, pubkey_str, alias))
+
+            # Sort by oldest activity first
+            candidates.sort(key=lambda x: x[0])
+            to_remove = candidates[:num_to_prune]
+
+            pruned_count = 0
+            for _, pk, cand_alias in to_remove:
+                try:
+                    async with self._get_cmd_lock():
+                        res = await self.client.commands.remove_contact(pk)
+                    if res and res.type != McEventType.ERROR:
+                        pruned_count += 1
+                        logger.info(f"Pruned stale contact {cand_alias} ({pk[:12]}) from Heltec V3 hardware flash (permanently preserved in local DB).")
+                    await asyncio.sleep(0.04)
+                except Exception as ex:
+                    logger.warning(f"Failed removing contact {pk[:12]} from radio hardware: {ex}")
+
+            self.hardware_contacts_count = max(0, self.hardware_contacts_count - pruned_count)
+            bus.emit(EventType.HARDWARE_CONTACTS_UPDATED, {
+                "count": self.hardware_contacts_count,
+                "limit": limit,
+                "pruned": pruned_count
+            })
+            logger.info(f"Hardware contact pruning completed: freed {pruned_count} slots on radio flash ({self.hardware_contacts_count}/{limit}).")
+            return pruned_count
+        except Exception as e:
+            logger.error(f"Error during hardware contact pruning: {e}", exc_info=True)
+            return 0
+        finally:
+            self._is_pruning_hardware = False
+
+    def prune_hardware_contacts_now(self, target_free_slots: Optional[int] = None) -> bool:
+        """Dispatches an asynchronous hardware contact prune task safely."""
+        self._dispatch_task(self.prune_hardware_contacts(target_free_slots))
+        return True

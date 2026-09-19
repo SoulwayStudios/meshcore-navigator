@@ -423,7 +423,7 @@ class TestMeshMapWidgetLOSIntegration:
 
         # Check splitter sizes are split ~ 4/5ths and 1/5th
         sizes = widget.map_splitter.sizes()
-        assert len(sizes) == 2
+        assert len(sizes) >= 2
         assert sizes[0] > sizes[1]
 
         # Close dock

@@ -362,6 +362,7 @@ class DMsViewWidget(QWidget):
         right_layout.setSpacing(0)
 
         self.chat_widget = ChatWidget(storage=self.storage, config=self.config)
+        self.chat_widget.resend_requested.connect(self._on_chat_resend_requested)
         right_layout.addWidget(self.chat_widget, 1)
 
         self.composer = PowerComposer(storage=self.storage, config=self.config)
@@ -418,66 +419,82 @@ class DMsViewWidget(QWidget):
         if not self.storage:
             return
 
-        all_contacts = self.storage.get_contacts()
-        query = self.search_input.text().strip().lower()
+        self.contact_list.setUpdatesEnabled(False)
+        try:
+            all_contacts = self.storage.get_contacts()
+            query = self.search_input.text().strip().lower()
 
-        favorites = []
-        rooms = []
-        directs = []
+            favorites = []
+            rooms = []
+            directs = []
 
-        for c in all_contacts:
-            if query:
-                name_match = c.alias and query in c.alias.lower()
-                id_match = c.node_id and query in c.node_id.lower()
-                if not (name_match or id_match):
-                    continue
+            for c in all_contacts:
+                if query:
+                    name_match = c.alias and query in c.alias.lower()
+                    id_match = c.node_id and query in c.node_id.lower()
+                    if not (name_match or id_match):
+                        continue
 
-            is_rep = c.is_repeater or "[rep]" in (c.alias or "").lower()
-            if is_rep:
-                continue  # Repeaters live in the Repeaters view
+                is_rep = c.is_repeater or "[rep]" in (c.alias or "").lower()
+                if is_rep:
+                    continue  # Repeaters live in the Repeaters view
 
-            is_room = getattr(c, "is_room_server", False) or is_room_server_contact(c)
-            is_fav = bool(c.is_favorite or (self.config and self.config.is_user_favorite(c.node_id, c.alias or "")))
+                is_room = getattr(c, "is_room_server", False) or is_room_server_contact(c)
+                is_fav = bool(c.is_favorite or (self.config and self.config.is_user_favorite(c.node_id, c.alias or "")))
 
-            if is_fav:
-                favorites.append((c, is_fav, is_room))
-            elif is_room:
-                rooms.append((c, is_fav, is_room))
-            else:
-                directs.append((c, is_fav, is_room))
+                if is_fav:
+                    favorites.append((c, is_fav, is_room))
+                elif is_room:
+                    rooms.append((c, is_fav, is_room))
+                else:
+                    directs.append((c, is_fav, is_room))
 
-        def get_sort_key(item_tuple):
-            c = item_tuple[0]
-            if self.sort_mode == "recent":
-                ts = getattr(c, "last_seen", None) or getattr(c, "last_heard", None) or ""
-                return str(ts)
-            return (c.alias or c.node_id).lower()
+            def get_sort_key(item_tuple):
+                c = item_tuple[0]
+                if self.sort_mode == "recent":
+                    ts = getattr(c, "last_seen", None) or getattr(c, "last_heard", None) or ""
+                    return str(ts)
+                return (c.alias or c.node_id).lower()
 
-        reverse_sort = (self.sort_mode == "recent")
-        favorites.sort(key=get_sort_key, reverse=reverse_sort)
-        rooms.sort(key=get_sort_key, reverse=reverse_sort)
-        directs.sort(key=get_sort_key, reverse=reverse_sort)
+            reverse_sort = (self.sort_mode == "recent")
+            favorites.sort(key=get_sort_key, reverse=reverse_sort)
+            rooms.sort(key=get_sort_key, reverse=reverse_sort)
+            directs.sort(key=get_sort_key, reverse=reverse_sort)
 
-        # Add Favorites (no top divider)
-        if favorites:
-            for c, fav, room in favorites:
-                self._add_contact_row(c, fav, room)
+            # Add Favorites (no top divider)
+            if favorites:
+                for c, fav, room in favorites:
+                    self._add_contact_row(c, fav, room)
 
-        # Thin divider between favorite users and non-favorite users
-        if favorites and (rooms or directs):
-            self._add_thin_divider()
-
-        # Add Room Servers
-        if rooms:
-            for c, fav, room in rooms:
-                self._add_contact_row(c, fav, room)
-            if directs:
+            # Thin divider between favorite users and non-favorite users
+            if favorites and (rooms or directs):
                 self._add_thin_divider()
 
-        # Add Direct Messages
-        if directs:
-            for c, fav, room in directs:
-                self._add_contact_row(c, fav, room)
+            # Add Room Servers
+            if rooms:
+                for c, fav, room in rooms:
+                    self._add_contact_row(c, fav, room)
+                if directs:
+                    self._add_thin_divider()
+
+            # Add Direct Messages (capped at top 60 when browsing without a search query)
+            if directs:
+                directs_to_show = directs if query else directs[:60]
+                for c, fav, room in directs_to_show:
+                    self._add_contact_row(c, fav, room)
+
+                if not query and len(directs) > 60:
+                    info_item = QListWidgetItem(f"Showing top 60 recent contacts • Use 🔍 Search for all {len(directs)}")
+                    info_item.setFlags(Qt.ItemFlag.NoItemFlags)
+                    info_item.setForeground(QColor("#6B7280"))
+                    font = info_item.font()
+                    font.setPointSize(9)
+                    font.setItalic(True)
+                    info_item.setFont(font)
+                    info_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    self.contact_list.addItem(info_item)
+        finally:
+            self.contact_list.setUpdatesEnabled(True)
 
     def _add_thin_divider(self):
         item = QListWidgetItem()
@@ -529,6 +546,15 @@ class DMsViewWidget(QWidget):
         target_id = recipient_id or (self.current_contact.node_id if self.current_contact else None)
         if target_id:
             self.send_dm_requested.emit(target_id, text)
+
+    def _on_chat_resend_requested(self, msg):
+        if not msg:
+            return
+        if hasattr(self, "composer"):
+            self.composer.populate_resend(msg.text)
+        target_id = getattr(msg, "recipient_id", None) or (self.current_contact.node_id if self.current_contact else None)
+        if target_id:
+            self.send_dm_requested.emit(target_id, msg.text)
 
     def _show_contact_context_menu(self, pos):
         item = self.contact_list.itemAt(pos)

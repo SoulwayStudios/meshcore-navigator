@@ -7,7 +7,55 @@ and this project follows semantic versioning with automated build increments:
 - **Patch (+0.0.1)**: Routine bug fixes, UI adjustments, maintenance, and regular GitHub commits.
 - **Minor (+0.1.0)**: Substantial new features and architectural additions.
 
+## [EXPERIMENTAL] [0.8.0] - 2026-09-19
+
+### Added
+- **CoreScope Packet Routing & Multi-Hop Hop Sequence Reconstruction**:
+  - Dynamic multi-hop route reconstruction from raw over-the-air packet path chains using CoreScope's sequential multi-hop logic.
+  - Full ingestion and route tracing for wire-level `REQ` (Data Request), `ANON_REQ` (Anonymous Request), `PATH` (Path Discovery), `TRACE`, `RESPONSE`, `ADVERT`, and `GRP_TXT`.
+  - Inverted driver deduplication order in `_handle_rx_log_data()` to ensure wire-level request and trace packets are emitted to `PACKET_PATH_TRACED` and persisted rather than discarded.
+  - Multi-hop route coordinate assembly in Leaflet map: dynamically resolves each hop in `path.hop_nodes` against local SQLite storage (`[Sender GPS] -> [Repeater 1 GPS] -> ... -> [Repeater N GPS] -> [Local Station GPS]`).
+  - Fallback repeater routing: if the transmitting sender has no advertised GPS coordinates, the map route gracefully starts at the first repeater with known coordinates, animating particle beams hop-by-hop rather than aborting.
+  - Strict hash prefix and alias resolution preventing short hex collisions (e.g. `71`) with station nicknames, ensuring accurate intermediate repeater identification across Cumbria, South Scotland, and Northern Ireland.
+  - Live Feed filter pill bar with dedicated `[📥 Requests]` filter (`REQ`, `ANON_REQ`, `RESPONSE`) and distinct payload icons (`📥 REQ`, `🛣️ PATH`, `📡 TRACE`, `📢 ADVERT`, `💬 GRP_TXT`, `✅ ACK`).
+- **CoreScope Dynamic Live Trace Map Engine**:
+  - Incorporated CoreScope's HTML5 canvas overlay on the Leaflet map (`animationsPane` z-index 650) running at 60 FPS.
+  - Multi-hop particle beam animations (`drawPacketPath`) with contrail glow, leading white photon dots, tactical origin/destination radar pulse rings (`triggerCanvasPulse`), and fading route trails.
+  - Interactive "Trace on Map" buttons in the Byte Inspector and map hover previews.
+- **MeshCore Binary Wire Packet Decoder & Decryptor**:
+  - Full wire parser (`PacketDecoder`) for all 13 MeshCore payload types (`ADVERT`, `GRP_TXT`, `TXT_MSG`, `ACK`, `TRACE`, `PATH`, etc.), hop sequences, and header flags.
+  - AES-128-ECB channel message decryptor with HMAC-SHA256 authentication verification and hashtag channel key derivation.
+  - Detailed offset-by-offset byte breakdown generator reproducing CoreScope's field inspection format (`Offset | Field | Value | Description`).
+- **Live Packet Feed & Byte Inspector View (Replaces Heard Floods)**:
+  - Upgraded Heard Floods pane into a comprehensive Live Packet Feed with Discord dark aesthetic (`#1E1F22`, `#2B2D31`, `#313338`).
+  - Filter pill bar: `[All]`, `[⚡ Floods]`, `[📢 Adverts]`, `[💬 Chat]`, `[📡 Traces]`, `[📥 Requests]`, `[✅ ACKs]`.
+  - Live search filter for node names, hex IDs, channels, and packet contents.
+  - Collapsible bottom drawer Byte Inspector with:
+    - Offset-by-offset Field Breakdown table.
+    - Decoded payload previews (decrypted chat, telemetry sensor readings, advertised coordinates).
+    - Monospaced Hex Dump viewer with one-click `[📋 Copy Hex]` button.
+    - Interactive BYOP (Bring Your Own Packet) `[📦 Decode Hex]` modal for decoding raw hex from logs or consoles.
+- **MQTT Broker Ingestion & Gateway Service**:
+  - High-performance background MQTT client service (`MqttService`) using `paho-mqtt`.
+  - Subscribes to configurable topics (`meshcore/#`, `msh/#`, `meshcoretomqtt/#`) and ingests JSON payloads or raw binary bytes.
+  - Rolling LRU deduplication cache dropping repeat packets within configurable window.
+  - Optional Gateway Forwarding mode publishing local radio traffic to MQTT brokers.
+  - Dedicated MQTT configuration controls in Settings dialog.
+
+### Fixed
+- **Packet Deduplication & Wire Ingestion**:
+  - Resolved issue where raw over-the-air `REQ`, `ANON_REQ`, `PATH`, and `TRACE` packets were dropped before emission due to deduplicator order in `_handle_rx_log_data()`.
+- **Flood Map Animations Direct Line**:
+  - Fixed flood animations displaying as a single direct line to the local station by populating intermediate repeater coordinates and dynamically resolving hop sequences.
+- **Hop Hash Collision False-Positives**:
+  - Restricted substring alias matching in `resolve_hop_with_candidates()` to IDs longer than 4 characters, preventing 2-character hex hashes from falsely matching station nicknames.
+- **Satellite TLE Refresh Crash**:
+  - Added `refresh_tles()` method to `SatelliteService` resolving `AttributeError: 'SatelliteService' object has no attribute 'refresh_tles'` when clicking the TLE sync button.
+- **Windows Standalone Release Exe Duplication**:
+  - Cleaned PyInstaller configuration to emit a single canonical `MESHCORE-NAVIGATOR.exe` binary.
+
 ## [0.7.1] - 2026-09-18
+
 
 ### Fixed
 - **Room Server List Right-Click Context Menu**:
@@ -20,7 +68,7 @@ and this project follows semantic versioning with automated build increments:
   - Corrected startup platform initialization in `main.py` so Windows hosts default to the `windows` QPA platform plugin instead of forcing `wayland;xcb`.
   - Added runtime Qt plugin path resolution (`addLibraryPath`) when frozen under PyInstaller so bundled `qwindows.dll` and WebEngine components are discovered automatically.
   - Bundled all QtWebEngine binaries and locales in `build_windows.py`.
-  - Included binary alias `MESHCORENAVIGATOR.exe` alongside `MESHCORE-NAVIGATOR.exe` for seamless compatibility.
+  - Packaged cleanly with single canonical executable `MESHCORE-NAVIGATOR.exe` to avoid confusion.
 
 ### Added
 - **Real-Time Satellite Tracking & Pass Prediction View**:

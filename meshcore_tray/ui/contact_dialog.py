@@ -471,11 +471,39 @@ class ContactDiscoveryDialog(QDialog):
         btn_autoadd.clicked.connect(self._enable_hardware_autoadd)
         btn_bar.addWidget(btn_autoadd)
 
+        btn_prune = QPushButton("🧹 Prune Stale Radio Contacts")
+        btn_prune.setToolTip("Safely frees slots in Heltec V3 flash memory so new contacts can be received over RF.\nContacts remain permanently saved in your local app database and map.")
+        btn_prune.clicked.connect(self._prune_hardware_contacts)
+        btn_bar.addWidget(btn_prune)
+
         hw_layout.addLayout(btn_bar)
         layout.addWidget(hw_group)
         layout.addStretch()
 
         self.tabs.addTab(tab, "📻 Radio Hardware")
+
+    def _prune_hardware_contacts(self):
+        if not self.driver or not self.driver.is_connected():
+            QMessageBox.information(self, "Radio Offline", "Cannot prune hardware contacts: radio is not connected.")
+            return
+        res = QMessageBox.question(
+            self,
+            "Prune Radio Hardware Contacts",
+            "Are you sure you want to prune stale contacts from your physical Heltec V3's flash memory?\n\n"
+            "• This frees up slots on the radio hardware so new contacts can be discovered over RF.\n"
+            "• Favorites, repeaters, room servers, and contacts heard in the last 48h are protected.\n"
+            "• IMPORTANT: All contacts remain 100% saved in your application database and on your map.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes
+        )
+        if res == QMessageBox.StandardButton.Yes:
+            if hasattr(self.driver, "prune_hardware_contacts_now"):
+                self.driver.prune_hardware_contacts_now()
+                QMessageBox.information(
+                    self,
+                    "Pruning Started",
+                    "Stale contact pruning initiated on Heltec V3 hardware flash.\nAll contacts remain permanently saved in your local app database."
+                )
 
     # --- Manual Contact Logic ---
 

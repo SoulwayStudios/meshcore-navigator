@@ -14,7 +14,7 @@ import time
 from PyQt6.QtCore import QObject, Qt, QUrl, pyqtSignal, pyqtSlot, QTimer, QPoint, QEvent
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QButtonGroup, QComboBox, QFrame, QHBoxLayout, QLabel, QMenu, QProgressBar,
+    QAbstractItemView, QButtonGroup, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu, QProgressBar,
     QPushButton, QSplitter, QVBoxLayout, QWidget, QApplication
 )
 
@@ -56,6 +56,7 @@ from meshcore_tray.core.viewshed_service import ViewshedService
 from meshcore_tray.core.space_weather_service import SpaceWeatherService
 from meshcore_tray.core.satellite_service import SatelliteService
 from meshcore_tray.ui.elevation_profile_widget import ElevationProfileWidget
+from meshcore_tray.ui.activity_timeline_widget import NetworkActivityTimelineWidget
 
 STATIC_VENDOR_DIR = Path(__file__).parent / "static" / "vendor"
 _CACHED_LEAFLET_HTML: Optional[str] = None
@@ -126,10 +127,10 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
         }
 
         :root {
-            --repeater-color: #FFA500;
-            --repeater-hover-color: #FF6600;
-            --companion-color: #10B981;
-            --companion-hover-color: #34D399;
+            --repeater-color: #3B82F6;
+            --repeater-hover-color: #60A5FA;
+            --companion-color: #06B6D4;
+            --companion-hover-color: #22D3EE;
             --favorite-color: #FFD700;
             --dot-size-repeater: 3px;
             --dot-size-companion: 2.5px;
@@ -138,9 +139,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             --visualised-path-color: #FF00FF;
             --visualised-heading-color: #FF00FF;
             --orbital-repeater-color: #FFD335;
-            --room-server-color: #FF00FF;
-            --room-server-hover-color: #FF55FF;
-            --dot-size-room: 7px;
+            --room-server-color: #A855F7;
+            --room-server-hover-color: #C084FC;
+            --dot-size-room: 9px;
         }
 
         @keyframes pathPulse {
@@ -611,14 +612,18 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             box-shadow: 0 0 6px #38BDF8;
         }
 
-        /* Room server nodes: square rotated 45deg (diamond) with luminous magenta glow */
+        /* Room server nodes: square rotated 45deg (diamond) with luminous magenta glow and crisp white border */
+        .node-marker-wrap-room {
+            z-index: 12000 !important;
+        }
         .node-dot-room {
-            width: var(--dot-size-room, 7px);
-            height: var(--dot-size-room, 7px);
+            width: var(--dot-size-room, 9px);
+            height: var(--dot-size-room, 9px);
             border-radius: 0% !important;
             transform: rotate(45deg);
-            background: var(--room-server-color, #FF00FF);
-            box-shadow: 0 0 8px var(--room-server-color, #FF00FF);
+            background: var(--room-server-color, #D946EF);
+            box-shadow: 0 0 10px var(--room-server-color, #D946EF), 0 0 4px #FFFFFF;
+            border: 1.5px solid #FFFFFF !important;
         }
 
         /* Phantom repeater nodes: black dot with slate-gray border and dark shadow */
@@ -659,8 +664,8 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
         }
         .node-marker-wrap:hover .node-dot-room {
             transform: rotate(45deg) scale(2.6) !important;
-            background: var(--room-server-hover-color, #FF55FF) !important;
-            box-shadow: 0 0 16px var(--room-server-hover-color, #FF55FF);
+            background: var(--room-server-hover-color, #F0ABFC) !important;
+            box-shadow: 0 0 16px var(--room-server-hover-color, #F0ABFC), 0 0 6px #FFFFFF;
         }
 
         /* Tactical Radar Blip & Sender Badge */
@@ -685,17 +690,14 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             0% {
                 transform: scale(0.3);
                 opacity: 1.0;
-                border-color: rgba(255, 255, 255, 0.95);
             }
             60% {
                 transform: scale(1.6);
                 opacity: 0.7;
-                border-color: rgba(255, 255, 255, 0.7);
             }
             100% {
                 transform: scale(2.4);
                 opacity: 0.0;
-                border-color: rgba(255, 255, 255, 0);
             }
         }
         .radar-ping-ring {
@@ -703,10 +705,11 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             width: 14px;
             height: 14px;
             border-radius: 50%;
-            border: 1.5px solid #FFFFFF;
-            background: rgba(255, 255, 255, 0.12);
+            border: 1.5px solid currentColor;
+            background: rgba(59, 130, 246, 0.15);
             animation: radar-ping-ring 1.0s ease-out infinite;
             pointer-events: none;
+            box-sizing: border-box;
         }
 
         /* Crisp central white ping dot */
@@ -1296,6 +1299,130 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             line-height: 1;
         }
         .activity-bar-close:hover {
+            color: #FFFFFF;
+        }
+
+        /* Floating New Nodes Discovery Panel - Discord Grey Theme */
+        .new-nodes-panel {
+            position: absolute;
+            bottom: 24px;
+            left: 12px;
+            z-index: 1000;
+            width: 275px;
+            padding: 8px 10px 8px 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            user-select: none;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            box-sizing: border-box;
+            background: rgba(30, 31, 34, 0.96) !important;
+            backdrop-filter: blur(12px) !important;
+            -webkit-backdrop-filter: blur(12px) !important;
+            border: 1px solid #383A40 !important;
+            border-radius: 8px !important;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.65) !important;
+        }
+        .new-nodes-panel:hover, .new-nodes-panel.active-drag {
+            border-color: #FFD700 !important;
+            box-shadow: 0 12px 36px rgba(0, 0, 0, 0.8), 0 0 12px rgba(255, 215, 0, 0.25) !important;
+        }
+        .new-nodes-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid #383A40;
+            padding-bottom: 4px;
+            margin: -2px -2px 2px -2px;
+            flex-shrink: 0;
+            cursor: move;
+        }
+        .new-nodes-title {
+            font-size: 11px;
+            font-weight: 700;
+            color: #FFD700;
+            letter-spacing: 0.5px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            text-transform: uppercase;
+        }
+        .new-nodes-close-btn {
+            background: transparent;
+            border: none;
+            color: #949BA4;
+            font-size: 15px;
+            font-weight: bold;
+            line-height: 1;
+            cursor: pointer;
+            padding: 0 4px;
+            border-radius: 4px;
+            transition: all 0.15s ease;
+        }
+        .new-nodes-close-btn:hover {
+            color: #FFFFFF;
+            background: #ED4245;
+        }
+        .new-nodes-btn-group {
+            display: flex;
+            background: #111214;
+            border: 1px solid #383A40;
+            border-radius: 6px;
+            padding: 2px;
+            gap: 2px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .new-nodes-tf-btn {
+            flex: 1;
+            background: transparent;
+            color: #949BA4;
+            border: none;
+            border-radius: 4px;
+            padding: 4px 2px;
+            font-size: 9.5px;
+            font-weight: 600;
+            cursor: pointer;
+            text-align: center;
+            transition: all 0.15s ease;
+        }
+        .new-nodes-tf-btn:hover {
+            color: #DBDEE1;
+            background: #2B2D31;
+        }
+        .new-nodes-tf-btn.active {
+            background: #2B2D31;
+            border: 1px solid #FFD700;
+            color: #FFD700;
+            font-weight: 700;
+            box-shadow: 0 0 8px rgba(255, 215, 0, 0.3);
+        }
+        .new-nodes-stats-card {
+            background: #111214;
+            border: 1px solid #383A40;
+            border-radius: 6px;
+            padding: 6px 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 9.5px;
+        }
+        .new-nodes-action-btn {
+            background: #2B2D31;
+            border: 1px solid #383A40;
+            color: #DBDEE1;
+            border-radius: 4px;
+            padding: 4px 6px;
+            font-size: 9.5px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            width: 100%;
+            text-align: center;
+        }
+        .new-nodes-action-btn:hover {
+            background: #35373C;
+            border-color: #FFD700;
             color: #FFFFFF;
         }
 
@@ -2526,10 +2653,269 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             margin-top: 1px;
             pointer-events: none;
         }
+
+        /* --- CoreScope Live Packet HUD & Legend Overlays --- */
+        .live-overlay {
+            position: absolute;
+            z-index: 1000;
+            background: rgba(30, 31, 34, 0.96) !important;
+            backdrop-filter: blur(12px) !important;
+            -webkit-backdrop-filter: blur(12px) !important;
+            border-radius: 8px !important;
+            border: 1px solid #383A40 !important;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.65) !important;
+            color: #DBDEE1;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            overflow: hidden;
+            transition: transform 0.2s ease, opacity 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+        }
+        .live-overlay:hover {
+            border-color: #5865F2 !important;
+            box-shadow: 0 12px 36px rgba(0, 0, 0, 0.8), 0 0 12px rgba(88, 101, 242, 0.25) !important;
+        }
+        .live-overlay[data-position="bl"] {
+            bottom: 16px;
+            left: 14px;
+            top: auto;
+            right: auto;
+        }
+        .live-overlay[data-position="tl"] {
+            top: 14px;
+            left: 14px;
+            bottom: auto;
+            right: auto;
+        }
+        .live-overlay[data-position="tr"] {
+            top: 14px;
+            right: 14px;
+            bottom: auto;
+            left: auto;
+        }
+        .live-overlay[data-position="br"] {
+            bottom: 16px;
+            right: 14px;
+            top: auto;
+            left: auto;
+        }
+        .live-packet-hud {
+            width: 380px;
+            max-width: calc(100vw - 40px);
+            display: flex;
+            flex-direction: column;
+        }
+        .live-hud-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 7px 10px;
+            background: #2B2D31;
+            border-bottom: 1px solid #383A40;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            color: #F2F3F5;
+        }
+        .live-hud-header-left, .live-hud-header-right {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .panel-corner-btn, .live-hud-btn {
+            background: #1E1F22;
+            border: 1px solid #383A40;
+            color: #949BA4;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            padding: 2px 6px;
+            line-height: 14px;
+            transition: all 0.15s ease;
+        }
+        .panel-corner-btn:hover, .live-hud-btn:hover {
+            background: #35373C;
+            color: #FFFFFF;
+            border-color: #4E5058;
+        }
+        .live-hud-close:hover {
+            background: #ED4245 !important;
+            color: #FFFFFF !important;
+            border-color: #ED4245 !important;
+        }
+        .live-hud-content {
+            background: #111214;
+            max-height: 380px;
+            overflow-y: hidden;
+            display: flex;
+            flex-direction: column;
+            padding: 4px 6px;
+            gap: 2px;
+            /* Top fade removed so the newest incoming packets at the top remain 100% crisp and legible */
+            mask-image: none;
+            -webkit-mask-image: none;
+        }
+        .live-feed-empty {
+            padding: 16px;
+            text-align: center;
+            font-size: 11px;
+            color: #949BA4;
+            font-style: italic;
+        }
+        .live-feed-item {
+            color: #DBDEE1;
+            background: #1E1F22;
+            border: 1px solid #2B2D31;
+            font-size: 11.5px;
+            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+            padding: 4px 6px;
+            border-radius: 5px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: background 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
+            overflow: hidden;
+            cursor: pointer;
+            border-left: 2.5px solid transparent;
+            white-space: nowrap;
+        }
+        .live-feed-item:hover {
+            background: #2B2D31;
+            border-color: #383A40;
+            color: #FFFFFF;
+        }
+        .feed-icon {
+            font-size: 13px;
+            flex-shrink: 0;
+            line-height: 1;
+        }
+        .feed-type {
+            font-weight: 700;
+            font-size: 10px;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            flex-shrink: 0;
+        }
+        .feed-hops {
+            font-size: 9.5px;
+            font-weight: 600;
+            color: #CBD5E1;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 1px 4px;
+            border-radius: 3px;
+            flex-shrink: 0;
+        }
+        .feed-text {
+            color: #CBD5E1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            flex: 1;
+            min-width: 0;
+            font-size: 11px;
+        }
+        .feed-time {
+            font-size: 10px;
+            color: #64748B;
+            flex-shrink: 0;
+            margin-left: auto;
+            padding-left: 6px;
+        }
+
+        /* Legend styling (Screenshot 1) */
+        .live-legend {
+            width: 260px;
+            padding: 0;
+            background: rgba(30, 31, 34, 0.96) !important;
+            border: 1px solid #383A40 !important;
+            border-radius: 8px !important;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.65) !important;
+        }
+        .live-legend-content {
+            background: #111214;
+            padding: 8px 10px 10px 10px;
+        }
+        .legend-section-title {
+            font-size: 9.5px;
+            font-weight: 700;
+            color: #949BA4;
+            letter-spacing: 0.8px;
+            margin-bottom: 6px;
+        }
+        .legend-list {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        .legend-list li {
+            display: flex;
+            align-items: center;
+            font-size: 11px;
+            gap: 7px;
+            color: #E2E8F0;
+        }
+        .legend-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+            box-shadow: 0 0 6px currentColor;
+        }
+        .legend-name {
+            font-weight: 600;
+            color: #F8FAFC;
+        }
+        .legend-desc {
+            color: #94A3B8;
+            font-size: 10.5px;
+        }
     </style>
 </head>
 <body>
     <div id="map"></div>
+
+    <!-- Floating Live Packet Feed HUD Overlay -->
+    <div id="livePacketHud" class="live-overlay live-packet-hud" data-position="bl" style="display: none;">
+        <div class="live-hud-header">
+            <div class="live-hud-header-left">
+                <button class="panel-corner-btn" onclick="cycleHudCorner()" title="Move HUD to next corner" aria-label="Move HUD to next corner">◫</button>
+                <span class="live-hud-title">⚡ LIVE PACKET FEED</span>
+            </div>
+            <div class="live-hud-header-right">
+                <button class="live-hud-btn" onclick="toggleMapLegend()" title="Toggle Types & Roles Legend">🎨 Legend</button>
+                <button class="live-hud-btn live-hud-close" onclick="setPacketHudVisible(false)" title="Close HUD">✕</button>
+            </div>
+        </div>
+        <div class="live-hud-content" id="liveHudContent">
+            <div class="live-feed-empty" id="liveHudEmpty">Waiting for live packets…</div>
+        </div>
+    </div>
+
+    <!-- Floating Map Legend Overlay (Screenshot 1) -->
+    <div id="liveLegend" class="live-overlay live-legend" data-position="br" style="display: none;">
+        <div class="live-hud-header">
+            <span class="live-hud-title">MAP LEGEND</span>
+            <button class="live-hud-btn live-hud-close" onclick="toggleMapLegend(false)" title="Close Legend">✕</button>
+        </div>
+        <div class="live-legend-content">
+            <div class="legend-section-title">PACKET TYPES</div>
+            <ul class="legend-list">
+                <li><span class="legend-dot" style="background:#22C55E"></span> <span class="legend-name">Advert</span> <span class="legend-desc">— Node advertisement</span></li>
+                <li><span class="legend-dot" style="background:#3B82F6"></span> <span class="legend-name">Message</span> <span class="legend-desc">— Group text</span></li>
+                <li><span class="legend-dot" style="background:#F59E0B"></span> <span class="legend-name">Direct</span> <span class="legend-desc">— Direct message</span></li>
+                <li><span class="legend-dot" style="background:#A855F7"></span> <span class="legend-name">Request</span> <span class="legend-desc">— Data request</span></li>
+                <li><span class="legend-dot" style="background:#EC4899"></span> <span class="legend-name">Trace</span> <span class="legend-desc">— Route trace</span></li>
+            </ul>
+            <div class="legend-section-title" style="margin-top:10px;">NODE ROLES</div>
+            <ul class="legend-list">
+                <li><span class="legend-dot" style="background:#3B82F6"></span> <span class="legend-name">Repeater</span></li>
+                <li><span class="legend-dot" style="background:#06B6D4"></span> <span class="legend-name">Companion</span></li>
+                <li><span class="legend-dot" style="background:#A855F7"></span> <span class="legend-name">Room</span></li>
+            </ul>
+        </div>
+    </div>
     <div id="map-loading-hud" class="map-loading-hud hidden">
         <span class="loading-spinner"></span>
         <span id="loading-hud-text">Initializing MeshCore Map &amp; RF Services...</span>
@@ -2782,6 +3168,24 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             <div class="act-leg-item"><span><span class="act-dot" style="background: #10B981;"></span><span id="act-lbl-low">< 25% (Low)</span></span><span id="act-count-low" style="color: #949BA4; font-size: 8.5px;">--</span></div>
         </div>
     </div>
+    <!-- Floating New Nodes Discovery Panel -->
+    <div id="new-nodes-panel" class="new-nodes-panel map-overlay-panel" style="display: none;">
+        <div class="map-overlay-header new-nodes-header" id="new-nodes-drag-handle">
+            <div class="new-nodes-title"><span class="map-drag-handle-grip">⠿</span>👋 NEW NODES DISCOVERY</div>
+            <button class="new-nodes-close-btn" onclick="closeNewNodes()" title="Close New Nodes View">×</button>
+        </div>
+        <div class="new-nodes-btn-group">
+            <button id="nn-btn-24h" class="new-nodes-tf-btn" onclick="setNewNodesTimeframe(24)">1 day</button>
+            <button id="nn-btn-72h" class="new-nodes-tf-btn active" onclick="setNewNodesTimeframe(72)">3 days</button>
+            <button id="nn-btn-168h" class="new-nodes-tf-btn" onclick="setNewNodesTimeframe(168)">1 week</button>
+            <button id="nn-btn-336h" class="new-nodes-tf-btn" onclick="setNewNodesTimeframe(336)">2 weeks</button>
+        </div>
+        <div class="new-nodes-stats-card">
+            <span style="color: #949BA4;">Discovered: <span id="nn-discovered-count" style="font-family: monospace; color: #FFD700; font-weight: 700;">0 nodes</span></span>
+            <span style="color: #949BA4;">Total Plotted: <span id="nn-total-count" style="color: #F2F3F5; font-weight: 700;">0</span></span>
+        </div>
+        <button class="new-nodes-action-btn" onclick="markAllNodesKnown()" title="Mark all currently discovered nodes as known and start new discovery from now">✓ Mark All Known (Start From Now)</button>
+    </div>
     <!-- Floating Thunderstorm & Radar Panel -->
     <div id="thunderstorm-panel" class="thunderstorm-panel map-overlay-panel" style="display: none;">
         <div class="thunderstorm-header map-overlay-header" id="thunderstorm-drag-handle">
@@ -2924,6 +3328,62 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
 
         L.control.zoom({ position: 'topright' }).addTo(map);
 
+        // --- CoreScope Canvas Animation Engine (Radar Pulses & Particle Beams) ---
+        var TYPE_COLORS = {
+            'ADVERT': '#22C55E', 'GRP_TXT': '#3B82F6', 'TXT_MSG': '#F59E0B', 'ACK': '#6B7280',
+            'REQ': '#A855F7', 'RESPONSE': '#06B6D4', 'TRACE': '#EC4899', 'PATH': '#14B8A6',
+            'ANON_REQ': '#F43F5E', 'GRP_DATA': '#8B5CF6', 'MULTIPART': '#0D9488',
+            'CONTROL': '#B45309', 'RAW_CUSTOM': '#C026D3', 'FLOOD': '#3B82F6', 'DIRECT': '#F59E0B',
+            'UNKNOWN': '#6B7280'
+        };
+
+        map.createPane('animationsPane');
+        map.getPane('animationsPane').style.zIndex = 650;
+        map.getPane('animationsPane').style.pointerEvents = 'none';
+
+        if (!map.getPane('roomServerPane')) {
+            map.createPane('roomServerPane');
+            map.getPane('roomServerPane').style.zIndex = 620; // Explicit layer above standard markerPane (600)
+        }
+
+        var animCanvas = document.createElement('canvas');
+        animCanvas.id = 'meshcoreAnimCanvas';
+        animCanvas.style.cssText = 'position:absolute; pointer-events:none; top:0; left:0;';
+        map.getPane('animationsPane').appendChild(animCanvas);
+        var animCtx = animCanvas.getContext('2d');
+        var canvasTopLeft = { x: 0, y: 0 };
+        var activePulses = [];
+        var activeAnimations = [];
+        var isCanvasAnimating = false;
+        var _lastAnimTime = 0;
+
+        function updateAnimCanvas() {
+            if (!animCanvas || !map) return;
+            var size = map.getSize();
+            if (!size || size.x === 0 || size.y === 0) return;
+            var padX = Math.round(size.x * 0.2);
+            var padY = Math.round(size.y * 0.2);
+            var w = size.x + padX * 2;
+            var h = size.y + padY * 2;
+            var dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+            animCanvas.width = w * dpr;
+            animCanvas.height = h * dpr;
+            animCanvas.style.width = w + 'px';
+            animCanvas.style.height = h + 'px';
+            animCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+            var pixelBounds = map.getPixelBounds();
+            var min = pixelBounds.min.subtract([padX, padY]);
+            canvasTopLeft = min.subtract(map.getPixelOrigin());
+            L.DomUtil.setPosition(animCanvas, canvasTopLeft);
+        }
+
+        map.on('move', updateAnimCanvas);
+        map.on('zoom', updateAnimCanvas);
+        map.on('resize', updateAnimCanvas);
+        map.on('viewreset', updateAnimCanvas);
+        setTimeout(updateAnimCanvas, 150);
+
         // Base Layer 1: Esri World Dark Gray Canvas Base
         var canvasBaseLayer = L.tileLayer('https://services.arcgisonline.com/arcgis/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
             maxZoom: 16,
@@ -2950,18 +3410,71 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             console.warn('[Leaflet Base Tile Error] Topo: ' + (err.tile ? err.tile.src : 'unknown'));
         });
 
+        // Base Layer 3: CoreScope Dark (Carto Dark Matter — pitch black landmass with dark grey ocean/sea)
+        var cartoApiKey = '';
+        function getCartoTileUrl(key) {
+            var k = (key !== undefined && key !== null && String(key).trim() !== '') ? String(key).trim() : cartoApiKey;
+            var base = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+            return k ? (base + '?key=' + encodeURIComponent(k)) : base;
+        }
+
+        var corescopeBaseLayer = L.tileLayer(getCartoTileUrl(), {
+            maxZoom: 19,
+            subdomains: ['a', 'b', 'c', 'd'],
+            updateWhenIdle: true,
+            updateWhenZooming: false,
+            keepBuffer: 2,
+            attribution: '© OpenStreetMap contributors © CARTO'
+        });
+        corescopeBaseLayer.on('tileerror', function(err) {
+            console.warn('[Leaflet Base Tile Error] CoreScope: ' + (err.tile ? err.tile.src : 'unknown'));
+        });
+
+        function setCartoApiKey(key) {
+            cartoApiKey = (key ? String(key).trim() : '');
+            if (corescopeBaseLayer && corescopeBaseLayer.setUrl) {
+                corescopeBaseLayer.setUrl(getCartoTileUrl(cartoApiKey));
+            }
+        }
+        window.setCartoApiKey = setCartoApiKey;
+
+        // Dedicated pane for Reference labels at zIndex 380 so town/city names stay legible above tropo colors
+        map.createPane('labelsPane');
+        map.getPane('labelsPane').style.zIndex = 380;
+        map.getPane('labelsPane').style.pointerEvents = 'none';
+
+        // Reference labels layer (Esri Dark Gray Reference) for Canvas and Topo layers
+        var esriRefLayer = L.tileLayer('https://services.arcgisonline.com/arcgis/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
+            maxZoom: 16,
+            opacity: 0.85,
+            updateWhenIdle: true,
+            updateWhenZooming: false,
+            keepBuffer: 2,
+            pane: 'labelsPane'
+        });
+
         // Default to Canvas base layer initially
         canvasBaseLayer.addTo(map);
+        esriRefLayer.addTo(map);
         var currentBaseLayerType = 'canvas';
 
         function setBaseMapLayer(type) {
-            if (type === 'topo') {
-                if (map.hasLayer(canvasBaseLayer)) map.removeLayer(canvasBaseLayer);
-                if (!map.hasLayer(topoBaseLayer)) map.addLayer(topoBaseLayer);
+            type = (type || 'canvas').toLowerCase();
+            if (map.hasLayer(canvasBaseLayer)) map.removeLayer(canvasBaseLayer);
+            if (map.hasLayer(topoBaseLayer)) map.removeLayer(topoBaseLayer);
+            if (map.hasLayer(corescopeBaseLayer)) map.removeLayer(corescopeBaseLayer);
+
+            if (type === 'corescope' || type === 'carto') {
+                map.addLayer(corescopeBaseLayer);
+                if (map.hasLayer(esriRefLayer)) map.removeLayer(esriRefLayer);
+                currentBaseLayerType = 'corescope';
+            } else if (type === 'topo') {
+                map.addLayer(topoBaseLayer);
+                if (!map.hasLayer(esriRefLayer)) map.addLayer(esriRefLayer);
                 currentBaseLayerType = 'topo';
             } else {
-                if (map.hasLayer(topoBaseLayer)) map.removeLayer(topoBaseLayer);
-                if (!map.hasLayer(canvasBaseLayer)) map.addLayer(canvasBaseLayer);
+                map.addLayer(canvasBaseLayer);
+                if (!map.hasLayer(esriRefLayer)) map.addLayer(esriRefLayer);
                 currentBaseLayerType = 'canvas';
             }
         }
@@ -2987,21 +3500,6 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
         map.createPane('tropoPane');
         map.getPane('tropoPane').style.zIndex = 350;
         map.getPane('tropoPane').style.pointerEvents = 'none';
-
-        // Dedicated pane for Reference labels at zIndex 380 so town/city names stay legible above tropo colors
-        map.createPane('labelsPane');
-        map.getPane('labelsPane').style.zIndex = 380;
-        map.getPane('labelsPane').style.pointerEvents = 'none';
-
-        // Esri World Dark Gray Reference - Subtle town/city labels and borders
-        L.tileLayer('https://services.arcgisonline.com/arcgis/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
-            maxZoom: 16,
-            opacity: 0.85,
-            updateWhenIdle: true,
-            updateWhenZooming: false,
-            keepBuffer: 2,
-            pane: 'labelsPane'
-        }).addTo(map);
 
         // Dedicated pane for ADS-B Radar Overlay at zIndex 410 (pointer-events strictly none)
         map.createPane('adsbRadarPane');
@@ -3081,16 +3579,17 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
         var activePaths = [];
         var pyBridge = null;
         var mapColors = {
-            repeater: '#FFA500',
-            companion: '#10B981',
+            repeater: '#3B82F6',
+            companion: '#06B6D4',
             favorite: '#FFD700',
-            watcherStart: '#FF5500',
-            watcherEnd: '#DC2626',
-            messageStart: '#10B981',
-            messageEnd: '#047857',
+            watcherStart: '#3B82F6',
+            watcherEnd: '#1D4ED8',
+            messageStart: '#3B82F6',
+            messageEnd: '#1D4ED8',
             visualisedPath: '#FF00FF',
             visualisedHeading: '#FF00FF',
-            orbitalRepeater: '#FFD335'
+            orbitalRepeater: '#FFD335',
+            roomServer: '#A855F7'
         };
         var visualisedPathLayer = null;
         var visualisedSvgRenderer = L.svg({ padding: 0.5 });
@@ -3517,9 +4016,22 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             }
 
             var isLocal = !!node.is_local;
+            var isRoom = !!node.is_room_server;
+            if (isRoom) {
+                marker.setZIndexOffset(12000);
+                if (el) el.style.zIndex = '12000';
+            } else {
+                if (el) el.style.zIndex = '';
+            }
             var opacity = (!isLocal && freshnessFading) ? calculateFreshnessOpacity(node.last_seen) : 1.0;
             dot.style.opacity = opacity.toFixed(2);
-            dot.style.transform = '';
+            dot.style.transform = isRoom ? 'rotate(45deg)' : '';
+
+            // Clean any inline border styles so nodes fall back cleanly to CSS rules
+            dot.style.removeProperty('border');
+            dot.style.removeProperty('border-color');
+            dot.style.removeProperty('border-width');
+            dot.style.removeProperty('border-style');
 
             // 1. Search Node IDs View
             if (window._searchNodeIdActive) {
@@ -3547,14 +4059,57 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 } else {
                     dot.style.opacity = '0.18';
                     dot.style.setProperty('background-color', '#4E5058', 'important');
-                    dot.style.setProperty('border-color', '#2B2D31', 'important');
+                    dot.style.removeProperty('border');
+                    dot.style.removeProperty('border-color');
+                    dot.style.removeProperty('border-width');
+                    dot.style.removeProperty('border-style');
                     dot.style.setProperty('box-shadow', 'none', 'important');
                     dot.style.transform = 'scale(0.85)';
                 }
                 return;
             }
 
-            // 2. Path Modes
+            // 2. New Nodes Discovery View (Gold Highlight)
+            if (window._newNodesActive) {
+                var tfHours = window._newNodesTimeframeHours || 72;
+                var maxAgeMs = tfHours * 3600 * 1000;
+                var firstSeenStr = node.first_seen || '';
+                var isNew = false;
+                var baselineCutoff = 1704153600000; // 2024-01-02T00:00:00Z
+                if (firstSeenStr) {
+                    try {
+                        var parsed = Date.parse(firstSeenStr);
+                        if (!isNaN(parsed) && parsed > baselineCutoff) {
+                            var ageMs = Date.now() - parsed;
+                            if (ageMs >= 0 && ageMs <= maxAgeMs) {
+                                isNew = true;
+                            }
+                        }
+                    } catch(e) {}
+                }
+
+                if (isNew) {
+                    dot.style.opacity = '1.0';
+                    dot.style.setProperty('background-color', '#FFD700', 'important');
+                    dot.style.setProperty('border', '2px solid #FFFFFF', 'important');
+                    dot.style.setProperty('box-shadow', '0 0 16px rgba(255, 215, 0, 0.95), 0 0 6px #FFFFFF', 'important');
+                    dot.style.transform = (isRoom ? 'rotate(45deg) ' : '') + 'scale(1.4)';
+                    el.style.zIndex = '11000';
+                } else {
+                    dot.style.opacity = '0.18';
+                    dot.style.setProperty('background-color', '#4E5058', 'important');
+                    dot.style.removeProperty('border');
+                    dot.style.removeProperty('border-color');
+                    dot.style.removeProperty('border-width');
+                    dot.style.removeProperty('border-style');
+                    dot.style.setProperty('box-shadow', 'none', 'important');
+                    dot.style.transform = (isRoom ? 'rotate(45deg) ' : '') + 'scale(0.85)';
+                    el.style.zIndex = '';
+                }
+                return;
+            }
+
+            // 3. Path Modes
             if (pathModesActive && !isLocal) {
                 var pLen = (node.out_path_len !== undefined && node.out_path_len !== null) ? Number(node.out_path_len) : -1;
                 var pMode = (node.out_path_hash_mode !== undefined && node.out_path_hash_mode !== null) ? Number(node.out_path_hash_mode) : -1;
@@ -3598,7 +4153,10 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     if (isFiltered) {
                         dot.style.opacity = '0.15';
                         dot.style.removeProperty('background-color');
+                        dot.style.removeProperty('border');
                         dot.style.removeProperty('border-color');
+                        dot.style.removeProperty('border-width');
+                        dot.style.removeProperty('border-style');
                         dot.style.removeProperty('box-shadow');
                     } else {
                         var scCol = scMeta.color || '#00E5FF';
@@ -3612,7 +4170,10 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     }
                 } else {
                     dot.style.removeProperty('background-color');
+                    dot.style.removeProperty('border');
                     dot.style.removeProperty('border-color');
+                    dot.style.removeProperty('border-width');
+                    dot.style.removeProperty('border-style');
                     dot.style.removeProperty('box-shadow');
                     dot.style.opacity = window._scopeHighlight ? '0.20' : ((window._activeScopeFilter !== 'all') ? '0.15' : '0.4');
                 }
@@ -3688,9 +4249,13 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 }
             } else {
                 dot.style.removeProperty('background-color');
+                dot.style.removeProperty('border');
                 dot.style.removeProperty('border-color');
+                dot.style.removeProperty('border-width');
+                dot.style.removeProperty('border-style');
                 dot.style.removeProperty('box-shadow');
-                el.style.zIndex = '';
+                dot.style.transform = isRoom ? 'rotate(45deg)' : '';
+                el.style.zIndex = isRoom ? '12000' : '';
             }
         }
 
@@ -4403,15 +4968,34 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                         actInfo = '<div style="font-size: 10px; color: ' + actBadgeCol + '; font-weight: bold; margin-top: 2px;">🔥 Activity (' + activityTimeframeHours + 'h): ' + cAct + ' msgs (' + actLabel + ')</div>';
                     }
 
+                    var newBadge = '';
+                    if (window._newNodesActive) {
+                        var tfH = window._newNodesTimeframeHours || 72;
+                        var fsStr = node.first_seen || '';
+                        var baselineCutoff = 1704153600000; // 2024-01-02T00:00:00Z
+                        if (fsStr) {
+                            try {
+                                var pTs = Date.parse(fsStr);
+                                if (!isNaN(pTs) && pTs > baselineCutoff && (Date.now() - pTs) <= (tfH * 3600 * 1000)) {
+                                    newBadge = '<div style="font-size: 10px; color: #FFD700; font-weight: bold; margin-top: 2px;">👋 Newly Discovered Node</div>';
+                                }
+                            } catch(e) {}
+                        }
+                    }
+
                     var tipContent = '<div style="text-align: center; line-height: 1.35;">' +
                         '<div>' + phantomPrefix + starPrefix + '<b>' + safeAlias + '</b></div>' +
                         '<div style="font-size: 10px; color: #9CA3AF; margin-top: 2px;">Last heard: ' + lastHeardStr + '</div>' +
                         '<div style="font-size: 10px; margin-top: 2px;">' + pathStr + '</div>' +
                         actInfo +
+                        newBadge +
                         '</div>';
 
                     seen[node.node_id] = true;
                     var marker = markers[node.node_id];
+                    var zOffset = isRoom ? 12000 : (isLocal ? 6000 : (isFav ? 2000 : 0));
+                    var paneName = isRoom ? 'roomServerPane' : 'markerPane';
+                    var wrapClass = 'node-marker-wrap' + (isRoom ? ' node-marker-wrap-room' : '');
 
                     if (marker) {
                         var curLL = marker.getLatLng();
@@ -4420,22 +5004,27 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                         }
                         marker._nodeData = node;
                         var icon = L.divIcon({
-                            className: 'node-marker-wrap',
+                            className: wrapClass,
                             html: '<div class="' + dotClass + '"' + styleAttr + '></div>',
                             iconSize: [20, 20],
                             iconAnchor: [10, 10]
                         });
                         marker.setIcon(icon);
+                        marker.setZIndexOffset(zOffset);
                         applyNodeMarkerStyling(marker, node);
                         marker.setTooltipContent(tipContent);
                     } else {
                         var icon = L.divIcon({
-                            className: 'node-marker-wrap',
+                            className: wrapClass,
                             html: '<div class="' + dotClass + '"' + styleAttr + '></div>',
                             iconSize: [20, 20],
                             iconAnchor: [10, 10]
                         });
-                        marker = L.marker([node.lat, node.lon], { icon: icon }).addTo(map);
+                        marker = L.marker([node.lat, node.lon], {
+                            icon: icon,
+                            pane: paneName,
+                            zIndexOffset: zOffset
+                        }).addTo(map);
                         marker._nodeData = node;
                         applyNodeMarkerStyling(marker, node);
                         marker.bindTooltip(tipContent, {
@@ -4510,6 +5099,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             }
 
             renderCompanionOrbitals();
+            if (window._newNodesActive) {
+                updateNewNodesStats();
+            }
         }
 
         function setCompanionOrbitalsVisible(active, dockedData) {
@@ -4854,8 +5446,15 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             });
         }
 
-        function pulseOriginNode(coord, senderId, senderName) {
+        var _recentNodePings = {};
+        function pulseOriginNode(coord, senderId, senderName, color) {
             if (!coord || coord.length < 2) return;
+            var pingKey = (senderId || '') + ':' + coord[0].toFixed(4) + ',' + coord[1].toFixed(4);
+            var now = performance.now();
+            if (_recentNodePings[pingKey] && (now - _recentNodePings[pingKey] < 1200)) {
+                return;
+            }
+            _recentNodePings[pingKey] = now;
 
             var displayName = senderName || '';
             var originMarker = senderId && markers[senderId] ? markers[senderId] : null;
@@ -4879,13 +5478,18 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             // Clean up any HTML tags from tooltip
             var cleanName = displayName.replace(/<[^>]*>/g, '').trim();
 
-            // Add sleek tactical radar blip + floating sender badge
+            var pingColor = color || '#3B82F6';
+            var ringStyle = 'border-color: ' + pingColor + '; background: ' + (pingColor.startsWith('#') ? (pingColor + '25') : 'rgba(59, 130, 246, 0.15)') + ';';
+            var dotStyle = 'background: ' + pingColor + '; box-shadow: 0 0 8px ' + pingColor + ';';
+            var badgeStyle = 'border-color: ' + (pingColor.startsWith('#') ? (pingColor + '55') : 'rgba(59, 130, 246, 0.35)') + ';';
+
+            // Add sleek tactical radar blip + floating sender badge matching packet type
             var blipIcon = L.divIcon({
                 className: 'radar-blip-wrap',
                 html: '<div class="radar-blip-container">' +
-                          '<div class="radar-ping-ring"></div>' +
-                          '<div class="radar-center-dot"></div>' +
-                          '<div class="radar-sender-badge">' + cleanName + '</div>' +
+                          '<div class="radar-ping-ring" style="' + ringStyle + '"></div>' +
+                          '<div class="radar-center-dot" style="' + dotStyle + '"></div>' +
+                          '<div class="radar-sender-badge" style="' + badgeStyle + '">' + cleanName + '</div>' +
                       '</div>',
                 iconSize: [20, 20],
                 iconAnchor: [10, 10]
@@ -4900,97 +5504,354 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             }, 3000);
         }
 
-        function drawPacketPath(coords, meta) {
-            if (!coords || coords.length < 2) return;
+        function renderCanvasAnimations(now) {
+            if (!animCtx) return;
+            if (activePulses.length === 0 && activeAnimations.length === 0) {
+                isCanvasAnimating = false;
+                animCtx.clearRect(0, 0, animCanvas.clientWidth, animCanvas.clientHeight);
+                return;
+            }
 
-            // Trigger tactical radar blip and sender badge at origin for 3 seconds
-            pulseOriginNode(coords[0], meta ? meta.sender_id : null, meta ? meta.sender_name : null);
+            var dt = Math.min(32, now - (_lastAnimTime || now));
+            _lastAnimTime = now;
+            var dtSec = dt / 1000.0;
 
-            // Group sub-segments for this path
-            var pathGroup = L.layerGroup().addTo(map);
+            animCtx.clearRect(0, 0, animCanvas.clientWidth, animCanvas.clientHeight);
+            var W = animCanvas.clientWidth;
+            var H = animCanvas.clientHeight;
 
-            // Interpolate path into smooth sub-steps from origin to destination
-            var totalSubSteps = Math.max(12, (coords.length - 1) * 6);
-            var flatPoints = [];
+            // 1. Render Pulses (Expanding Radar Rings)
+            for (var i = activePulses.length - 1; i >= 0; i--) {
+                var p = activePulses[i];
+                p.r += 62 * dtSec;
+                p.op -= 1.15 * dtSec;
+                p.hl_r += 24 * dtSec;
+                p.hl_op -= 1.35 * dtSec;
 
-            for (var seg = 0; seg < coords.length - 1; seg++) {
-                var p0 = coords[seg];
-                var p1 = coords[seg + 1];
-                var subCount = Math.max(3, Math.round(totalSubSteps / (coords.length - 1)));
-                for (var s = 0; s < subCount; s++) {
-                    var t = s / subCount;
-                    var lat = p0[0] + (p1[0] - p0[0]) * t;
-                    var lon = p0[1] + (p1[1] - p0[1]) * t;
-                    flatPoints.push([lat, lon]);
+                if (p.op <= 0 || (now - p.startTime > 5000)) {
+                    activePulses.splice(i, 1);
+                    continue;
+                }
+
+                var layerPt = map.latLngToLayerPoint(p.pos);
+                var px = layerPt.x - canvasTopLeft.x;
+                var py = layerPt.y - canvasTopLeft.y;
+
+                if (px >= -p.r && px <= W + p.r && py >= -p.r && py <= H + p.r) {
+                    // Inner expanding pulse ring
+                    animCtx.beginPath();
+                    animCtx.arc(px, py, p.r, 0, Math.PI * 2);
+                    animCtx.lineWidth = Math.max(0.4, 3.0 - p.r * 0.04);
+                    animCtx.strokeStyle = p.color;
+                    animCtx.globalAlpha = Math.max(0, p.op);
+                    animCtx.stroke();
+
+                    // Outer tactical highlight ring
+                    if (p.hl_op > 0) {
+                        animCtx.beginPath();
+                        animCtx.arc(px, py, p.hl_r, 0, Math.PI * 2);
+                        animCtx.lineWidth = p.hl_op > 0.4 ? 3 : 2;
+                        animCtx.strokeStyle = p.color;
+                        animCtx.globalAlpha = Math.max(0, p.hl_op);
+                        animCtx.stroke();
+                    }
                 }
             }
-            flatPoints.push(coords[coords.length - 1]);
+            animCtx.globalAlpha = 1.0;
 
-            // Draw thin lines starting strong orange (#FF5500), fading out to red (#DC2626)
-            // Or if green (incoming message route):
-            // Starting radiant bright green (#10B981 / rgb(16, 185, 129)), fading towards deep emerald (#047857 / rgb(4, 120, 87))
-            var isGreen = meta && (meta.color === 'green' || meta.is_incoming);
-            var startCol = isGreen ? mapColors.messageStart : mapColors.watcherStart;
-            var endCol = isGreen ? mapColors.messageEnd : mapColors.watcherEnd;
-            var c0 = hexToRgb(startCol);
-            var c1 = hexToRgb(endCol);
+            // 2. Render Traveling Particle Beams (CoreScope Contrail + Dot)
+            for (var j = activeAnimations.length - 1; j >= 0; j--) {
+                var anim = activeAnimations[j];
+                anim.progress += dt / (anim.duration || 550);
+                var t = Math.min(1.0, anim.progress);
 
-            var subPolylines = [];
-            for (var i = 0; i < flatPoints.length - 1; i++) {
-                var ratio = i / Math.max(1, flatPoints.length - 2);
-                var r = Math.round(c0[0] + (c1[0] - c0[0]) * ratio);
-                var g = Math.round(c0[1] + (c1[1] - c0[1]) * ratio);
-                var b = Math.round(c0[2] + (c1[2] - c0[2]) * ratio);
-                var baseOpacity = 0.95 - ratio * 0.55; // 0.95 at origin down to 0.40 at destination
+                var fromPt = map.latLngToLayerPoint(anim.from);
+                var toPt = map.latLngToLayerPoint(anim.to);
+                var fx = fromPt.x - canvasTopLeft.x;
+                var fy = fromPt.y - canvasTopLeft.y;
+                var tx = toPt.x - canvasTopLeft.x;
+                var ty = toPt.y - canvasTopLeft.y;
 
-                var color = 'rgb(' + r + ',' + g + ',' + b + ')';
-                var poly = L.polyline([flatPoints[i], flatPoints[i + 1]], {
-                    color: color,
-                    weight: 2,
-                    opacity: baseOpacity
-                }).addTo(pathGroup);
-                poly._baseOpacity = baseOpacity;
-                subPolylines.push(poly);
+                var curX = fx + (tx - fx) * t;
+                var curY = fy + (ty - fy) * t;
+
+                // Contrail glow
+                animCtx.beginPath();
+                animCtx.moveTo(fx, fy);
+                animCtx.lineTo(curX, curY);
+                animCtx.strokeStyle = anim.color;
+                animCtx.lineWidth = 6;
+                animCtx.globalAlpha = (anim.opacity || 0.9) * 0.25;
+                animCtx.lineCap = 'round';
+                animCtx.stroke();
+
+                // Core transmission line
+                animCtx.beginPath();
+                animCtx.moveTo(fx, fy);
+                animCtx.lineTo(curX, curY);
+                if (anim.isDashed) {
+                    animCtx.setLineDash([6, 8]);
+                    animCtx.lineWidth = 2;
+                } else {
+                    animCtx.lineWidth = 2.5;
+                }
+                animCtx.strokeStyle = anim.color;
+                animCtx.globalAlpha = anim.opacity || 0.9;
+                animCtx.stroke();
+                animCtx.setLineDash([]);
+
+                // Leading glowing particle dot
+                animCtx.beginPath();
+                animCtx.arc(curX, curY, 3.8, 0, Math.PI * 2);
+                animCtx.fillStyle = '#FFFFFF';
+                animCtx.fill();
+                animCtx.lineWidth = 1.8;
+                animCtx.strokeStyle = anim.color;
+                animCtx.stroke();
+                animCtx.globalAlpha = 1.0;
+
+                if (t >= 1.0) {
+                    activeAnimations.splice(j, 1);
+                    triggerCanvasPulse(anim.to, anim.color);
+                    if (anim.onComplete) {
+                        anim.onComplete();
+                    }
+                }
             }
 
-            var infoText = '';
-            if (isGreen) {
-                var chanStr = meta.channel ? ' on #' + meta.channel.replace(/^#/, '') : '';
-                var senderStr = meta.sender_name ? ' from ' + meta.sender_name : '';
-                infoText = '📥 Incoming Route: ' + (meta.hops || coords.length - 1) + ' hop(s)' + senderStr + chanStr;
+            if (activePulses.length > 0 || activeAnimations.length > 0) {
+                requestAnimationFrame(renderCanvasAnimations);
             } else {
-                infoText = 'Watcher: ' + (meta.hops || coords.length - 1) + ' hop(s) ' + (meta.route_type || '');
+                isCanvasAnimating = false;
+                animCtx.clearRect(0, 0, animCanvas.clientWidth, animCanvas.clientHeight);
             }
-            pathGroup.bindTooltip(infoText, { sticky: true });
-            activePaths.push(pathGroup);
-
-            // Hold on screen for 10 seconds, then smoothly fade out over 1 second (1000ms)
-            setTimeout(function() {
-                var fadeStart = Date.now();
-                var fadeDuration = 1000;
-
-                var fadeInterval = setInterval(function() {
-                    var elapsed = Date.now() - fadeStart;
-                    var progress = Math.min(1.0, elapsed / fadeDuration);
-                    var fadeMultiplier = 1.0 - progress;
-
-                    for (var j = 0; j < subPolylines.length; j++) {
-                        var p = subPolylines[j];
-                        var currentOp = (p._baseOpacity || 0.8) * fadeMultiplier;
-                        p.setStyle({ opacity: Math.max(0, currentOp) });
-                    }
-
-                    if (progress >= 1.0) {
-                        clearInterval(fadeInterval);
-                        try {
-                            map.removeLayer(pathGroup);
-                            var idx = activePaths.indexOf(pathGroup);
-                            if (idx !== -1) activePaths.splice(idx, 1);
-                        } catch(e) {}
-                    }
-                }, 50);
-            }, 10000);
         }
+
+        var _recentPulses = {};
+        function triggerCanvasPulse(coord, color) {
+            if (!coord || !map) return;
+            var pKey = (coord[0] !== undefined && coord[1] !== undefined) ? (coord[0].toFixed(4) + ',' + coord[1].toFixed(4)) : '';
+            var now = performance.now();
+            if (pKey && _recentPulses[pKey] && (now - _recentPulses[pKey] < 800)) {
+                return;
+            }
+            if (pKey) _recentPulses[pKey] = now;
+            activePulses.push({
+                pos: coord,
+                color: color || '#3B82F6',
+                r: 3,
+                op: 0.95,
+                hl_r: 10,
+                hl_op: 0.95,
+                startTime: performance.now()
+            });
+            if (!isCanvasAnimating) {
+                isCanvasAnimating = true;
+                _lastAnimTime = performance.now();
+                requestAnimationFrame(renderCanvasAnimations);
+            }
+        }
+        window.triggerCanvasPulse = triggerCanvasPulse;
+
+        var _recentPathSignatures = {};
+        function drawPacketPath(coords, meta) {
+            if (!coords || coords.length < 2) return;
+            meta = meta || {};
+
+            var pathSig = (meta.packet_id || '') + ':' + (meta.channel || '') + ':' + (meta.text || '') + ':' + coords[0].join(',') + '->' + coords[coords.length - 1].join(',');
+            var now = performance.now();
+            if (pathSig.length > 5 && _recentPathSignatures[pathSig] && (now - _recentPathSignatures[pathSig] < 2000)) {
+                return;
+            }
+            _recentPathSignatures[pathSig] = now;
+
+            var pType = (meta.payload_type || meta.route_type || 'FLOOD').toUpperCase();
+            var beamColor = TYPE_COLORS[pType] || (meta.color && meta.color !== 'orange' && meta.color !== 'green' ? meta.color : (meta.is_incoming ? '#10B981' : '#3B82F6'));
+
+            // Tactical origin radar pulse with matching packet type color
+            triggerCanvasPulse(coords[0], beamColor);
+            pulseOriginNode(coords[0], meta.sender_id, meta.sender_name, beamColor);
+
+            // Sequential CoreScope particle beam execution across hops
+            function runHopAnimation(hopIdx) {
+                if (hopIdx >= coords.length - 1) {
+                    triggerCanvasPulse(coords[coords.length - 1], beamColor);
+                    pulseOriginNode(coords[coords.length - 1], meta.recipient_id, meta.recipient_name, beamColor);
+                    return;
+                }
+
+                activeAnimations.push({
+                    from: coords[hopIdx],
+                    to: coords[hopIdx + 1],
+                    progress: 0,
+                    duration: 520,
+                    color: beamColor,
+                    isDashed: Boolean(meta.is_speculative || meta.is_ghost),
+                    onComplete: function() {
+                        runHopAnimation(hopIdx + 1);
+                    }
+                });
+                if (!isCanvasAnimating) {
+                    isCanvasAnimating = true;
+                    _lastAnimTime = performance.now();
+                    requestAnimationFrame(renderCanvasAnimations);
+                }
+            }
+            runHopAnimation(0);
+        }
+        window.triggerCoreScopeTrace = drawPacketPath;
+
+        // --- CoreScope Live Packet HUD Controls ---
+        window.setPacketHudVisible = function(visible) {
+            var el = document.getElementById('livePacketHud');
+            if (el) el.style.display = visible ? 'flex' : 'none';
+            if (window.pyBridge && window.pyBridge.on_packet_hud_toggled) {
+                window.pyBridge.on_packet_hud_toggled(Boolean(visible));
+            }
+        };
+
+        window.toggleMapLegend = function(force) {
+            var el = document.getElementById('liveLegend');
+            if (!el) return;
+            var show = (force !== undefined) ? Boolean(force) : (el.style.display === 'none');
+            el.style.display = show ? 'block' : 'none';
+            if (window.pyBridge && window.pyBridge.on_map_legend_toggled) {
+                window.pyBridge.on_map_legend_toggled(Boolean(show));
+            }
+        };
+
+        window.cycleHudCorner = function() {
+            var el = document.getElementById('livePacketHud');
+            if (!el) return;
+            var corners = ['bl', 'tl', 'tr', 'br'];
+            var curr = el.getAttribute('data-position') || 'bl';
+            var next = corners[(corners.indexOf(curr) + 1) % corners.length];
+            el.setAttribute('data-position', next);
+        };
+
+        var _recentHudEntries = {};
+
+        window.addPacketToHud = function(meta, coords) {
+            var feed = document.getElementById('liveHudContent');
+            if (!feed) return;
+            var empty = document.getElementById('liveHudEmpty');
+            if (empty) empty.style.display = 'none';
+
+            meta = meta || {};
+            var pType = (meta.payload_type || meta.route_type || 'FLOOD').toUpperCase();
+            var color = TYPE_COLORS[pType] || '#3B82F6';
+
+            var pSource = (meta.source || 'radio').toLowerCase();
+            var isRadio = (pSource !== 'mqtt');
+
+            // Unique event signature - specific to message payload, packet ID, node advert, or raw hex
+            var eventKey = '';
+            if (meta.channel && meta.text && meta.text.trim()) {
+                eventKey = 'msg:' + meta.channel.toLowerCase().replace('#', '') + ':' + meta.text.trim();
+            } else if (meta.text && meta.text.trim()) {
+                eventKey = 'msg::' + meta.text.trim();
+            } else if (meta.raw_hex && meta.raw_hex.length >= 8) {
+                eventKey = 'hex:' + meta.raw_hex.toUpperCase();
+            } else if (meta.sender_id && pType === 'ADVERT') {
+                eventKey = 'adv:' + meta.sender_id.toLowerCase().replace('!', '');
+            } else if (meta.packet_id && !meta.packet_id.startsWith('path-') && !meta.packet_id.startsWith('mqtt-')) {
+                eventKey = 'pkt:' + meta.packet_id;
+            }
+
+            var now = performance.now();
+
+            if (eventKey) {
+                var cached = _recentHudEntries[eventKey];
+                // Tight 3.0-second deduplication window so valid subsequent messages are never dropped or removed
+                var isRecent = cached && (now - cached.time < 3000);
+
+                if (isRecent) {
+                    if (isRadio && cached.source === 'mqtt') {
+                        // Radio heard the same event within 3 seconds of MQTT:
+                        // Remove the existing MQTT DOM entry so Radio takes priority and replaces it!
+                        var existingItem = feed.querySelector('.live-feed-item[data-event-key="' + CSS.escape(eventKey) + '"][data-source="mqtt"]');
+                        if (existingItem) {
+                            existingItem.remove();
+                        }
+                    } else if (!isRadio && cached.source === 'radio') {
+                        // MQTT received an event that local radio ALREADY heard!
+                        // Drop MQTT immediately so RF retains absolute priority!
+                        return;
+                    } else {
+                        // Duplicate event within window! Drop incoming so only 1 entry exists per event
+                        return;
+                    }
+                }
+
+                _recentHudEntries[eventKey] = { time: now, source: isRadio ? 'radio' : 'mqtt' };
+            }
+
+            var icon = '📦';
+            if (pType.indexOf('GRP_TXT') !== -1 || pType.indexOf('MESSAGE') !== -1 || pType.indexOf('CHAN') !== -1) {
+                icon = '💬';
+            } else if (pType.indexOf('TXT_MSG') !== -1 || pType.indexOf('DIRECT') !== -1) {
+                icon = '💬';
+            } else if (pType.indexOf('RESPONSE') !== -1) {
+                icon = '📡';
+            } else if (pType.indexOf('PATH') !== -1) {
+                icon = '🛣️';
+            } else if (pType.indexOf('TRACE') !== -1) {
+                icon = '🔍';
+            } else if (pType.indexOf('ADVERT') !== -1) {
+                icon = '🟢';
+            }
+
+            var hops = meta.hops || 1;
+            var hopHtml = '<span class="feed-hops">' + hops + '➔</span>';
+
+            var text = meta.text || meta.sender_name || meta.sender_id || '';
+            if (meta.channel) {
+                text = '[' + meta.channel + '] ' + text;
+            }
+            if (text.length > 34) {
+                text = text.substring(0, 34) + '…';
+            }
+
+            var timeStr = (new Date()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+            var srcHtml = '';
+            if (!isRadio) {
+                srcHtml = '<span class="feed-src feed-src-mqtt" style="background:rgba(245,158,11,0.18);color:#F59E0B;border:1px solid #D97706;border-radius:2px;padding:0 3px;font-size:9px;font-weight:bold;margin-right:2px;" title="Ingested from MQTT Broker">MQTT</span>';
+            } else {
+                srcHtml = '<span class="feed-src feed-src-rf" style="background:rgba(16,185,129,0.18);color:#10B981;border:1px solid #059669;border-radius:2px;padding:0 3px;font-size:9px;font-weight:bold;margin-right:2px;" title="LoRa Physical Radio Reception">RF</span>';
+            }
+
+            var item = document.createElement('div');
+            item.className = 'live-feed-item';
+            if (eventKey) {
+                item.setAttribute('data-event-key', eventKey);
+            }
+            item.setAttribute('data-source', isRadio ? 'radio' : 'mqtt');
+            item.style.borderLeftColor = color;
+            item.innerHTML = 
+                '<span class="feed-icon" style="color:' + color + '">' + icon + '</span>' +
+                srcHtml +
+                '<span class="feed-type" style="color:' + color + '">' + escapeHtml(pType) + '</span>' +
+                hopHtml +
+                '<span class="feed-text">' + escapeHtml(text) + '</span>' +
+                '<span class="feed-time">' + timeStr + '</span>';
+
+            item.onclick = function() {
+                if (coords && coords.length >= 2) {
+                    drawPacketPath(coords, meta);
+                }
+            };
+
+            feed.prepend(item);
+
+            // Cap at 30 items
+            var items = feed.querySelectorAll('.live-feed-item');
+            if (items.length > 30) {
+                for (var i = 30; i < items.length; i++) {
+                    items[i].remove();
+                }
+            }
+        };
 
         window._activeVisualisedCoords = null;
         window._activeVisualisedMeta = null;
@@ -5289,6 +6150,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     e.target.closest('.floating-route-close') ||
                     e.target.closest('.tropo-legend-close') ||
                     e.target.closest('.activity-bar-close') ||
+                    e.target.closest('.new-nodes-close-btn') ||
                     e.target.closest('.thunderstorm-close-btn') ||
                     e.target.closest('.aurora-close-btn') ||
                     e.target.closest('.adsb-close-btn')
@@ -5453,6 +6315,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
 
             // Search Node IDs
             makeOverlayDraggable('search-node-id-panel', 'search-node-drag-handle', 'search_node_id');
+
+            // New Nodes Discovery
+            makeOverlayDraggable('new-nodes-panel', 'new-nodes-drag-handle', 'new_nodes');
         }
         setTimeout(initAllDraggableOverlays, 100);
 
@@ -6134,6 +6999,112 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             }
         }
         window.closeActivityHeatmap = closeActivityHeatmap;
+
+        window._newNodesActive = false;
+        window._newNodesTimeframeHours = 72; // default 3 days
+
+        function updateNewNodesStats() {
+            var tfHours = window._newNodesTimeframeHours || 72;
+            var newCount = 0;
+            var totalCount = 0;
+            var now = Date.now();
+            var maxAgeMs = tfHours * 3600 * 1000;
+            var baselineCutoff = 1704153600000; // 2024-01-02T00:00:00Z
+
+            for (var id in markers) {
+                var m = markers[id];
+                if (!m || !m._nodeData) continue;
+                totalCount++;
+                var fs = m._nodeData.first_seen || '';
+                if (fs) {
+                    try {
+                        var parsed = Date.parse(fs);
+                        if (!isNaN(parsed) && parsed > baselineCutoff) {
+                            var ageMs = now - parsed;
+                            if (ageMs >= 0 && ageMs <= maxAgeMs) {
+                                newCount++;
+                            }
+                        }
+                    } catch(e) {}
+                }
+            }
+
+            var discEl = document.getElementById('nn-discovered-count');
+            if (discEl) discEl.textContent = newCount + ' nodes';
+            var totEl = document.getElementById('nn-total-count');
+            if (totEl) totEl.textContent = totalCount;
+        }
+
+        function setNewNodes(enabled, timeframeHours) {
+            window._newNodesActive = !!enabled;
+            if (timeframeHours) window._newNodesTimeframeHours = Number(timeframeHours);
+
+            var panel = document.getElementById('new-nodes-panel');
+            if (panel) {
+                panel.style.display = window._newNodesActive ? 'flex' : 'none';
+                if (window._newNodesActive) {
+                    bringOverlayToFront(panel);
+                }
+            }
+
+            var btns = ['nn-btn-24h', 'nn-btn-72h', 'nn-btn-168h', 'nn-btn-336h'];
+            for (var b = 0; b < btns.length; b++) {
+                var el = document.getElementById(btns[b]);
+                if (el) el.classList.remove('active');
+            }
+            var targetBtn = document.getElementById('nn-btn-' + window._newNodesTimeframeHours + 'h');
+            if (targetBtn) targetBtn.classList.add('active');
+
+            updateNewNodesStats();
+
+            for (var id in markers) {
+                var m = markers[id];
+                if (m && m._nodeData) {
+                    applyNodeMarkerStyling(m, m._nodeData);
+                }
+            }
+        }
+        window.setNewNodes = setNewNodes;
+
+        function setNewNodesTimeframe(hours) {
+            window._newNodesTimeframeHours = Number(hours);
+            var btns = ['nn-btn-24h', 'nn-btn-72h', 'nn-btn-168h', 'nn-btn-336h'];
+            for (var b = 0; b < btns.length; b++) {
+                var el = document.getElementById(btns[b]);
+                if (el) el.classList.remove('active');
+            }
+            var targetBtn = document.getElementById('nn-btn-' + hours + 'h');
+            if (targetBtn) targetBtn.classList.add('active');
+
+            updateNewNodesStats();
+
+            for (var id in markers) {
+                var m = markers[id];
+                if (m && m._nodeData) {
+                    applyNodeMarkerStyling(m, m._nodeData);
+                }
+            }
+
+            if (pyBridge && pyBridge.on_new_nodes_timeframe_changed) {
+                pyBridge.on_new_nodes_timeframe_changed(Number(hours));
+            }
+        }
+        window.setNewNodesTimeframe = setNewNodesTimeframe;
+
+        function markAllNodesKnown() {
+            if (window.pyBridge && window.pyBridge.mark_all_nodes_known) {
+                window.pyBridge.mark_all_nodes_known();
+            }
+        }
+        window.markAllNodesKnown = markAllNodesKnown;
+
+        function closeNewNodes() {
+            setNewNodes(false);
+            if (pyBridge && pyBridge.on_new_nodes_toggled) {
+                pyBridge.on_new_nodes_toggled(false);
+            }
+        }
+        window.closeNewNodes = closeNewNodes;
 
         var wsServerIdx = 0;
         var blitzServers = ['wss://ws7.blitzortung.org', 'wss://ws1.blitzortung.org', 'wss://ws8.blitzortung.org'];
@@ -8579,6 +9550,23 @@ class WebBridge(QObject):
     def on_thunderstorm_toggled(self, enabled: bool):
         self.thunderstorm_toggled_signal.emit(enabled)
 
+    new_nodes_timeframe_changed_signal = pyqtSignal(int)
+    new_nodes_toggled_signal = pyqtSignal(bool)
+
+    @pyqtSlot(int)
+    def on_new_nodes_timeframe_changed(self, hours: int):
+        self.new_nodes_timeframe_changed_signal.emit(hours)
+
+    @pyqtSlot(bool)
+    def on_new_nodes_toggled(self, enabled: bool):
+        self.new_nodes_toggled_signal.emit(enabled)
+
+    mark_all_nodes_known_signal = pyqtSignal()
+
+    @pyqtSlot()
+    def mark_all_nodes_known(self):
+        self.mark_all_nodes_known_signal.emit()
+
     space_weather_toggled_signal = pyqtSignal(bool)
     space_weather_refresh_signal = pyqtSignal()
     space_weather_opacity_signal = pyqtSignal(float)
@@ -8670,6 +9658,22 @@ class WebBridge(QObject):
         except Exception:
             pass
         self.copy_clipboard_signal.emit(text)
+
+    packet_hud_toggled_signal = pyqtSignal(bool)
+    activity_timeline_toggled_signal = pyqtSignal(bool)
+    map_legend_toggled_signal = pyqtSignal(bool)
+
+    @pyqtSlot(bool)
+    def on_packet_hud_toggled(self, visible: bool):
+        self.packet_hud_toggled_signal.emit(visible)
+
+    @pyqtSlot(bool)
+    def on_activity_timeline_toggled(self, visible: bool):
+        self.activity_timeline_toggled_signal.emit(visible)
+
+    @pyqtSlot(bool)
+    def on_map_legend_toggled(self, visible: bool):
+        self.map_legend_toggled_signal.emit(visible)
 
 
 class DraggableOverlayFrame(QFrame):
@@ -8967,6 +9971,9 @@ class MeshMapWidget(QWidget):
     map_ready = pyqtSignal()
     search_node_id_toggled = pyqtSignal(bool)
     lightning_proximity_alert = pyqtSignal(float, int)
+    packet_hud_toggled = pyqtSignal(bool)
+    activity_timeline_toggled = pyqtSignal(bool)
+    map_legend_toggled = pyqtSignal(bool)
 
     def __init__(self, storage=None, config=None, driver=None, parent=None):
         super().__init__(parent)
@@ -8981,12 +9988,16 @@ class MeshMapWidget(QWidget):
         self.show_paths = True
         self.show_companion_orbitals = False
         self.show_search_node_id = False
+        self.show_packet_hud = getattr(self.config.meshcore, "map_show_packet_hud", False) if (self.config and hasattr(self.config, "meshcore")) else False
+        self.show_activity_timeline = getattr(self.config.meshcore, "map_show_activity_timeline", False) if (self.config and hasattr(self.config, "meshcore")) else False
+        self.show_map_legend = False
         self._page_ready = not WEBENGINE_AVAILABLE
         self._last_traced_path_info = None
         self._pending_visualise_msg = None
         self._pending_neighbors_payload = None
         self._watchdog_grace_until = 0.0
         self._watchdog_unanswered = 0
+        self._recent_packet_events = {}
 
         self._initial_loading_active = WEBENGINE_AVAILABLE
         self._stagger_stage = 1 if WEBENGINE_AVAILABLE else 0
@@ -9011,6 +10022,9 @@ class MeshMapWidget(QWidget):
         self.show_thunderstorm = False
         self.thunderstorm_service = ThunderstormService(parent=self)
         self.thunderstorm_service.radar_updated.connect(self._on_thunderstorm_radar_updated)
+
+        self.new_nodes_active = False
+        self.new_nodes_timeframe_hours = getattr(self.config.meshcore if (self.config and hasattr(self.config, "meshcore")) else self.config, "map_new_nodes_timeframe_hours", 72) if self.config else 72
 
         self.show_space_weather = False
         self.space_weather_service = SpaceWeatherService(parent=self)
@@ -9122,6 +10136,9 @@ class MeshMapWidget(QWidget):
             self.bridge.reset_adsb_target_signal.connect(self._on_bridge_reset_adsb_target)
             self.bridge.activity_timeframe_changed_signal.connect(self._on_bridge_activity_timeframe_changed)
             self.bridge.activity_heatmap_toggled_signal.connect(self._on_bridge_activity_heatmap_toggled)
+            self.bridge.new_nodes_timeframe_changed_signal.connect(self._on_bridge_new_nodes_timeframe_changed)
+            self.bridge.new_nodes_toggled_signal.connect(self._on_bridge_new_nodes_toggled)
+            self.bridge.mark_all_nodes_known_signal.connect(self._on_bridge_mark_all_nodes_known)
             self.bridge.thunderstorm_toggled_signal.connect(self._on_bridge_thunderstorm_toggled)
             self.bridge.space_weather_toggled_signal.connect(self.set_space_weather)
             self.bridge.space_weather_refresh_signal.connect(lambda: self.space_weather_service.fetch_weather(force=True))
@@ -9129,6 +10146,9 @@ class MeshMapWidget(QWidget):
             self.bridge.satellite_toggled_signal.connect(self.set_satellites)
             self.bridge.satellite_refresh_signal.connect(lambda: self.satellite_service.refresh_now(force=True))
             self.bridge.search_node_id_toggled_signal.connect(self._on_bridge_search_node_id_toggled)
+            self.bridge.packet_hud_toggled_signal.connect(self._on_bridge_packet_hud_toggled)
+            self.bridge.activity_timeline_toggled_signal.connect(self._on_bridge_activity_timeline_toggled)
+            self.bridge.map_legend_toggled_signal.connect(self._on_bridge_map_legend_toggled)
             self.bridge.lightning_proximity_alert_signal.connect(self._on_bridge_lightning_proximity_alert)
             self.bridge.map_context_menu_signal.connect(
                 lambda lat, lon, x, y: QTimer.singleShot(0, lambda: self._show_map_context_menu(lat, lon, x, y))
@@ -9218,9 +10238,11 @@ class MeshMapWidget(QWidget):
             fl_layout.addWidget(self.btn_age_fade)
 
             self._current_base_layer = getattr(self.config, "map_base_layer", "canvas") if self.config else "canvas"
-            self.btn_base_map = QPushButton("🗺️ Canvas" if self._current_base_layer == "topo" else "🏔️ Topo")
-            self.btn_base_map.setToolTip("Switch Base Map Layer: Dark Canvas vs Dark Topographic (OpenTopoMap)")
+            self.btn_base_map = QPushButton(self._get_base_map_button_label(self._current_base_layer))
+            self.btn_base_map.setToolTip("Switch Base Map: CoreScope Dark vs Dark Canvas vs OpenTopoMap (Click to cycle, right-click for menu)")
             self.btn_base_map.clicked.connect(self._on_toggle_base_map_clicked)
+            self.btn_base_map.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            self.btn_base_map.customContextMenuRequested.connect(self._show_base_map_menu)
             fl_layout.addWidget(self.btn_base_map)
 
             self.floating_controls.adjustSize()
@@ -9415,7 +10437,8 @@ class MeshMapWidget(QWidget):
             self.los_controls.setVisible(show_los)
         else:
             self._current_base_layer = getattr(self.config, "map_base_layer", "canvas") if self.config else "canvas"
-            self.btn_base_map = QPushButton("🗺️ Canvas" if self._current_base_layer == "topo" else "🏔️ Topo")
+            self.btn_base_map = QPushButton(self._get_base_map_button_label(self._current_base_layer))
+            self.btn_base_map.clicked.connect(self._on_toggle_base_map_clicked)
             self.btn_age_fade = QPushButton("⏳ Age Fade")
             self.btn_age_fade.setCheckable(True)
             fade_init = getattr(self.config.meshcore, "node_freshness_fading", True) if self.config else True
@@ -9445,6 +10468,19 @@ class MeshMapWidget(QWidget):
         self.elevation_profile_dock.heights_changed.connect(self._on_dock_heights_changed)
         self.elevation_profile_dock.hide()
         self.map_splitter.addWidget(self.elevation_profile_dock)
+
+        # Bottom Dock: CoreScope Network Activity Timeline Widget
+        self.activity_timeline_dock = NetworkActivityTimelineWidget(
+            storage=self.storage,
+            config=self.config,
+            parent=self.map_splitter
+        )
+        self.activity_timeline_dock.close_requested.connect(
+            lambda: self.set_activity_timeline_visible(False)
+        )
+        self.map_splitter.addWidget(self.activity_timeline_dock)
+        if not self.show_activity_timeline:
+            self.activity_timeline_dock.hide()
 
         self.map_splitter.setStretchFactor(0, 4)
         self.map_splitter.setStretchFactor(1, 1)
@@ -9667,6 +10703,12 @@ class MeshMapWidget(QWidget):
                 self._do_refresh_map_data()
             if hasattr(self, "reforming_overlay"):
                 self.reforming_overlay.hide_reforming()
+            if self.show_packet_hud:
+                self.run_js("if (window.setPacketHudVisible) window.setPacketHudVisible(true);")
+            if getattr(self, "show_map_legend", False):
+                self.run_js("if (window.toggleMapLegend) window.toggleMapLegend(true);")
+            if getattr(self, "show_satellites", False):
+                self.set_satellites(True)
             self.map_ready.emit()
             logger.info("Mesh map staggered initialization completed successfully.")
 
@@ -9894,6 +10936,8 @@ class MeshMapWidget(QWidget):
             self.btn_scopes.blockSignals(False)
             if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
                 self._update_scope_overlays()
+        carto_key = getattr(cfg, "carto_api_key", "")
+        self.run_js(f"if (window.setCartoApiKey) window.setCartoApiKey('{carto_key}');")
         self.refresh_map_data()
 
     def _on_map_loaded(self, ok: bool):
@@ -9921,9 +10965,13 @@ class MeshMapWidget(QWidget):
         self._connect_screen_listener()
         self._start_renderer_watchdog()
 
+        carto_key = getattr(self.config, "carto_api_key", "") if self.config else ""
+        if carto_key:
+            self.run_js(f"if (window.setCartoApiKey) window.setCartoApiKey('{carto_key}');")
+
         base_layer = getattr(self.config, "map_base_layer", "canvas") if self.config else "canvas"
-        if base_layer == "topo":
-            self.run_js("if (window.setBaseMapLayer) window.setBaseMapLayer('topo');")
+        if base_layer in ("topo", "corescope", "carto"):
+            self.run_js(f"if (window.setBaseMapLayer) window.setBaseMapLayer('{base_layer}');")
 
         if getattr(self, "_pending_neighbors_payload", None):
             try:
@@ -9952,6 +11000,10 @@ class MeshMapWidget(QWidget):
             self.refresh_map_data()
             if getattr(self, "show_satellites", False):
                 self.set_satellites(True)
+            if self.show_packet_hud:
+                self.run_js("if (window.setPacketHudVisible) window.setPacketHudVisible(true);")
+            if getattr(self, "show_map_legend", False):
+                self.run_js("if (window.toggleMapLegend) window.toggleMapLegend(true);")
             self.map_ready.emit()
 
     def _on_path_modes_toggle(self):
@@ -10301,15 +11353,197 @@ class MeshMapWidget(QWidget):
             if hasattr(self, "watcher_status"):
                 self.watcher_status.setText("⚡ Line-of-Sight overlay & profile hidden")
 
+    def _get_base_map_button_label(self, layer_type: str) -> str:
+        layer_type = (layer_type or "canvas").lower()
+        if layer_type in ("corescope", "carto"):
+            return "🏔️ Topo / 🗺️ Canvas"
+        elif layer_type == "topo":
+            return "🗺️ Canvas / 🌌 CoreScope"
+        else:
+            return "🌌 CoreScope / 🏔️ Topo"
+
     def _on_toggle_base_map_clicked(self):
-        new_layer = "topo" if getattr(self, "_current_base_layer", "canvas") == "canvas" else "canvas"
-        self.set_base_map_layer(new_layer)
+        curr = getattr(self, "_current_base_layer", "canvas").lower()
+        if curr == "canvas":
+            next_layer = "corescope"
+        elif curr in ("corescope", "carto"):
+            next_layer = "topo"
+        else:
+            next_layer = "canvas"
+        self.set_base_map_layer(next_layer)
+
+    def _show_base_map_menu(self, pos):
+        if not hasattr(self, "btn_base_map"):
+            return
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #1E1F22;
+                color: #F2F3F5;
+                border: 1px solid #35373C;
+                border-radius: 6px;
+                padding: 4px;
+            }
+            QMenu::item {
+                padding: 4px 18px 4px 12px;
+            }
+            QMenu::item:selected {
+                background-color: #2B2D31;
+                color: #60A5FA;
+            }
+        """)
+        curr = getattr(self, "_current_base_layer", "canvas").lower()
+
+        act_corescope = menu.addAction("🌌 CoreScope Dark (Black Land / Grey Sea)")
+        act_corescope.setCheckable(True)
+        act_corescope.setChecked(curr in ("corescope", "carto"))
+        act_corescope.triggered.connect(lambda: self.set_base_map_layer("corescope"))
+
+        act_canvas = menu.addAction("🗺️ Esri Dark Canvas")
+        act_canvas.setCheckable(True)
+        act_canvas.setChecked(curr == "canvas")
+        act_canvas.triggered.connect(lambda: self.set_base_map_layer("canvas"))
+
+        act_topo = menu.addAction("🏔️ OpenTopoMap Relief")
+        act_topo.setCheckable(True)
+        act_topo.setChecked(curr == "topo")
+        act_topo.triggered.connect(lambda: self.set_base_map_layer("topo"))
+
+        menu.addSeparator()
+        act_carto_key = menu.addAction("🔑 Configure Carto API Key (Free)...")
+        act_carto_key.triggered.connect(self.prompt_carto_api_key)
+
+        menu.exec(self.btn_base_map.mapToGlobal(pos))
+
+    def prompt_carto_api_key(self):
+        """Displays modal dialog for entering or obtaining a free CARTO basemap API key."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("CARTO Basemaps API Key")
+        dlg.setFixedWidth(470)
+        dlg.setStyleSheet("""
+            QDialog {
+                background-color: #1E1F22;
+                color: #F2F3F5;
+            }
+            QLabel {
+                color: #DBDEE1;
+                font-size: 12px;
+            }
+            QLineEdit {
+                background-color: #2B2D31;
+                color: #F2F3F5;
+                border: 1px solid #383A40;
+                border-radius: 4px;
+                padding: 6px 10px;
+                font-size: 12px;
+            }
+            QLineEdit:focus {
+                border-color: #3B82F6;
+            }
+            QPushButton {
+                background-color: #2B2D31;
+                color: #F2F3F5;
+                border: 1px solid #383A40;
+                border-radius: 4px;
+                padding: 6px 14px;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #35373C;
+            }
+            QPushButton#btnSaveKey {
+                background-color: #2563EB;
+                color: #FFFFFF;
+                border: 1px solid #1D4ED8;
+                font-weight: bold;
+            }
+            QPushButton#btnSaveKey:hover {
+                background-color: #1D4ED8;
+            }
+            QPushButton#btnGetKey {
+                background-color: #1E3A8A;
+                color: #93C5FD;
+                border: 1px solid #3B82F6;
+                font-weight: bold;
+            }
+            QPushButton#btnGetKey:hover {
+                background-color: #2563EB;
+                color: #FFFFFF;
+            }
+        """)
+
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(12)
+        layout.setContentsMargins(18, 18, 18, 18)
+
+        title_lbl = QLabel("<b>🔑 CARTO Dark Basemap API Key</b>")
+        title_lbl.setStyleSheet("font-size: 14px; color: #60A5FA;")
+        layout.addWidget(title_lbl)
+
+        desc_lbl = QLabel(
+            "CARTO requires an API key for its raster basemaps. "
+            "Without a key, Dark tiles display an <i>'API KEY REQUIRED'</i> watermark.<br><br>"
+            "Keys are <b>100% free</b> (up to 5 million requests/month) and available "
+            "immediately with no credit card required."
+        )
+        desc_lbl.setWordWrap(True)
+        layout.addWidget(desc_lbl)
+
+        btn_get_key = QPushButton("🌐 Get Free Key at carto.com/basemaps/apikey")
+        btn_get_key.setObjectName("btnGetKey")
+        btn_get_key.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://carto.com/basemaps/apikey")))
+        layout.addWidget(btn_get_key)
+
+        lbl_input = QLabel("Paste your CARTO API key:")
+        layout.addWidget(lbl_input)
+
+        cur_key = getattr(self.config, "carto_api_key", "") if self.config else ""
+        txt_key = QLineEdit(cur_key)
+        txt_key.setPlaceholderText("e.g. default_public... or your CARTO key")
+        layout.addWidget(txt_key)
+
+        btn_box = QHBoxLayout()
+        btn_box.addStretch(1)
+
+        btn_clear = QPushButton("Clear")
+        btn_clear.clicked.connect(lambda: txt_key.setText(""))
+        btn_box.addWidget(btn_clear)
+
+        btn_cancel = QPushButton("Cancel")
+        btn_cancel.clicked.connect(dlg.reject)
+        btn_box.addWidget(btn_cancel)
+
+        btn_save = QPushButton("Save & Apply")
+        btn_save.setObjectName("btnSaveKey")
+        btn_box.addWidget(btn_save)
+
+        def _do_save():
+            new_key = txt_key.text().strip()
+            if self.config:
+                self.config.carto_api_key = new_key
+                try:
+                    self.config.save()
+                except Exception:
+                    pass
+            self.run_js(f"window.setCartoApiKey && window.setCartoApiKey('{new_key}');")
+            if hasattr(self, "watcher_status"):
+                if new_key:
+                    self.watcher_status.setText("🔑 CARTO API key applied — map tiles refreshed")
+                else:
+                    self.watcher_status.setText("🔑 CARTO API key cleared")
+            dlg.accept()
+
+        btn_save.clicked.connect(_do_save)
+        layout.addLayout(btn_box)
+
+        dlg.exec()
 
     def set_base_map_layer(self, layer_type: str):
-        """Switches base map layer between 'canvas' (Esri Dark Canvas) and 'topo' (OpenTopoMap Relief)."""
+        """Switches base map layer between 'corescope' (Carto Dark), 'canvas' (Esri Dark Canvas), and 'topo' (OpenTopoMap Relief)."""
+        layer_type = (layer_type or "canvas").lower()
         self._current_base_layer = layer_type
         if hasattr(self, "btn_base_map"):
-            self.btn_base_map.setText("🗺️ Canvas" if layer_type == "topo" else "🏔️ Topo")
+            self.btn_base_map.setText(self._get_base_map_button_label(layer_type))
         if self.config:
             self.config.map_base_layer = layer_type
             try:
@@ -10317,8 +11551,21 @@ class MeshMapWidget(QWidget):
             except Exception:
                 pass
         if hasattr(self, "watcher_status"):
-            layer_name = "Dark Topographic Relief (OpenTopoMap)" if layer_type == "topo" else "Dark Canvas"
+            if layer_type in ("corescope", "carto"):
+                has_key = bool(getattr(self.config, "carto_api_key", "").strip()) if self.config else False
+                if not has_key:
+                    layer_name = "CoreScope Dark (Right-click map button to set free Carto key & remove watermark)"
+                else:
+                    layer_name = "CoreScope Dark (Carto Black Land & Grey Water)"
+            elif layer_type == "topo":
+                layer_name = "Dark Topographic Relief (OpenTopoMap)"
+            else:
+                layer_name = "Dark Canvas (Esri)"
             self.watcher_status.setText(f"🗺️ Base map switched to: {layer_name}")
+        if layer_type in ("corescope", "carto"):
+            carto_key = getattr(self.config, "carto_api_key", "") if self.config else ""
+            if carto_key:
+                self.run_js(f"window.setCartoApiKey && window.setCartoApiKey('{carto_key}');")
         self.run_js(f"window.setBaseMapLayer && window.setBaseMapLayer('{layer_type}');")
 
     def _on_los_toggle_clicked(self):
@@ -10865,6 +12112,42 @@ class MeshMapWidget(QWidget):
     def _on_bridge_activity_heatmap_toggled(self, enabled: bool):
         self.set_activity_heatmap(enabled)
 
+    def set_new_nodes(self, enabled: bool, timeframe_hours: Optional[int] = None):
+        """Toggles the 'New Nodes' discovery view (highlights new nodes in gold, greys out older nodes)."""
+        self.new_nodes_active = bool(enabled)
+        if timeframe_hours is not None:
+            self.new_nodes_timeframe_hours = int(timeframe_hours)
+
+        p = self.window()
+        if p and hasattr(p, "nav_dock") and hasattr(p.nav_dock, "map_layers") and hasattr(p.nav_dock.map_layers, "btn_new_nodes"):
+            p.nav_dock.map_layers.btn_new_nodes.blockSignals(True)
+            p.nav_dock.map_layers.btn_new_nodes.setChecked(self.new_nodes_active)
+            p.nav_dock.map_layers.btn_new_nodes.blockSignals(False)
+
+        if hasattr(self, "watcher_status"):
+            if self.new_nodes_active:
+                self.watcher_status.setText(f"👋 <b>New Nodes:</b> Highlighting nodes discovered in past {self.new_nodes_timeframe_hours}h in gold")
+            else:
+                self.watcher_status.setText("⚡ <b>Watcher:</b> Listening for live RF packet paths...")
+
+        nn_str = "true" if self.new_nodes_active else "false"
+        self.run_js(f"setNewNodes({nn_str}, {self.new_nodes_timeframe_hours});")
+
+    def _on_bridge_new_nodes_timeframe_changed(self, hours: int):
+        self.set_new_nodes(True, timeframe_hours=hours)
+
+    def _on_bridge_new_nodes_toggled(self, enabled: bool):
+        self.set_new_nodes(enabled)
+
+    def _on_bridge_mark_all_nodes_known(self):
+        """Marks all current contacts as known in storage and reloads map nodes."""
+        if self.storage and hasattr(self.storage, "mark_all_contacts_as_known"):
+            self.storage.mark_all_contacts_as_known()
+            self.load_contacts(self.storage.get_contacts())
+            self.run_js("if (window.updateNewNodesStats) window.updateNewNodesStats();")
+            if hasattr(self, "watcher_status"):
+                self.watcher_status.setText("👋 <b>New Nodes:</b> All current nodes marked as known. Starting discovery baseline from now.")
+
     def set_thunderstorm(self, enabled: bool):
         """Toggles real-time thunderstorm radar and lightning strike tracking."""
         self.show_thunderstorm = bool(enabled)
@@ -11017,6 +12300,63 @@ class MeshMapWidget(QWidget):
             } if (local_lat is not None and local_lon is not None) else None
         }
         self.run_js(f"if (window.onSatellitesDataReady) window.onSatellitesDataReady({json.dumps(payload)});")
+
+    def set_packet_hud_visible(self, visible: bool):
+        """Toggles on-map CoreScope Live Packet Feed HUD ticker overlay."""
+        self.show_packet_hud = bool(visible)
+        if self.config and hasattr(self.config, "meshcore"):
+            self.config.meshcore.map_show_packet_hud = self.show_packet_hud
+            try:
+                self.config.save()
+            except Exception:
+                pass
+        vis_str = "true" if self.show_packet_hud else "false"
+        self.run_js(f"if (window.setPacketHudVisible) {{ window.setPacketHudVisible({vis_str}); }}")
+        self.packet_hud_toggled.emit(self.show_packet_hud)
+
+    def _on_bridge_packet_hud_toggled(self, visible: bool):
+        self.show_packet_hud = bool(visible)
+        if self.config and hasattr(self.config, "meshcore"):
+            self.config.meshcore.map_show_packet_hud = self.show_packet_hud
+            try:
+                self.config.save()
+            except Exception:
+                pass
+        self.packet_hud_toggled.emit(self.show_packet_hud)
+
+    def set_activity_timeline_visible(self, visible: bool):
+        """Toggles bottom docked CoreScope Network Activity Timeline split view."""
+        self.show_activity_timeline = bool(visible)
+        if self.config and hasattr(self.config, "meshcore"):
+            self.config.meshcore.map_show_activity_timeline = self.show_activity_timeline
+            try:
+                self.config.save()
+            except Exception:
+                pass
+        if hasattr(self, "activity_timeline_dock"):
+            if self.show_activity_timeline:
+                self.activity_timeline_dock.refresh_data()
+                self.activity_timeline_dock.show()
+                # Split so timeline receives ~46px
+                total_h = self.height()
+                self.map_splitter.setSizes([max(150, total_h - 46), 46])
+            else:
+                self.activity_timeline_dock.hide()
+        self.activity_timeline_toggled.emit(self.show_activity_timeline)
+
+    def _on_bridge_activity_timeline_toggled(self, visible: bool):
+        self.set_activity_timeline_visible(visible)
+
+    def set_map_legend_visible(self, visible: bool):
+        """Toggles on-map CoreScope Map Legend overlay."""
+        self.show_map_legend = bool(visible)
+        vis_str = "true" if self.show_map_legend else "false"
+        self.run_js(f"if (window.toggleMapLegend) window.toggleMapLegend({vis_str});")
+        self.map_legend_toggled.emit(self.show_map_legend)
+
+    def _on_bridge_map_legend_toggled(self, visible: bool):
+        self.show_map_legend = bool(visible)
+        self.map_legend_toggled.emit(self.show_map_legend)
 
     def _on_satellites_updated(self, tles: list):
         """Triggered when SatelliteService finishes refreshing or seeding TLEs."""
@@ -11240,9 +12580,9 @@ class MeshMapWidget(QWidget):
         if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self._page_ready:
             theme_dict = {
                 "repeater": app_colors.map_repeater_color,
-                "repeaterHover": getattr(app_colors, "map_repeater_hover_color", "#FF55FF"),
+                "repeaterHover": getattr(app_colors, "map_repeater_hover_color", "#60A5FA"),
                 "companion": app_colors.map_companion_color,
-                "companionHover": getattr(app_colors, "map_companion_hover_color", "#00FFFF"),
+                "companionHover": getattr(app_colors, "map_companion_hover_color", "#22D3EE"),
                 "favorite": app_colors.favorite_user_color,
                 "watcherStart": app_colors.map_watcher_line_start,
                 "watcherEnd": app_colors.map_watcher_line_end,
@@ -11254,8 +12594,8 @@ class MeshMapWidget(QWidget):
                 "unknownPath": getattr(app_colors, "map_unknown_path_color", "#EF4444"),
                 "noGpsPath": getattr(app_colors, "map_no_gps_path_color", "#000000"),
                 "orbitalRepeater": getattr(app_colors, "map_orbital_repeater_color", "#FFD335"),
-                "roomServer": getattr(app_colors, "map_room_server_color", "#FF00FF"),
-                "roomServerHover": getattr(app_colors, "map_room_server_hover_color", "#FF55FF"),
+                "roomServer": getattr(app_colors, "map_room_server_color", "#A855F7"),
+                "roomServerHover": getattr(app_colors, "map_room_server_hover_color", "#C084FC"),
                 "dotSize": getattr(app_colors, "map_dot_size", 6.4)
             }
             self.run_js(f"setMapColors({json.dumps(theme_dict)});")
@@ -11512,6 +12852,7 @@ class MeshMapWidget(QWidget):
                 "snr": float(c.snr_db) if c.snr_db is not None else None,
                 "rssi": int(c.rssi_dbm) if c.rssi_dbm is not None else None,
                 "last_seen": c.last_seen,
+                "first_seen": getattr(c, "first_seen", "") or "",
                 "out_path_len": int(c_p_len) if c_p_len is not None else -1,
                 "out_path_hash_mode": int(c_p_mode) if c_p_mode is not None else -1,
                 "out_path_src": c_p_src,
@@ -11578,37 +12919,130 @@ class MeshMapWidget(QWidget):
 
     def _on_packet_path_traced(self, path: PacketPathInfo):
         """Displays traced multi-hop packet trajectory on the map."""
-        if not path or not path.coordinates:
+        if not path:
             return
 
-        hops_str = " ➔ ".join(path.hop_nodes) if path.hop_nodes else f"{len(path.coordinates)} hops"
+        # Deduplication check: extract raw message/packet id and logical signature
+        now = time.time()
+        if len(self._recent_packet_events) > 50:
+            self._recent_packet_events = {k: ts for k, ts in self._recent_packet_events.items() if now - ts < 3.5}
+
+        pkt_id = getattr(path, "packet_id", "")
+        raw_id = pkt_id[5:] if pkt_id.startswith("path-") else pkt_id
+        decoded = getattr(path, "decoded_info", None) or {}
+        text = str(decoded.get("text") or "").strip()
+        chan = str(decoded.get("channel") or "").strip()
+        sig = f"{chan}:{text}" if text else ""
+
+        if raw_id and raw_id in self._recent_packet_events and (now - self._recent_packet_events[raw_id] < 3.5):
+            return
+        if sig and sig in self._recent_packet_events and (now - self._recent_packet_events[sig] < 3.5):
+            return
+
+        if raw_id:
+            self._recent_packet_events[raw_id] = now
+        if sig:
+            self._recent_packet_events[sig] = now
+
+        # Record packet in network activity timeline
+        if hasattr(self, "activity_timeline_dock") and self.activity_timeline_dock:
+            self.activity_timeline_dock.record_packet()
+
+        hops_str = " ➔ ".join(path.hop_nodes) if path.hop_nodes else f"{len(path.coordinates or [])} hops"
         snr_text = f" ({path.hop_snrs[0]:+.1f} dB)" if path.hop_snrs else ""
         t_str = datetime.now().strftime("%H:%M:%S")
 
         self.watcher_status.setText(f"[{t_str}] ⚡ {path.route_type}: {hops_str}{snr_text}")
-        self._last_traced_path_info = (datetime.now().timestamp(), path.coordinates)
+        # Assemble multi-hop route coordinates across repeaters
+        route_coords = []
 
-        route_coords = [list(pt) for pt in path.coordinates]
+        # 1. Sender coordinate
+        if path.coordinates and len(path.coordinates) > 0:
+            route_coords.append([float(path.coordinates[0][0]), float(path.coordinates[0][1])])
+        elif self.storage and path.sender_id and path.sender_id != "mesh":
+            c_s = self.storage.get_contact(path.sender_id.lstrip("!@").strip())
+            if c_s and c_s.latitude is not None and c_s.longitude is not None:
+                route_coords.append([float(c_s.latitude), float(c_s.longitude)])
+
+        # 2. Intermediate repeater coordinates
+        if path.coordinates and len(path.coordinates) >= 2:
+            for pt in path.coordinates[1:]:
+                coord = [float(pt[0]), float(pt[1])]
+                if not route_coords or route_coords[-1] != coord:
+                    route_coords.append(coord)
+        elif path.hop_nodes and self.storage:
+            # Dynamically resolve coordinates for intermediate repeaters from storage
+            for hn in path.hop_nodes:
+                clean_h = hn.lstrip("@!🌐☁️ ").strip()
+                c_hop = self.storage.get_best_contact_for_hop(clean_h) if hasattr(self.storage, "get_best_contact_for_hop") else None
+                if not c_hop:
+                    c_hop = self.storage.get_contact(clean_h)
+                if not c_hop:
+                    for n in (self.storage.get_contacts() if hasattr(self.storage, "get_contacts") else []):
+                        if n.alias and (n.alias.lower() == clean_h.lower() or clean_h.lower() in n.alias.lower()):
+                            c_hop = n
+                            break
+                if c_hop and c_hop.latitude is not None and c_hop.longitude is not None:
+                    if not (hasattr(self.storage, "is_phantom_node") and self.storage.is_phantom_node(c_hop.node_id, c_hop.alias)):
+                        coord = [float(c_hop.latitude), float(c_hop.longitude)]
+                        if not route_coords or route_coords[-1] != coord:
+                            route_coords.append(coord)
+
+        # 3. Local receiver coordinate (Home station)
         local_coord = self._get_local_coordinates()
         if local_coord:
             if not route_coords or route_coords[-1] != local_coord:
                 route_coords.append(local_coord)
 
+        if route_coords:
+            self._last_traced_path_info = (datetime.now().timestamp(), route_coords)
+
+        js_coords = json.dumps(route_coords) if len(route_coords) >= 2 else "[]"
+        text = ""
+        chan = ""
+        if path.decoded_info and isinstance(path.decoded_info, dict):
+            text = str(path.decoded_info.get("text", "") or "")
+            chan = str(path.decoded_info.get("channel", "") or "")
+        if not chan and "[" in (path.sender_name or "") and "]" in (path.sender_name or ""):
+            try:
+                chan = path.sender_name.split("[", 1)[1].split("]", 1)[0]
+            except Exception:
+                pass
+
+        p_source = "mqtt" if getattr(path, "source", "") == "mqtt" or getattr(path, "packet_id", "").startswith("mqtt-") else "radio"
+
+        js_meta = json.dumps({
+            "hops": max(1, len(route_coords) - 1) if len(route_coords) >= 2 else (len(path.hop_nodes) if path.hop_nodes else 1),
+            "route_type": path.route_type,
+            "payload_type": getattr(path, "payload_type", path.route_type) or path.route_type,
+            "sender_id": path.sender_id,
+            "sender_name": path.sender_name,
+            "channel": chan,
+            "text": text,
+            "raw_hex": getattr(path, "raw_hex", ""),
+            "recipient_id": getattr(path, "recipient_id", ""),
+            "recipient_name": getattr(path, "recipient_name", ""),
+            "source": p_source,
+            "packet_id": getattr(path, "packet_id", ""),
+            "color": "orange"
+        })
+
+        # Send to CoreScope Live Packet Feed HUD
+        self.run_js(f"if (window.addPacketToHud) window.addPacketToHud({js_meta}, {js_coords});")
+
         if len(route_coords) < 2:
             return
 
         if self.show_paths or self.show_rf_links:
-            js_coords = json.dumps(route_coords)
-            js_meta = json.dumps({
-                "hops": len(route_coords) - 1,
-                "route_type": path.route_type,
-                "sender_id": path.sender_id,
-                "sender_name": path.sender_name,
-                "color": "orange"
-            })
             self.run_js(f"drawPacketPath({js_coords}, {js_meta});")
 
+    def trigger_corescope_trace(self, path: PacketPathInfo):
+        """Explicitly executes CoreScope traveling particle beam animation on the map."""
+        if path:
+            self._on_packet_path_traced(path)
+
     def _get_local_coordinates(self) -> List[float]:
+
         """Resolves latitude & longitude of the local radio receiver (home station)."""
         # 1. Direct configuration
         if self.config and hasattr(self.config.meshcore, "latitude") and hasattr(self.config.meshcore, "longitude"):
@@ -11642,6 +13076,29 @@ class MeshMapWidget(QWidget):
             return
         if not self.storage:
             return
+
+        now = time.time()
+        if len(self._recent_packet_events) > 50:
+            self._recent_packet_events = {k: ts for k, ts in self._recent_packet_events.items() if now - ts < 3.5}
+
+        msg_id = getattr(msg, "id", "")
+        text = str(getattr(msg, "text", "") or "").strip()
+        chan = str(getattr(msg, "channel", "") or "").strip()
+        sig = f"{chan}:{text}" if text else ""
+
+        if msg_id and msg_id in self._recent_packet_events and (now - self._recent_packet_events[msg_id] < 3.5):
+            return
+        if sig and sig in self._recent_packet_events and (now - self._recent_packet_events[sig] < 3.5):
+            return
+
+        if msg_id:
+            self._recent_packet_events[msg_id] = now
+        if sig:
+            self._recent_packet_events[sig] = now
+
+        # Record packet in network activity timeline
+        if hasattr(self, "activity_timeline_dock") and self.activity_timeline_dock:
+            self.activity_timeline_dock.record_packet()
 
         # 1. Resolve Sender Coordinate
         sender_contact = self.storage.get_contact(msg.sender_id) or self.storage.get_contact(msg.sender_name)
@@ -11706,18 +13163,29 @@ class MeshMapWidget(QWidget):
         if sender_contact:
             display_name = f"📡 {sender_contact.alias}" if sender_contact.is_repeater else f"@{sender_contact.alias}"
 
-        # If 2 or more coordinates are resolved, draw the green route on the map!
+        payload_type = "GRP_TXT" if (msg.channel and msg.channel.lower() not in ("direct", "dm")) else "TXT_MSG"
+        route_type = msg.metadata.get("route_type", "FLOOD") if msg.metadata else "FLOOD"
+
+        js_coords = json.dumps(route_coords) if len(route_coords) >= 2 else (json.dumps([sender_coord]) if sender_coord else "[]")
+        js_meta = json.dumps({
+            "hops": max(1, len(route_coords) - 1) if len(route_coords) >= 2 else 1,
+            "route_type": route_type,
+            "payload_type": payload_type,
+            "sender_id": msg.sender_id,
+            "sender_name": display_name,
+            "channel": msg.channel,
+            "text": msg.text,
+            "is_incoming": True,
+            "source": "mqtt" if getattr(msg, "source_driver", "") == "mqtt" else "radio",
+            "packet_id": getattr(msg, "id", ""),
+            "color": "green"
+        })
+
+        # Prepend message to CoreScope Live Packet Feed HUD ticker
+        self.run_js(f"if (window.addPacketToHud) window.addPacketToHud({js_meta}, {js_coords});")
+
+        # If 2 or more coordinates are resolved, draw the animated particle beam on the map!
         if len(route_coords) >= 2 and (self.show_paths or self.show_rf_links):
-            js_coords = json.dumps(route_coords)
-            js_meta = json.dumps({
-                "hops": len(route_coords) - 1,
-                "route_type": msg.metadata.get("route_type", "FLOOD") if msg.metadata else "FLOOD",
-                "sender_id": msg.sender_id,
-                "sender_name": display_name,
-                "channel": msg.channel,
-                "is_incoming": True,
-                "color": "green"
-            })
             self.run_js(f"drawPacketPath({js_coords}, {js_meta});")
         elif sender_coord:
             # Fallback: pulse origin node if only sender is known

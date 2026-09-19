@@ -11,7 +11,9 @@ from meshcore_tray.config import AppConfig
 from meshcore_tray.core.event_bus import bus, EventType
 from meshcore_tray.core.gateway import GatewayManager
 from meshcore_tray.core.mention_detector import MentionDetector
+from meshcore_tray.core.mqtt_service import MqttService
 from meshcore_tray.drivers.meshcore_driver import MeshCoreDriver
+
 from meshcore_tray.drivers.mock_driver import MockRadioDriver
 from meshcore_tray.pixoo.pixoo_service import PixooService
 from meshcore_tray.storage import Storage
@@ -72,20 +74,28 @@ async def async_main(args, storage_holder: dict):
     if config.gateway.http_bridge_enabled:
         gateway.start_http_bridge(config.gateway.http_port)
 
+    # 5b. MQTT Broker Ingest & Gateway Service
+    mqtt_service = MqttService(config=config, storage=storage)
+    if config.mqtt.enabled:
+        mqtt_service.start()
+
     # 6. UI Creation
     main_window = MainWindow(
         config=config,
         storage=storage,
         radio_driver=radio_driver,
         pixoo_service=pixoo_service,
-        gateway=gateway
+        gateway=gateway,
+        mqtt_service=mqtt_service
     )
     storage_holder["main_window"] = main_window
     storage_holder["radio_driver"] = radio_driver
     storage_holder["pixoo_service"] = pixoo_service
     storage_holder["gateway"] = gateway
+    storage_holder["mqtt_service"] = mqtt_service
     tray = SystemTray(main_window=main_window, config=config)
     tray.show()
+
 
     # Headless test-init exit
     if args.test_init:
