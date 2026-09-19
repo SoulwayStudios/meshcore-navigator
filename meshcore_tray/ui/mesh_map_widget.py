@@ -2914,6 +2914,12 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 <li><span class="legend-dot" style="background:#06B6D4"></span> <span class="legend-name">Companion</span></li>
                 <li><span class="legend-dot" style="background:#A855F7"></span> <span class="legend-name">Room</span></li>
             </ul>
+            <div class="legend-section-title" style="margin-top:10px;">HOP VERIFICATION</div>
+            <ul class="legend-list">
+                <li><span style="display:inline-block;width:22px;height:2px;background:#34D399;margin-right:6px;vertical-align:middle;"></span> <span class="legend-name">Solid</span> <span class="legend-desc">— Verified RF Hop</span></li>
+                <li><span style="display:inline-block;width:22px;height:0;border-top:2px dashed #FACC15;margin-right:6px;vertical-align:middle;"></span> <span class="legend-name">Dashed</span> <span class="legend-desc">— Ambiguous Hop (Collision)</span></li>
+                <li><span style="display:inline-block;width:22px;height:0;border-top:2px dotted #94A3B8;margin-right:6px;vertical-align:middle;"></span> <span class="legend-name">Dotted</span> <span class="legend-desc">— Inferred Step (No GPS/MQTT)</span></li>
+            </ul>
         </div>
     </div>
     <div id="map-loading-hud" class="map-loading-hud hidden">
@@ -5589,9 +5595,12 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 animCtx.beginPath();
                 animCtx.moveTo(fx, fy);
                 animCtx.lineTo(curX, curY);
-                if (anim.isDashed) {
+                if (anim.isInferred) {
+                    animCtx.setLineDash([2, 6]);
+                    animCtx.lineWidth = 2.0;
+                } else if (anim.isDashed) {
                     animCtx.setLineDash([6, 8]);
-                    animCtx.lineWidth = 2;
+                    animCtx.lineWidth = 2.2;
                 } else {
                     animCtx.lineWidth = 2.5;
                 }
@@ -5680,13 +5689,18 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     return;
                 }
 
+                var hMeta = (meta.hop_metas && meta.hop_metas[hopIdx]) ? meta.hop_metas[hopIdx] : {};
+                var isHopAmbiguous = Boolean(hMeta.is_ambiguous || meta.is_speculative || meta.is_ghost);
+                var isHopInferred = Boolean(hMeta.is_inferred);
+
                 activeAnimations.push({
                     from: coords[hopIdx],
                     to: coords[hopIdx + 1],
                     progress: 0,
                     duration: 520,
                     color: beamColor,
-                    isDashed: Boolean(meta.is_speculative || meta.is_ghost),
+                    isDashed: isHopAmbiguous,
+                    isInferred: isHopInferred,
                     onComplete: function() {
                         runHopAnimation(hopIdx + 1);
                     }
@@ -5802,7 +5816,21 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             }
 
             var hops = meta.hops || 1;
-            var hopHtml = '<span class="feed-hops">' + hops + '➔</span>';
+            var ambCount = meta.ambiguous_hops || 0;
+            var infCount = meta.inferred_hops || 0;
+            var hopTitle = hops + ' Hop' + (hops === 1 ? '' : 's');
+            var hopBadgeExtra = '';
+            if (ambCount > 0 && infCount > 0) {
+                hopTitle += ' (' + ambCount + ' ambiguous, ' + infCount + ' inferred)';
+                hopBadgeExtra = ' <span style="font-size:8px;color:#FACC15;font-weight:bold;" title="' + hopTitle + '">⤍</span>';
+            } else if (ambCount > 0) {
+                hopTitle += ' (' + ambCount + ' ambiguous hash collision' + (ambCount === 1 ? '' : 's') + ')';
+                hopBadgeExtra = ' <span style="font-size:8px;color:#FACC15;font-weight:bold;" title="' + hopTitle + '">⤍</span>';
+            } else if (infCount > 0) {
+                hopTitle += ' (' + infCount + ' inferred unmapped step' + (infCount === 1 ? '' : 's') + ')';
+                hopBadgeExtra = ' <span style="font-size:8px;color:#94A3B8;font-weight:bold;" title="' + hopTitle + '">⋯</span>';
+            }
+            var hopHtml = '<span class="feed-hops" title="' + hopTitle + '">' + hops + '➔' + hopBadgeExtra + '</span>';
 
             var text = meta.text || meta.sender_name || meta.sender_id || '';
             if (meta.channel) {
@@ -6516,12 +6544,23 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 var isPhantom = !!seg.is_phantom;
                 var isNoGps = !isPhantom && !!seg.is_no_gps;
                 var isUnk = !isPhantom && !isNoGps && !!seg.is_unknown;
+                var isAmbiguous = !isPhantom && !isNoGps && !isUnk && !!seg.is_ambiguous;
+                var isInferred = isUnk || isNoGps || isPhantom || !!seg.is_inferred;
+
+                var segDash = '8, 12';
+                if (isInferred) {
+                    segDash = '2, 6'; // CoreScope fine-dotted for inferred unmapped / dropped steps
+                } else if (isAmbiguous) {
+                    segDash = '6, 6'; // CoreScope dashed for ambiguous hash collision hops
+                } else {
+                    segDash = '8, 12'; // Confirmed solid / flowing RF hop
+                }
 
                 // Outer subtle glow / contrast halo (white backing for black line on dark map, matching color otherwise)
                 var isBlack = (segCol && (segCol.toLowerCase() === '#000000' || segCol.toLowerCase() === '#000' || segCol.toLowerCase() === 'black'));
-                var glowCol = isBlack ? '#FFFFFF' : segCol;
-                var glowOpacity = isPhantom ? 0.35 : (isNoGps ? 0.35 : (isUnk ? 0.35 : 0.25));
-                var glowWidth = isBlack ? 5.5 : 7;
+                var glowCol = isBlack ? '#FFFFFF' : (isAmbiguous ? '#FACC15' : segCol);
+                var glowOpacity = isPhantom ? 0.35 : (isNoGps ? 0.35 : (isUnk ? 0.35 : (isAmbiguous ? 0.40 : 0.25)));
+                var glowWidth = isBlack ? 5.5 : (isAmbiguous ? 8 : 7);
 
                 var glowPoly = L.polyline(seg.coords, {
                     renderer: visualisedSvgRenderer,
@@ -6538,7 +6577,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     renderer: visualisedSvgRenderer,
                     color: segCol,
                     weight: 3.5,
-                    dashArray: (isUnk || isNoGps || isPhantom) ? '6, 14' : '8, 12',
+                    dashArray: segDash,
                     className: 'animated-path-flow',
                     opacity: 0.95,
                     lineCap: 'round',
@@ -6564,11 +6603,14 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     tipText = '👻 Path connects through phantom node' + repNameInfo + ': ' + (seg.from_name || 'Node') + ' ➔ ' + (seg.to_name || 'Node');
                 } else if (isNoGps) {
                     var repNameInfo = (seg.missing_names && seg.missing_names.length > 0) ? (' (' + seg.missing_names.join(', ') + ')') : '';
-                    tipText = '⚠️ Repeater in route has unknown location' + repNameInfo + ': ' + (seg.from_name || 'Node') + ' ➔ ' + (seg.to_name || 'Node');
+                    tipText = '⚠️ Inferred Trajectory: intermediate repeater has unknown location' + repNameInfo + ': ' + (seg.from_name || 'Node') + ' ➔ ' + (seg.to_name || 'Node');
                 } else if (isUnk) {
-                    tipText = '⚠️ Unknown path: connects through unknown repeater (' + (seg.from_name || 'Node') + ' ➔ ' + (seg.to_name || 'Node') + ')';
+                    tipText = '⚠️ Inferred Trajectory: connects through unknown repeater (' + (seg.from_name || 'Node') + ' ➔ ' + (seg.to_name || 'Node') + ')';
+                } else if (isAmbiguous) {
+                    var candCount = (seg.candidates_count && seg.candidates_count > 1) ? (' (' + seg.candidates_count + ' candidates)') : '';
+                    tipText = '⚠️ Ambiguous Hop (Hash Collision' + candCount + '): ' + (seg.from_name || 'Node') + ' ➔ ' + (seg.to_name || 'Node') + ' [Heuristic inference]';
                 } else {
-                    tipText = (seg.from_name || 'Node') + ' ➔ ' + (seg.to_name || 'Node');
+                    tipText = '✓ Verified RF Hop: ' + (seg.from_name || 'Node') + ' ➔ ' + (seg.to_name || 'Node');
                 }
 
                 hitPoly.bindTooltip(tipText, { sticky: true, className: 'node-tooltip' });
@@ -12953,46 +12995,98 @@ class MeshMapWidget(QWidget):
         t_str = datetime.now().strftime("%H:%M:%S")
 
         self.watcher_status.setText(f"[{t_str}] ⚡ {path.route_type}: {hops_str}{snr_text}")
-        # Assemble multi-hop route coordinates across repeaters
-        route_coords = []
+        # Assemble multi-hop route coordinates across repeaters with per-hop verification
+        local_coord = self._get_local_coordinates()
+        node_seq = []
 
         # 1. Sender coordinate
         if path.coordinates and len(path.coordinates) > 0:
-            route_coords.append([float(path.coordinates[0][0]), float(path.coordinates[0][1])])
+            node_seq.append({"coord": [float(path.coordinates[0][0]), float(path.coordinates[0][1])], "is_ambiguous": False})
         elif self.storage and path.sender_id and path.sender_id != "mesh":
             c_s = self.storage.get_contact(path.sender_id.lstrip("!@").strip())
             if c_s and c_s.latitude is not None and c_s.longitude is not None:
-                route_coords.append([float(c_s.latitude), float(c_s.longitude)])
+                node_seq.append({"coord": [float(c_s.latitude), float(c_s.longitude)], "is_ambiguous": False})
+            else:
+                node_seq.append({"coord": None, "is_ambiguous": False})
+        else:
+            node_seq.append({"coord": None, "is_ambiguous": False})
 
         # 2. Intermediate repeater coordinates
         if path.coordinates and len(path.coordinates) >= 2:
             for pt in path.coordinates[1:]:
                 coord = [float(pt[0]), float(pt[1])]
-                if not route_coords or route_coords[-1] != coord:
-                    route_coords.append(coord)
+                node_seq.append({"coord": coord, "is_ambiguous": False})
         elif path.hop_nodes and self.storage:
-            # Dynamically resolve coordinates for intermediate repeaters from storage
-            for hn in path.hop_nodes:
-                clean_h = hn.lstrip("@!🌐☁️ ").strip()
-                c_hop = self.storage.get_best_contact_for_hop(clean_h) if hasattr(self.storage, "get_best_contact_for_hop") else None
-                if not c_hop:
-                    c_hop = self.storage.get_contact(clean_h)
-                if not c_hop:
-                    for n in (self.storage.get_contacts() if hasattr(self.storage, "get_contacts") else []):
-                        if n.alias and (n.alias.lower() == clean_h.lower() or clean_h.lower() in n.alias.lower()):
-                            c_hop = n
-                            break
-                if c_hop and c_hop.latitude is not None and c_hop.longitude is not None:
-                    if not (hasattr(self.storage, "is_phantom_node") and self.storage.is_phantom_node(c_hop.node_id, c_hop.alias)):
-                        coord = [float(c_hop.latitude), float(c_hop.longitude)]
-                        if not route_coords or route_coords[-1] != coord:
-                            route_coords.append(coord)
+            clean_prefixes = [hn.lstrip("@!🌐☁️ ").strip() for hn in path.hop_nodes]
+            sender_tuple = (node_seq[0]["coord"][0], node_seq[0]["coord"][1]) if (node_seq and node_seq[0]["coord"]) else None
+            local_tuple = (local_coord[0], local_coord[1]) if local_coord else (54.65897, -3.4346)
+            if hasattr(self.storage, "resolve_hop_chain_with_candidates"):
+                chain = self.storage.resolve_hop_chain_with_candidates(
+                    clean_prefixes,
+                    sender_coord=sender_tuple,
+                    home_coord=local_tuple,
+                    user_station_prefix="M7NCY",
+                    sender_name=path.sender_name
+                )
+                for item in chain:
+                    c_hop = item.get("contact")
+                    is_phant = bool(item.get("is_phantom") or (self.storage and c_hop and self.storage.is_phantom_node(c_hop.node_id, c_hop.alias)))
+                    c_coord = [float(c_hop.latitude), float(c_hop.longitude)] if (c_hop and c_hop.latitude is not None and c_hop.longitude is not None and not is_phant) else None
+                    node_seq.append({
+                        "coord": c_coord,
+                        "is_ambiguous": bool(item.get("is_ambiguous")),
+                        "is_phantom": is_phant
+                    })
+            else:
+                for clean_h in clean_prefixes:
+                    c_hop, cands, is_amb = (None, [], False)
+                    if hasattr(self.storage, "resolve_hop_with_candidates"):
+                        c_hop, cands, is_amb = self.storage.resolve_hop_with_candidates(clean_h)
+                    else:
+                        c_hop = self.storage.get_contact(clean_h)
+                    c_coord = [float(c_hop.latitude), float(c_hop.longitude)] if (c_hop and c_hop.latitude is not None and c_hop.longitude is not None) else None
+                    node_seq.append({
+                        "coord": c_coord,
+                        "is_ambiguous": is_amb,
+                        "is_phantom": False
+                    })
 
         # 3. Local receiver coordinate (Home station)
-        local_coord = self._get_local_coordinates()
         if local_coord:
-            if not route_coords or route_coords[-1] != local_coord:
-                route_coords.append(local_coord)
+            node_seq.append({"coord": local_coord, "is_ambiguous": False})
+
+        route_coords = []
+        hop_metas = []
+        last_loc_idx = None
+        for idx, n in enumerate(node_seq):
+            if n["coord"]:
+                if last_loc_idx is not None:
+                    p2 = n["coord"]
+                    if not route_coords or route_coords[-1] != p2:
+                        route_coords.append(p2)
+                    has_missing = False
+                    has_amb = bool(n.get("is_ambiguous"))
+                    for m in range(last_loc_idx + 1, idx):
+                        if not node_seq[m]["coord"]:
+                            has_missing = True
+                        if node_seq[m].get("is_ambiguous"):
+                            has_amb = True
+                    hop_metas.append({
+                        "is_ambiguous": has_amb,
+                        "is_inferred": has_missing
+                    })
+                else:
+                    route_coords.append(n["coord"])
+                last_loc_idx = idx
+
+        # If incoming via MQTT with fewer coordinates resolved than hops reported, mark as inferred trajectory
+        if getattr(path, "source", "") == "mqtt" or getattr(path, "packet_id", "").startswith("mqtt-"):
+            if len(path.hop_nodes or []) > len(route_coords) - 1:
+                for hm in hop_metas:
+                    hm["is_inferred"] = True
+
+        ambiguous_hops = sum(1 for hm in hop_metas if hm.get("is_ambiguous"))
+        inferred_hops = sum(1 for hm in hop_metas if hm.get("is_inferred"))
 
         if route_coords:
             self._last_traced_path_info = (datetime.now().timestamp(), route_coords)
@@ -13013,6 +13107,9 @@ class MeshMapWidget(QWidget):
 
         js_meta = json.dumps({
             "hops": max(1, len(route_coords) - 1) if len(route_coords) >= 2 else (len(path.hop_nodes) if path.hop_nodes else 1),
+            "ambiguous_hops": ambiguous_hops,
+            "inferred_hops": inferred_hops,
+            "hop_metas": hop_metas,
             "route_type": path.route_type,
             "payload_type": getattr(path, "payload_type", path.route_type) or path.route_type,
             "sender_id": path.sender_id,
@@ -13107,7 +13204,6 @@ class MeshMapWidget(QWidget):
             sender_coord = [sender_contact.latitude, sender_contact.longitude]
 
         # 2. Resolve Intermediate Hop Coordinates from Path metadata or recent Watcher trace
-        hop_coords = []
         path_str = ""
         path_len = 0
         if msg.metadata:
@@ -13116,6 +13212,12 @@ class MeshMapWidget(QWidget):
 
         # 3. Resolve Local Receiver Coordinate
         local_coord = self._get_local_coordinates()
+
+        node_seq = []
+        if sender_coord:
+            node_seq.append({"coord": sender_coord, "is_ambiguous": False})
+        else:
+            node_seq.append({"coord": None, "is_ambiguous": False})
 
         if path_str and path_len > 0:
             chunk_size = max(2, len(path_str) // path_len)
@@ -13132,32 +13234,72 @@ class MeshMapWidget(QWidget):
                 )
                 for item in chain:
                     c_h = item.get("contact")
-                    if c_h and c_h.latitude is not None and c_h.longitude is not None:
-                        hop_coords.append([c_h.latitude, c_h.longitude])
+                    is_phant = bool(item.get("is_phantom") or (self.storage and c_h and self.storage.is_phantom_node(c_h.node_id, c_h.alias)))
+                    c_coord = [c_h.latitude, c_h.longitude] if (c_h and c_h.latitude is not None and c_h.longitude is not None and not is_phant) else None
+                    node_seq.append({
+                        "coord": c_coord,
+                        "is_ambiguous": bool(item.get("is_ambiguous")),
+                        "is_phantom": is_phant
+                    })
             else:
                 last_ref_lat, last_ref_lon = (54.65897, -3.4346)
                 for sub_h in raw_hops:
-                    c_hop = self.storage.get_best_contact_for_hop(sub_h, ref_lat=last_ref_lat, ref_lon=last_ref_lon) if (self.storage and hasattr(self.storage, "get_best_contact_for_hop")) else (self.storage.get_contact(sub_h) if self.storage else None)
-                    if c_hop and c_hop.latitude and c_hop.longitude:
-                        hop_coords.append([c_hop.latitude, c_hop.longitude])
-                        last_ref_lat = float(c_hop.latitude)
-                        last_ref_lon = float(c_hop.longitude)
+                    c_hop, cands, is_amb = (None, [], False)
+                    if hasattr(self.storage, "resolve_hop_with_candidates"):
+                        c_hop, cands, is_amb = self.storage.resolve_hop_with_candidates(sub_h, ref_lat=last_ref_lat, ref_lon=last_ref_lon)
+                    elif self.storage:
+                        c_hop = self.storage.get_contact(sub_h)
+                    c_coord = [c_hop.latitude, c_hop.longitude] if (c_hop and c_hop.latitude and c_hop.longitude) else None
+                    node_seq.append({
+                        "coord": c_coord,
+                        "is_ambiguous": is_amb,
+                        "is_phantom": False
+                    })
+                    if c_coord:
+                        last_ref_lat, last_ref_lon = float(c_coord[0]), float(c_coord[1])
         elif hasattr(self, "_last_traced_path_info") and self._last_traced_path_info:
             now_ts = datetime.now().timestamp()
             l_time, l_coords = self._last_traced_path_info
             if (now_ts - l_time <= 2.5) and l_coords:
-                hop_coords = [list(pt) for pt in l_coords]
+                for pt in l_coords:
+                    node_seq.append({"coord": list(pt), "is_ambiguous": False})
 
-        # 4. Assemble Complete Route
-        route_coords = []
-        if sender_coord:
-            route_coords.append(sender_coord)
-        for h in hop_coords:
-            if not route_coords or route_coords[-1] != h:
-                route_coords.append(h)
         if local_coord:
-            if not route_coords or route_coords[-1] != local_coord:
-                route_coords.append(local_coord)
+            node_seq.append({"coord": local_coord, "is_ambiguous": False})
+
+        # 4. Assemble Complete Route and per-hop verification metadata
+        route_coords = []
+        hop_metas = []
+        last_loc_idx = None
+        for idx, n in enumerate(node_seq):
+            if n["coord"]:
+                if last_loc_idx is not None:
+                    p2 = n["coord"]
+                    if not route_coords or route_coords[-1] != p2:
+                        route_coords.append(p2)
+                    has_missing = False
+                    has_amb = bool(n.get("is_ambiguous"))
+                    for m in range(last_loc_idx + 1, idx):
+                        if not node_seq[m]["coord"]:
+                            has_missing = True
+                        if node_seq[m].get("is_ambiguous"):
+                            has_amb = True
+                    hop_metas.append({
+                        "is_ambiguous": has_amb,
+                        "is_inferred": has_missing
+                    })
+                else:
+                    route_coords.append(n["coord"])
+                last_loc_idx = idx
+
+        # If incoming via MQTT with fewer coordinates resolved than hops reported, mark as inferred trajectory
+        p_src = getattr(msg, "source_driver", "")
+        if p_src == "mqtt" and path_len > len(route_coords) - 1:
+            for hm in hop_metas:
+                hm["is_inferred"] = True
+
+        ambiguous_hops = sum(1 for hm in hop_metas if hm.get("is_ambiguous"))
+        inferred_hops = sum(1 for hm in hop_metas if hm.get("is_inferred"))
 
         display_name = f"@{msg.sender_name}"
         if sender_contact:
@@ -13169,6 +13311,9 @@ class MeshMapWidget(QWidget):
         js_coords = json.dumps(route_coords) if len(route_coords) >= 2 else (json.dumps([sender_coord]) if sender_coord else "[]")
         js_meta = json.dumps({
             "hops": max(1, len(route_coords) - 1) if len(route_coords) >= 2 else 1,
+            "ambiguous_hops": ambiguous_hops,
+            "inferred_hops": inferred_hops,
+            "hop_metas": hop_metas,
             "route_type": route_type,
             "payload_type": payload_type,
             "sender_id": msg.sender_id,
@@ -13522,13 +13667,15 @@ class MeshMapWidget(QWidget):
                 "name": r.get("alias") or r.get("name"),
                 "coords": c,
                 "is_known": bool(r.get("is_known")),
-                "is_phantom": bool(r.get("is_phantom"))
+                "is_phantom": bool(r.get("is_phantom")),
+                "is_ambiguous": bool(r.get("is_ambiguous")),
+                "candidates_count": len(r.get("candidates") or [])
             })
 
         if receiver_coord:
-            node_chain.append({"name": receiver_display, "coords": receiver_coord, "is_known": True})
+            node_chain.append({"name": receiver_display, "coords": receiver_coord, "is_known": True, "is_ambiguous": False})
         elif msg.is_outgoing:
-            node_chain.append({"name": receiver_display, "coords": None, "is_known": False})
+            node_chain.append({"name": receiver_display, "coords": None, "is_known": False, "is_ambiguous": False})
 
         route_segments = []
         last_loc_idx = None
@@ -13540,6 +13687,8 @@ class MeshMapWidget(QWidget):
                     has_no_gps = False
                     has_unknown = False
                     has_phantom = False
+                    has_ambiguous = bool(node.get("is_ambiguous"))
+                    cands_count = node.get("candidates_count", 0)
                     missing_names = []
                     for k in range(last_loc_idx + 1, i):
                         if not node_chain[k]["coords"]:
@@ -13550,6 +13699,10 @@ class MeshMapWidget(QWidget):
                                 has_unknown = True
                             else:
                                 has_no_gps = True
+                        if node_chain[k].get("is_ambiguous"):
+                            has_ambiguous = True
+                            if node_chain[k].get("candidates_count", 0) > cands_count:
+                                cands_count = node_chain[k].get("candidates_count", 0)
 
                     if has_phantom:
                         seg_color = phantom_path_color
@@ -13567,6 +13720,9 @@ class MeshMapWidget(QWidget):
                         "is_unknown": has_unknown,
                         "is_no_gps": has_no_gps,
                         "is_phantom": has_phantom,
+                        "is_ambiguous": has_ambiguous,
+                        "is_inferred": bool(has_unknown or has_no_gps or has_phantom),
+                        "candidates_count": cands_count,
                         "missing_names": missing_names,
                         "color": seg_color
                     })

@@ -526,5 +526,110 @@ def test_live_hud_single_entry_and_mqtt_replacement(qapp, tmp_path):
     assert hud_calls_2 == hud_calls_1, "Duplicate message should not generate additional JS calls"
 
 
+def test_corescope_ambiguous_and_inferred_hop_styles(tmp_path, qapp):
+    """Verifies that ambiguous hops (dashed) and inferred steps (dotted) are correctly rendered in Leaflet, HUD, and Canvas."""
+    from meshcore_tray.ui.mesh_map_widget import MeshMapWidget
+    from meshcore_tray.storage import NodeContact
+    from meshcore_tray.core.models import PacketPathInfo, MessageEnvelope
+    import json
+
+    db_file = tmp_path / "test_hops.db"
+    storage = Storage(db_file)
+    config = AppConfig()
+
+    # 1. HTML Template verification: legend, dashing, and HUD badges
+    html = get_leaflet_html()
+    assert "HOP VERIFICATION" in html
+    assert "Verified RF Hop" in html
+    assert "Ambiguous Hop (Collision)" in html
+    assert "Inferred Step (No GPS/MQTT)" in html
+    assert "anim.isInferred" in html
+    assert "animCtx.setLineDash([2, 6])" in html
+    assert "animCtx.setLineDash([6, 8])" in html
+    assert "segDash = '2, 6'" in html
+    assert "segDash = '6, 6'" in html
+    assert "#FACC15" in html  # Amber glow for ambiguous hop
+    assert "⤍" in html         # Ambiguous hop badge in HUD ticker
+    assert "⋯" in html         # Inferred hop badge in HUD ticker
+
+    with patch("meshcore_tray.ui.mesh_map_widget.WEBENGINE_AVAILABLE", False):
+        map_widget = MeshMapWidget(storage=storage, config=config)
+
+    map_widget.web_view = MagicMock()
+    map_widget._page_ready = True
+
+    # 2. Populate nodes:
+    # Hop 0: Unique prefix "cb" (Silverdale ST5)
+    storage.save_contact(NodeContact("cb1122334455", "Silverdale ST5", latitude=54.15, longitude=-2.80, is_repeater=True))
+    # Hop 1: Missing GPS intermediate repeater "9f" (Winston RPTR)
+    storage.save_contact(NodeContact("9f2233445566", "Winston RPTR", latitude=None, longitude=None, is_repeater=True))
+    # Hop 2: Ambiguous prefix "a4" (Linux-Lad vs Beeley Solar)
+    storage.save_contact(NodeContact("a45479d85a2f", "Linux-Lad", latitude=54.20, longitude=-2.85, is_repeater=True))
+    storage.save_contact(NodeContact("a4710b381506", "Beeley Solar", latitude=53.20, longitude=-1.60, is_repeater=True))
+
+    # Sender: Alice at (54.10, -2.75)
+    storage.save_contact(NodeContact("112233445566", "Alice", latitude=54.10, longitude=-2.75, is_repeater=False))
+
+    path_info = PacketPathInfo(
+        packet_id="path-test-amb-001",
+        timestamp=datetime.now().isoformat(),
+        route_type="FLOOD",
+        payload_type="GRP_TXT",
+        sender_id="112233445566",
+        sender_name="Alice",
+        hop_nodes=["cb", "9f", "a4"],
+        decoded_info={"text": "Test Ambiguous Hop", "channel": "Public"}
+    )
+
+    map_widget._on_packet_path_traced(path_info)
+
+    # Inspect the JavaScript calls emitted
+    calls = map_widget.web_view.page().runJavaScript.call_args_list
+    hud_call = next((c[0][0] for c in calls if "addPacketToHud" in c[0][0]), None)
+    draw_call = next((c[0][0] for c in calls if "drawPacketPath" in c[0][0]), None)
+
+    assert hud_call is not None, "addPacketToHud must be called"
+    assert draw_call is not None, "drawPacketPath must be called"
+
+    # Extract the js_meta payload from drawPacketPath(coords, meta)
+    start_brace = draw_call.find(", {") + 2
+    end_brace = draw_call.rfind("});") + 1
+    meta_data = json.loads(draw_call[start_brace:end_brace])
+
+    assert meta_data["ambiguous_hops"] >= 1, "Must detect at least 1 ambiguous hop"
+    assert meta_data["inferred_hops"] >= 1, "Must detect at least 1 inferred hop (due to unmapped GPS repeater 9f)"
+    assert len(meta_data["hop_metas"]) >= 2
+
+    # 3. Test static message path visualization (visualise_message_path)
+    msg_env = MessageEnvelope(
+        id="msg-amb-001",
+        timestamp=datetime.now().isoformat(),
+        sender_id="112233445566",
+        sender_name="Alice",
+        channel="Public",
+        text="Test Ambiguous Hop",
+        metadata={
+            "path": "cb9fa4",
+            "path_len": 3,
+            "route_type": "FLOOD"
+        }
+    )
+
+    map_widget.visualise_message_path(msg_env)
+
+    vis_calls = map_widget.web_view.page().runJavaScript.call_args_list
+    vis_call = next((c[0][0] for c in vis_calls if "drawVisualisedMessagePath" in c[0][0]), None)
+    assert vis_call is not None, "drawVisualisedMessagePath must be called"
+
+    # Parse segments argument from drawVisualisedMessagePath(segments, meta)
+    start_vis = vis_call.find("drawVisualisedMessagePath(") + len("drawVisualisedMessagePath(")
+    end_vis = vis_call.find("], {") + 1
+    segments_data = json.loads(vis_call[start_vis:end_vis])
+
+    assert any(seg.get("is_ambiguous") for seg in segments_data), "At least one segment must be flagged is_ambiguous"
+    assert any(seg.get("is_inferred") for seg in segments_data), "At least one segment must be flagged is_inferred (skipped no-GPS hop)"
+
+
+
 
 

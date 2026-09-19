@@ -4,6 +4,20 @@
 
 ---
 
+## 🌟 What's New in v0.8.1
+
+### 🗺️ CoreScope Ambiguous & Inferred Hop Path Visualization
+- **Multi-State Hop Path Styling**: Visualizes packet routes across the mesh with clear distinction between confirmed and unverified trajectory steps:
+  - **Solid Lines**: Confirmed RF hops with verified GPS coordinates and unique prefix matches.
+  - **Dashed Lines (`[6, 8]`) with Amber Glow (`#FACC15`)**: Ambiguous hops resulting from 1-byte/2-byte prefix hash collisions where the relay was inferred via spatial proximity and neighbor graph heuristics.
+  - **Fine-Dotted Lines (`[2, 6]`)**: Inferred trajectory steps where an intermediate repeater has unknown GPS coordinates or was bridged across MQTT/observer drops.
+- **Dynamic 60 FPS Canvas Particle Beams**: Integrated dynamic dashing (`anim.isDashed`, `anim.isInferred`) directly into the HTML5 Canvas particle renderer so moving photon beams and fading contrails accurately reflect hop verification status.
+- **Interactive Live Map Legend**: Added dedicated "HOP VERIFICATION" section in the Leaflet map overlay explaining the visual indicators.
+- **CoreScope HUD Ticker Badges**: Added visual indicator badges to the live packet feed ticker (`⤍` for ambiguous hash collisions and `⋯` for inferred unmapped steps) with detailed tooltip breakdowns.
+- **Static Message Path Visualization**: Updated `visualise_message_path` with per-hop verification tooltips and dynamic segment dashing.
+
+---
+
 ## 🌟 What's New in v0.8.0 (EXPERIMENTAL)
 
 ### 🗺️ CoreScope Packet Routing & Multi-Hop Sequential Path Resolution
