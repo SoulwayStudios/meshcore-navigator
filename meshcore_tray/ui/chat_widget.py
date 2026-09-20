@@ -2,6 +2,7 @@
 
 import html
 import logging
+from datetime import datetime, timezone
 import re
 from typing import List, Optional
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSize, QUrl
@@ -275,11 +276,20 @@ class MessageBubble(QFrame):
         chan_tag.setAutoFillBackground(False)
         chan_tag.setStyleSheet("background: transparent; border: none; color: #9CA3AF; font-size: 11px;")
 
-        time_str = self.msg.timestamp[11:16] if len(self.msg.timestamp) >= 16 else ""
-        time_lbl = QLabel(time_str)
-        time_lbl.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        time_lbl.setAutoFillBackground(False)
-        time_lbl.setStyleSheet("background: transparent; border: none; color: #9CA3AF; font-size: 11px;")
+        time_str = ""
+        if self.msg.timestamp:
+            try:
+                dt = datetime.fromisoformat(str(self.msg.timestamp).replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                time_str = dt.astimezone().strftime("%H:%M")
+            except Exception:
+                time_str = self.msg.timestamp[11:16] if len(self.msg.timestamp) >= 16 else ""
+
+        self.time_lbl = QLabel(time_str)
+        self.time_lbl.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.time_lbl.setAutoFillBackground(False)
+        self.time_lbl.setStyleSheet("background: transparent; border: none; color: #9CA3AF; font-size: 11px;")
 
         header.addWidget(sender_lbl)
         header.addWidget(chan_tag)
@@ -302,7 +312,7 @@ class MessageBubble(QFrame):
             telem_lbl.setStyleSheet(f"background: transparent; border: none; color: {snr_col}; font-size: 10px; font-weight: bold;")
             header.addWidget(telem_lbl)
 
-        header.addWidget(time_lbl)
+        header.addWidget(self.time_lbl)
         content_box.addLayout(header)
 
         # Watched keyword / Mention warning badge

@@ -71,7 +71,7 @@ class TestUnifiedFloatingOverlaysAndSearchNodeIds:
 
         widget._reposition_floating_controls()
         pos_x = widget.los_controls.x()
-        assert pos_x >= 415 or widget.los_controls.y() >= 55
+        assert pos_x >= 0 and widget.los_controls.y() >= 0
 
         # Test user dragging sets _user_moved flag
         widget.los_controls.move(500, 200)
@@ -88,7 +88,7 @@ class TestUnifiedFloatingOverlaysAndSearchNodeIds:
         widget.btn_close_los.click()
         assert widget.los_controls.isHidden()
 
-    def test_draggable_overlay_frame_clamping_top_left_safe_zone(self):
+    def test_draggable_overlay_frame_top_left_unconstrained(self):
         parent_frame = DraggableOverlayFrame()
         parent_frame.resize(800, 600)
         child_overlay = DraggableOverlayFrame(parent=parent_frame)
@@ -107,7 +107,7 @@ class TestUnifiedFloatingOverlaysAndSearchNodeIds:
         child_overlay.mousePressEvent(press_event)
         assert child_overlay._dragging is True
 
-        # Simulate drag into top-left static navigation button region (e.g. 50, 10)
+        # Simulate drag into top-left region (e.g. 50, 10)
         move_event = QMouseEvent(
             QMouseEvent.Type.MouseMove,
             QPointF(10, 10),
@@ -117,8 +117,9 @@ class TestUnifiedFloatingOverlaysAndSearchNodeIds:
             Qt.KeyboardModifier.NoModifier,
         )
         child_overlay.mouseMoveEvent(move_event)
-        # Y position must be clamped down to at least 58px to clear navigation buttons
-        assert child_overlay.y() >= 58
+        # Y position must NOT be clamped to 58px anymore since ghost controls are removed
+        assert child_overlay.x() == 50
+        assert child_overlay.y() == 10
         assert child_overlay._user_moved is True
 
         # Release mouse
@@ -198,9 +199,9 @@ class TestUnifiedFloatingOverlaysAndSearchNodeIds:
         assert "node-popup-id-row" in html
         assert "(Repeater)" in html
 
-        # 7. Safe zone drag logic
-        assert "newLeft < 415 && newTop < 55" in html
-        assert "newTop = 58" in html
+        # 7. Safe zone drag logic (formerly restricted top-left; removed after moving action controls)
+        assert "newLeft < 415 && newTop < 55" not in html
+        assert "newTop = 58" not in html
 
     def test_search_node_id_strict_prefix_matching(self):
         """Verifies that searchNodeIds enforces strict prefix matching and rejects substring matches in the middle."""

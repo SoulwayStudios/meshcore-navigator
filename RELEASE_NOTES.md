@@ -4,6 +4,28 @@
 
 ---
 
+## 🌟 What's New in v0.8.2
+
+### 🕒 Local Timezone Display Alignment
+- **Automatic System Timezone Formatting**: Resolved time display discrepancies where raw UTC strings or unlocalized datetimes were previously displayed 1 hour behind local time (such as BST / UTC+1).
+  - **RF Packet Feed / Heard Floods**: Timestamps in the main packet feed table and Inspector now display converted local time (`%H:%M:%S`).
+  - **Chat & Direct Messages**: Message bubbles, channel feeds, and room server logs now display accurate local send/receive times (`%H:%M`).
+  - **Sidebar & Contact Cards**: Last heard indicators and tooltips accurately reflect local contact activity.
+  - **Repeater Console**: Outgoing command entries and incoming repeater response telemetry timestamps are cleanly synchronized to local time.
+  - **Path Inspector & Pixoo Renderer**: Packet route inspector and Pixoo matrix display show correct local timestamps.
+
+### 🖱️ Map Overlay "Ghost Area" Barrier Removed
+- **Unconstrained Top-Left Dragging**: Removed the legacy collision safe zone (`newLeft < 415 && newTop < 55`) left over from former top-left map buttons.
+- Overlays including the Route Inspector, Space Weather, Weather Radar, and ADS-B traffic panels can now be dragged smoothly anywhere across the map surface, including the top-left corner.
+
+### 🧭 Map Controls & HUD Usability Improvements
+- **Network Activity Timeline**: Embedded map action buttons (`📍 Re-center`, `🧹 Reset Layers`, `⏳ Age Fade`, `🏔️ Topo / 🗺️ Canvas`) directly into the bottom timeline bar for a clean, unified control deck.
+- **Timeline Enabled by Default**: Network Activity Timeline is now active by default as a permanent core feature, streamlining the Views toolbar.
+- **Draggable Live Packet HUD & Legend**: Floating HUD feed and Map Legend are now freely draggable by their headers, with coordinates preserved across views.
+- **HUD Readability**: Improved line spacing and vertical padding in the live packet feed ticker to prevent visual clipping.
+
+---
+
 ## 🌟 What's New in v0.8.1
 
 ### 🗺️ CoreScope Ambiguous & Inferred Hop Path Visualization

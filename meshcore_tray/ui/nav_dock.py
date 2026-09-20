@@ -538,12 +538,13 @@ class MapLayerDockWidget(QWidget):
         self.btn_packet_hud.toggled.connect(lambda ch: self.layer_toggled.emit("packet_hud", ch))
         layout.addWidget(self.btn_packet_hud)
 
-        # 15. Network Activity Timeline (Bottom Split View)
-        self.btn_activity_timeline = LayerButton("activity_timeline", "Network Activity Timeline (CoreScope Bottom Split)", parent=self)
-        init_timeline = getattr(self.config.meshcore, "map_show_activity_timeline", False) if (self.config and hasattr(self.config, "meshcore")) else False
+        # 15. Network Activity Timeline (Permanent standard feature, toggle removed from views action bar)
+        self.btn_activity_timeline = LayerButton("activity_timeline", "Network Activity Timeline (Standard Feature)", parent=self)
+        init_timeline = getattr(self.config.meshcore, "map_show_activity_timeline", True) if (self.config and hasattr(self.config, "meshcore")) else True
         self.btn_activity_timeline.setChecked(init_timeline)
         self.btn_activity_timeline.toggled.connect(lambda ch: self.layer_toggled.emit("activity_timeline", ch))
-        layout.addWidget(self.btn_activity_timeline)
+        self.btn_activity_timeline.hide()
+        # Note: Not added to layout so it is removed from the views action bar
 
         # 16. Map Legend Overlay (CoreScope Colors & Roles)
         self.btn_map_legend = LayerButton("map_legend", "Map Legend (Packet Types & Node Roles)", parent=self)

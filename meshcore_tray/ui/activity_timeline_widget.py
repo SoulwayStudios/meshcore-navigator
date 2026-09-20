@@ -183,6 +183,30 @@ class NetworkActivityTimelineWidget(QFrame):
                 background-color: #1E1F22;
                 border-top: 1px solid #383A40;
             }
+            QPushButton.map-ctrl-btn {
+                background-color: #2B2D31;
+                color: #DBDEE1;
+                border: 1px solid #383A40;
+                border-radius: 4px;
+                padding: 3px 8px;
+                font-size: 11px;
+                font-weight: 600;
+            }
+            QPushButton.map-ctrl-btn:hover {
+                background-color: #35373C;
+                color: #FFFFFF;
+                border-color: #4E5058;
+            }
+            QPushButton.map-ctrl-btn:checked {
+                background-color: #38BDF8;
+                color: #0F172A;
+                border-color: #38BDF8;
+                font-weight: 700;
+            }
+            QPushButton.map-ctrl-btn:checked:hover {
+                background-color: #7DD3FC;
+                color: #0F172A;
+            }
             QPushButton.scope-btn {
                 background-color: #2B2D31;
                 color: #94A3B8;
@@ -223,8 +247,21 @@ class NetworkActivityTimelineWidget(QFrame):
 
     def _init_ui(self):
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 6, 10, 6)
-        layout.setSpacing(8)
+        layout.setContentsMargins(8, 5, 8, 5)
+        layout.setSpacing(6)
+
+        # 0. Left Map Action Buttons Container (Re-center, Reset Layers, Age Fade, Topo/Canvas)
+        self.map_controls_layout = QHBoxLayout()
+        self.map_controls_layout.setContentsMargins(0, 0, 0, 0)
+        self.map_controls_layout.setSpacing(4)
+        layout.addLayout(self.map_controls_layout)
+
+        # Subtle vertical separator line between map options and timeline scopes
+        self.controls_divider = QFrame()
+        self.controls_divider.setFrameShape(QFrame.Shape.VLine)
+        self.controls_divider.setFrameShadow(QFrame.Shadow.Plain)
+        self.controls_divider.setStyleSheet("color: #383A40; background-color: #383A40; width: 1px; margin: 4px 2px;")
+        layout.addWidget(self.controls_divider)
 
         # 1. Scope Buttons: 1h, 6h, 12h, 24h
         self.scope_btns = {}
@@ -249,12 +286,47 @@ class NetworkActivityTimelineWidget(QFrame):
         self.lbl_stats.setStyleSheet("background-color: #111214; color: #AA55FF; border: 1px solid #383A40; border-radius: 4px; font-size: 10.5px; font-family: monospace; font-weight: 700; padding: 2px 6px;")
         layout.addWidget(self.lbl_stats)
 
-        # 4. Close button
+        # 4. Close button (Hidden as timeline is now a permanent standard dock)
         self.btn_close = QPushButton("✕")
         self.btn_close.setProperty("class", "timeline-close-btn")
         self.btn_close.setToolTip("Close Network Activity Timeline")
         self.btn_close.clicked.connect(self.close_requested.emit)
+        self.btn_close.hide()
         layout.addWidget(self.btn_close)
+
+    def set_map_controls(self, btn_center=None, btn_reset_layers=None, btn_age_fade=None, btn_base_map=None):
+        """Populates the leading map action buttons before the 1h scope button."""
+        for btn in (btn_center, btn_reset_layers, btn_age_fade, btn_base_map):
+            if btn:
+                btn.setProperty("class", "map-ctrl-btn")
+                btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #2B2D31;
+                        color: #DBDEE1;
+                        border: 1px solid #383A40;
+                        border-radius: 4px;
+                        padding: 3px 8px;
+                        font-size: 11px;
+                        font-weight: 600;
+                        min-height: 20px;
+                    }
+                    QPushButton:hover {
+                        background-color: #35373C;
+                        color: #FFFFFF;
+                        border-color: #4E5058;
+                    }
+                    QPushButton:checked {
+                        background-color: #38BDF8;
+                        color: #0F172A;
+                        border-color: #38BDF8;
+                        font-weight: 700;
+                    }
+                    QPushButton:checked:hover {
+                        background-color: #7DD3FC;
+                        color: #0F172A;
+                    }
+                """)
+                self.map_controls_layout.addWidget(btn)
 
     def set_scope(self, hours: int):
         self.current_scope_hours = hours

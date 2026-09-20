@@ -51,7 +51,7 @@ class MeshcoreConfig:
     map_show_rf_los: bool = False
     map_show_space_weather: bool = False
     map_show_packet_hud: bool = False
-    map_show_activity_timeline: bool = False
+    map_show_activity_timeline: bool = True
     map_timeline_scope_hours: int = 24
     space_weather_opacity: float = 0.60
     space_weather_poll_interval_min: int = 15

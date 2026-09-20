@@ -1,6 +1,6 @@
 """Channels & Contacts Sidebar with Favorites (⭐), Search, and Resizable Splitter."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import logging
 from typing import List, Optional
@@ -692,7 +692,15 @@ class Sidebar(QWidget):
                     tip_type = "Companion Node"
                     item_color = QColor(fav_user_col) if is_fav else QColor("#C9D1D9")
 
-                last_seen_str = f" • Last heard: {c.last_seen[11:16]}" if c.last_seen and len(c.last_seen) >= 16 else ""
+                last_seen_str = ""
+                if c.last_seen:
+                    try:
+                        dt = datetime.fromisoformat(str(c.last_seen).replace("Z", "+00:00"))
+                        if dt.tzinfo is None:
+                            dt = dt.replace(tzinfo=timezone.utc)
+                        last_seen_str = f" • Last heard: {dt.astimezone().strftime('%H:%M')}"
+                    except Exception:
+                        last_seen_str = f" • Last heard: {c.last_seen[11:16]}" if len(c.last_seen) >= 16 else ""
 
                 if is_fav:
                     item = QListWidgetItem(f"★ {icon} @{clean_alias}{tag}")

@@ -440,5 +440,16 @@ def test_heard_floods_rf_supersedes_mqtt_for_same_packet(qapp, temp_storage):
     assert widget._rows[0].path.source == "radio"
 
 
-
-
+def test_flood_row_widget_local_timezone_formatting(qapp):
+    """Verifies that FloodRowWidget formats timestamps in local time instead of raw UTC."""
+    utc_ts = "2026-09-20T12:34:56Z"
+    path = PacketPathInfo(
+        packet_id="pkt-tz-test",
+        sender_id="d79870ac",
+        sender_name="M7NCY Repeater",
+        route_type="FLOOD",
+        timestamp=utc_ts
+    )
+    row = FloodRowWidget(path)
+    expected_local = datetime.fromisoformat("2026-09-20T12:34:56+00:00").astimezone().strftime("%H:%M:%S")
+    assert row.lbl_time.text() == f"[{expected_local}]"

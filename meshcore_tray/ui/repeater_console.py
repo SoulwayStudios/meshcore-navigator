@@ -2,7 +2,7 @@
 
 import html
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
@@ -309,7 +309,15 @@ class RepeaterConsoleWidget(QWidget):
         )
         if match:
             clean_text = html.unescape(msg.text)
-            t_str = msg.timestamp[11:19] if (msg.timestamp and len(msg.timestamp) >= 19) else datetime.now().strftime("%H:%M:%S")
+            t_str = datetime.now().strftime("%H:%M:%S")
+            if msg.timestamp:
+                try:
+                    dt = datetime.fromisoformat(str(msg.timestamp).replace("Z", "+00:00"))
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    t_str = dt.astimezone().strftime("%H:%M:%S")
+                except Exception:
+                    t_str = msg.timestamp[11:19] if len(msg.timestamp) >= 19 else t_str
 
             # Update telemetry badge if SNR/RSSI present
             if msg.metadata and ("snr" in msg.metadata or "rssi" in msg.metadata):

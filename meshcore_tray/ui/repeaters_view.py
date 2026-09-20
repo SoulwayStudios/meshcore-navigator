@@ -1,5 +1,6 @@
 """Repeaters & Infrastructure View Widget for MeshCore Tray."""
 
+from datetime import datetime, timezone
 import logging
 from typing import Optional
 from PyQt6.QtCore import Qt, pyqtSignal, QSize
@@ -18,30 +19,14 @@ logger = logging.getLogger("meshcore_tray.repeaters_view")
 
 
 def format_last_seen(ts: Optional[str]) -> str:
-    """Formats last seen timestamp as DD/MM/YY HH:MM without showing raw hex node ID."""
+    """Formats last seen timestamp as DD/MM/YY HH:MM in local time."""
     if not ts:
         return "No radio activity yet"
     try:
-        clean = str(ts).strip().replace("T", " ")
-        if "." in clean:
-            clean = clean.split(".")[0]
-        if "+" in clean:
-            clean = clean.split("+")[0]
-
-        parts = clean.split(" ")
-        date_part = parts[0]
-        time_part = parts[1][:5] if len(parts) > 1 else ""
-
-        if "-" in date_part:
-            ymd = date_part.split("-")
-            if len(ymd) == 3:
-                year, month, day = ymd[0], ymd[1], ymd[2]
-                short_year = year[-2:]
-                formatted_date = f"{day}/{month}/{short_year}"
-                if time_part:
-                    return f"Last seen: {formatted_date} {time_part}"
-                return f"Last seen: {formatted_date}"
-        return f"Last seen: {clean[:16]}"
+        dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return f"Last seen: {dt.astimezone().strftime('%d/%m/%y %H:%M')}"
     except Exception:
         return f"Last seen: {str(ts)[:16]}"
 

@@ -416,4 +416,17 @@ def test_message_bubble_avatar_toggle(qapp):
     assert not hasattr(bubble_off, "avatar_lbl")
 
 
-
+def test_message_bubble_local_timezone_formatting(qapp):
+    """Verifies that MessageBubble formats timestamp in local time instead of raw UTC."""
+    from datetime import datetime
+    msg = MessageEnvelope(
+        id="tz_msg",
+        channel="#general",
+        sender_id="!test_node",
+        sender_name="Alice",
+        text="Hello world",
+        timestamp="2026-09-20T14:30:00Z"
+    )
+    bubble = MessageBubble(msg)
+    expected_local = datetime.fromisoformat("2026-09-20T14:30:00+00:00").astimezone().strftime("%H:%M")
+    assert bubble.time_lbl.text() == expected_local

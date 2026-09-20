@@ -264,8 +264,10 @@ def test_nav_dock_layer_buttons_and_sync(qapp):
     dock.btn_packet_hud.setChecked(True)
     assert ("packet_hud", True) in toggled_layers
 
-    dock.btn_activity_timeline.setChecked(True)
-    assert ("activity_timeline", True) in toggled_layers
+    # Activity timeline is ON by default and hidden from action bar as a standard feature
+    assert dock.btn_activity_timeline.isHidden()
+    dock.btn_activity_timeline.setChecked(False)
+    assert ("activity_timeline", False) in toggled_layers
 
     dock.btn_map_legend.setChecked(True)
     assert ("map_legend", True) in toggled_layers

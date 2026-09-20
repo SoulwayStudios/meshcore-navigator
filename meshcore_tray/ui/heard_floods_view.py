@@ -62,7 +62,9 @@ class FloodRowWidget(QFrame):
         if self.path.timestamp:
             try:
                 dt = datetime.fromisoformat(str(self.path.timestamp).replace("Z", "+00:00"))
-                t_display = dt.strftime("%H:%M:%S")
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                t_display = dt.astimezone().strftime("%H:%M:%S")
             except Exception:
                 t_display = str(self.path.timestamp)[:8]
 

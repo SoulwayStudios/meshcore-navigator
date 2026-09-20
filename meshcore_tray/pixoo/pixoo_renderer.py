@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 import html
 import logging
 import math
@@ -150,7 +150,15 @@ class PixooRenderer:
 
         sender = message.sender_name or "Unknown"
         is_fav = message.is_favorite or bool(self.config and self.config.is_user_favorite(message.sender_id, sender))
-        t_str = message.timestamp[11:16] if len(message.timestamp) >= 16 else datetime.now().strftime("%H:%M")
+        t_str = datetime.now().strftime("%H:%M")
+        if message.timestamp:
+            try:
+                dt = datetime.fromisoformat(str(message.timestamp).replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                t_str = dt.astimezone().strftime("%H:%M")
+            except Exception:
+                t_str = message.timestamp[11:16] if len(message.timestamp) >= 16 else t_str
 
         # 2. Store Single Latest Message for this Channel (clean unescaped text)
         msg_entry = ChannelMessage(

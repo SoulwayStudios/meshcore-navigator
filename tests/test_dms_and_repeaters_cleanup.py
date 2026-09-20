@@ -1,5 +1,6 @@
 """Unit tests verifying DMs, Contacts list, and Repeaters UI cleanup and map centering."""
 
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 import pytest
 from PyQt6.QtCore import Qt, QPoint
@@ -56,7 +57,8 @@ def test_dms_view_row_height_and_no_id_visible(app, tmp_path):
 
     # Verify last seen is displayed in DD/MM/YY HH:MM format
     assert "Last seen:" in widget.sub_lbl.text()
-    assert "04/09/26 14:20" in widget.sub_lbl.text()
+    expected_local = datetime.fromisoformat("2026-09-04T14:20:00+00:00").astimezone().strftime("%d/%m/%y %H:%M")
+    assert expected_local in widget.sub_lbl.text()
 
     # Verify star is gold (#FFD700)
     assert not widget.star_lbl.isHidden()
@@ -126,7 +128,8 @@ def test_repeaters_view_row_height_and_no_id_visible(app, tmp_path):
     assert "627c8262" not in widget.sub_lbl.text()
     assert "ID:" not in widget.sub_lbl.text()
     assert "Last seen:" in widget.sub_lbl.text()
-    assert "05/09/26 15:30" in widget.sub_lbl.text()
+    expected_rep_local = datetime.fromisoformat("2026-09-05T15:30:00+00:00").astimezone().strftime("%d/%m/%y %H:%M")
+    assert expected_rep_local in widget.sub_lbl.text()
     assert "SNR: +12.5dB" in widget.sub_lbl.text()
     assert "🔍" in rep_view.search_input.placeholderText()
     assert "Discover / Add" in rep_view.btn_add_repeater.text()

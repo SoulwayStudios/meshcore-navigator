@@ -2698,7 +2698,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             left: auto;
         }
         .live-packet-hud {
-            width: 380px;
+            width: 390px;
             max-width: calc(100vw - 40px);
             display: flex;
             flex-direction: column;
@@ -2714,6 +2714,12 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             font-weight: 700;
             letter-spacing: 0.5px;
             color: #F2F3F5;
+            cursor: grab;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        .live-hud-header:active {
+            cursor: grabbing;
         }
         .live-hud-header-left, .live-hud-header-right {
             display: flex;
@@ -2744,12 +2750,12 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
         }
         .live-hud-content {
             background: #111214;
-            max-height: 380px;
-            overflow-y: hidden;
+            max-height: min(460px, calc(100vh - 120px));
+            overflow-y: auto;
             display: flex;
             flex-direction: column;
-            padding: 4px 6px;
-            gap: 2px;
+            padding: 6px 8px;
+            gap: 4px;
             /* Top fade removed so the newest incoming packets at the top remain 100% crisp and legible */
             mask-image: none;
             -webkit-mask-image: none;
@@ -2767,16 +2773,20 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             border: 1px solid #2B2D31;
             font-size: 11.5px;
             font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
-            padding: 4px 6px;
-            border-radius: 5px;
+            padding: 5px 8px;
+            border-radius: 4px;
             display: flex;
             align-items: center;
-            gap: 6px;
+            gap: 7px;
             transition: background 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
             overflow: hidden;
             cursor: pointer;
-            border-left: 2.5px solid transparent;
+            border-left: 3px solid transparent;
             white-space: nowrap;
+            flex-shrink: 0;
+            min-height: 28px;
+            line-height: 1.4;
+            box-sizing: border-box;
         }
         .live-feed-item:hover {
             background: #2B2D31;
@@ -2787,6 +2797,31 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             font-size: 13px;
             flex-shrink: 0;
             line-height: 1;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .feed-src {
+            border-radius: 3px;
+            padding: 1px 4px;
+            font-size: 9px;
+            font-weight: 700;
+            line-height: 1.2;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            letter-spacing: 0.3px;
+        }
+        .feed-src-rf {
+            background: rgba(16, 185, 129, 0.18);
+            color: #10B981;
+            border: 1px solid #059669;
+        }
+        .feed-src-mqtt {
+            background: rgba(245, 158, 11, 0.18);
+            color: #F59E0B;
+            border: 1px solid #D97706;
         }
         .feed-type {
             font-weight: 700;
@@ -2794,6 +2829,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             letter-spacing: 0.5px;
             text-transform: uppercase;
             flex-shrink: 0;
+            line-height: 1.2;
         }
         .feed-hops {
             font-size: 9.5px;
@@ -2803,6 +2839,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             padding: 1px 4px;
             border-radius: 3px;
             flex-shrink: 0;
+            line-height: 1.2;
+            display: inline-flex;
+            align-items: center;
         }
         .feed-text {
             color: #CBD5E1;
@@ -2812,6 +2851,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             flex: 1;
             min-width: 0;
             font-size: 11px;
+            line-height: 1.35;
         }
         .feed-time {
             font-size: 10px;
@@ -2819,6 +2859,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             flex-shrink: 0;
             margin-left: auto;
             padding-left: 6px;
+            line-height: 1.35;
         }
 
         /* Legend styling (Screenshot 1) */
@@ -2878,7 +2919,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
 
     <!-- Floating Live Packet Feed HUD Overlay -->
     <div id="livePacketHud" class="live-overlay live-packet-hud" data-position="bl" style="display: none;">
-        <div class="live-hud-header">
+        <div class="live-hud-header" id="liveHudDragHandle">
             <div class="live-hud-header-left">
                 <button class="panel-corner-btn" onclick="cycleHudCorner()" title="Move HUD to next corner" aria-label="Move HUD to next corner">◫</button>
                 <span class="live-hud-title">⚡ LIVE PACKET FEED</span>
@@ -2895,7 +2936,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
 
     <!-- Floating Map Legend Overlay (Screenshot 1) -->
     <div id="liveLegend" class="live-overlay live-legend" data-position="br" style="display: none;">
-        <div class="live-hud-header">
+        <div class="live-hud-header" id="liveLegendDragHandle">
             <span class="live-hud-title">MAP LEGEND</span>
             <button class="live-hud-btn live-hud-close" onclick="toggleMapLegend(false)" title="Close Legend">✕</button>
         </div>
@@ -5740,7 +5781,12 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             var corners = ['bl', 'tl', 'tr', 'br'];
             var curr = el.getAttribute('data-position') || 'bl';
             var next = corners[(corners.indexOf(curr) + 1) % corners.length];
+            el.style.left = '';
+            el.style.top = '';
+            el.style.right = '';
+            el.style.bottom = '';
             el.setAttribute('data-position', next);
+            try { sessionStorage.removeItem('overlay_pos_live_packet_hud'); } catch(e) {}
         };
 
         var _recentHudEntries = {};
@@ -5844,9 +5890,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
 
             var srcHtml = '';
             if (!isRadio) {
-                srcHtml = '<span class="feed-src feed-src-mqtt" style="background:rgba(245,158,11,0.18);color:#F59E0B;border:1px solid #D97706;border-radius:2px;padding:0 3px;font-size:9px;font-weight:bold;margin-right:2px;" title="Ingested from MQTT Broker">MQTT</span>';
+                srcHtml = '<span class="feed-src feed-src-mqtt" title="Ingested from MQTT Broker">MQTT</span>';
             } else {
-                srcHtml = '<span class="feed-src feed-src-rf" style="background:rgba(16,185,129,0.18);color:#10B981;border:1px solid #059669;border-radius:2px;padding:0 3px;font-size:9px;font-weight:bold;margin-right:2px;" title="LoRa Physical Radio Reception">RF</span>';
+                srcHtml = '<span class="feed-src feed-src-rf" title="LoRa Physical Radio Reception">RF</span>';
             }
 
             var item = document.createElement('div');
@@ -6146,14 +6192,12 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     if (saved) {
                         var pos = JSON.parse(saved);
                         if (typeof pos.left === 'number' && typeof pos.top === 'number') {
+                            panel.removeAttribute('data-position');
                             var mapEl = document.getElementById('map');
                             var containerW = (mapEl ? mapEl.clientWidth : window.innerWidth);
                             var containerH = (mapEl ? mapEl.clientHeight : window.innerHeight);
                             var clampLeft = Math.max(0, Math.min(Math.max(0, containerW - 100), pos.left));
                             var clampTop = Math.max(0, Math.min(Math.max(0, containerH - 60), pos.top));
-                            if (clampLeft < 415 && clampTop < 55) {
-                                clampTop = 58;
-                            }
                             panel.style.left = clampLeft + 'px';
                             panel.style.top = clampTop + 'px';
                             panel.style.right = 'auto';
@@ -6181,7 +6225,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     e.target.closest('.new-nodes-close-btn') ||
                     e.target.closest('.thunderstorm-close-btn') ||
                     e.target.closest('.aurora-close-btn') ||
-                    e.target.closest('.adsb-close-btn')
+                    e.target.closest('.adsb-close-btn') ||
+                    e.target.closest('.live-hud-btn') ||
+                    e.target.closest('.panel-corner-btn')
                 )) {
                     return;
                 }
@@ -6189,6 +6235,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 bringOverlayToFront(panel);
                 isDragging = true;
                 panel.classList.add('active-drag');
+                panel.removeAttribute('data-position');
                 startX = e.clientX;
                 startY = e.clientY;
 
@@ -6218,9 +6265,6 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 var maxH = Math.max(0, containerH - panel.offsetHeight);
                 var newLeft = Math.max(0, Math.min(maxW, origLeft + dx));
                 var newTop = Math.max(0, Math.min(maxH, origTop + dy));
-                if (newLeft < 415 && newTop < 55) {
-                    newTop = 58;
-                }
 
                 panel.style.left = newLeft + 'px';
                 panel.style.top = newTop + 'px';
@@ -6346,6 +6390,10 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
 
             // New Nodes Discovery
             makeOverlayDraggable('new-nodes-panel', 'new-nodes-drag-handle', 'new_nodes');
+
+            // Live Packet Feed HUD & Map Legend (CoreScope Live Overlays)
+            makeOverlayDraggable('livePacketHud', 'liveHudDragHandle', 'live_packet_hud');
+            makeOverlayDraggable('liveLegend', 'liveLegendDragHandle', 'live_legend');
         }
         setTimeout(initAllDraggableOverlays, 100);
 
@@ -9749,8 +9797,6 @@ class DraggableOverlayFrame(QFrame):
                 max_y = max(0, parent_h - self.height())
                 nx = max(0, min(max_x, new_pos.x()))
                 ny = max(0, min(max_y, new_pos.y()))
-                if nx < 415 and ny < 55:
-                    ny = 58
                 self.move(nx, ny)
             else:
                 self.move(new_pos)
@@ -10031,7 +10077,7 @@ class MeshMapWidget(QWidget):
         self.show_companion_orbitals = False
         self.show_search_node_id = False
         self.show_packet_hud = getattr(self.config.meshcore, "map_show_packet_hud", False) if (self.config and hasattr(self.config, "meshcore")) else False
-        self.show_activity_timeline = getattr(self.config.meshcore, "map_show_activity_timeline", False) if (self.config and hasattr(self.config, "meshcore")) else False
+        self.show_activity_timeline = getattr(self.config.meshcore, "map_show_activity_timeline", True) if (self.config and hasattr(self.config, "meshcore")) else True
         self.show_map_legend = False
         self._page_ready = not WEBENGINE_AVAILABLE
         self._last_traced_path_info = None
@@ -10227,49 +10273,17 @@ class MeshMapWidget(QWidget):
             """)
             self.map_splitter.addWidget(self.web_view)
 
-            # Floating In-Overlay Controls in Top-Left Corner of Map
+            # Map Action Controls (Integrated into the bottom Network Activity Timeline)
             self.floating_controls = QFrame(self.web_view)
-            self.floating_controls.setStyleSheet("""
-                QFrame {
-                    background-color: rgba(30, 31, 34, 0.90);
-                    border: 1px solid rgba(255, 255, 255, 0.15);
-                    border-radius: 6px;
-                }
-                QPushButton {
-                    background-color: transparent;
-                    color: #F2F3F5;
-                    border: none;
-                    padding: 4px 8px;
-                    font-size: 11px;
-                    font-weight: 600;
-                    border-radius: 4px;
-                }
-                QPushButton:hover {
-                    background-color: #404249;
-                    color: #FFFFFF;
-                }
-                QPushButton:checked {
-                    background-color: #38BDF8;
-                    color: #0F172A;
-                }
-                QPushButton:checked:hover {
-                    background-color: #7DD3FC;
-                    color: #0F172A;
-                }
-            """)
-            fl_layout = QHBoxLayout(self.floating_controls)
-            fl_layout.setContentsMargins(4, 4, 4, 4)
-            fl_layout.setSpacing(4)
+            self.floating_controls.hide()
 
             self.btn_center = QPushButton("📍 Re-center")
             self.btn_center.setToolTip("Center map on active nodes")
             self.btn_center.clicked.connect(self._on_center_clicked)
-            fl_layout.addWidget(self.btn_center)
 
             self.btn_reset_layers = QPushButton("🧹 Reset Layers")
             self.btn_reset_layers.setToolTip("Reset map layers, clear paths, and restore default view")
             self.btn_reset_layers.clicked.connect(self.reset_map_layers)
-            fl_layout.addWidget(self.btn_reset_layers)
 
             self.btn_age_fade = QPushButton("⏳ Age Fade")
             self.btn_age_fade.setCheckable(True)
@@ -10277,7 +10291,6 @@ class MeshMapWidget(QWidget):
             fade_init = getattr(self.config.meshcore, "node_freshness_fading", True) if self.config else True
             self.btn_age_fade.setChecked(fade_init)
             self.btn_age_fade.clicked.connect(self._on_floating_age_fade_clicked)
-            fl_layout.addWidget(self.btn_age_fade)
 
             self._current_base_layer = getattr(self.config, "map_base_layer", "canvas") if self.config else "canvas"
             self.btn_base_map = QPushButton(self._get_base_map_button_label(self._current_base_layer))
@@ -10285,11 +10298,6 @@ class MeshMapWidget(QWidget):
             self.btn_base_map.clicked.connect(self._on_toggle_base_map_clicked)
             self.btn_base_map.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             self.btn_base_map.customContextMenuRequested.connect(self._show_base_map_menu)
-            fl_layout.addWidget(self.btn_base_map)
-
-            self.floating_controls.adjustSize()
-            self.floating_controls.move(10, 10)
-            self.floating_controls.show()
 
             # Floating Line-of-Sight & Topographic Profile Controls (Portrait Unified Style)
             self.los_controls = DraggableOverlayFrame(self.web_view)
@@ -10486,6 +10494,12 @@ class MeshMapWidget(QWidget):
             fade_init = getattr(self.config.meshcore, "node_freshness_fading", True) if self.config else True
             self.btn_age_fade.setChecked(fade_init)
             self.btn_age_fade.clicked.connect(self._on_floating_age_fade_clicked)
+            self.btn_center = QPushButton("📍 Re-center")
+            self.btn_center.clicked.connect(self._on_center_clicked)
+            self.btn_reset_layers = QPushButton("🧹 Reset Layers")
+            self.btn_reset_layers.clicked.connect(self.reset_map_layers)
+            self.floating_controls = QFrame(self)
+            self.floating_controls.hide()
 
             self.fallback_label = QLabel(
                 "🗺️ <b>Mesh Topology & Nodes</b><br><br>"
@@ -10511,11 +10525,17 @@ class MeshMapWidget(QWidget):
         self.elevation_profile_dock.hide()
         self.map_splitter.addWidget(self.elevation_profile_dock)
 
-        # Bottom Dock: CoreScope Network Activity Timeline Widget
+        # Bottom Dock: CoreScope Network Activity Timeline Widget (Standard Feature)
         self.activity_timeline_dock = NetworkActivityTimelineWidget(
             storage=self.storage,
             config=self.config,
             parent=self.map_splitter
+        )
+        self.activity_timeline_dock.set_map_controls(
+            self.btn_center,
+            self.btn_reset_layers,
+            self.btn_age_fade,
+            self.btn_base_map
         )
         self.activity_timeline_dock.close_requested.connect(
             lambda: self.set_activity_timeline_visible(False)
@@ -10523,6 +10543,8 @@ class MeshMapWidget(QWidget):
         self.map_splitter.addWidget(self.activity_timeline_dock)
         if not self.show_activity_timeline:
             self.activity_timeline_dock.hide()
+        else:
+            self.activity_timeline_dock.show()
 
         self.map_splitter.setStretchFactor(0, 4)
         self.map_splitter.setStretchFactor(1, 1)
@@ -10590,22 +10612,25 @@ class MeshMapWidget(QWidget):
             self.pause_geometry_motion()
 
     def _reposition_floating_controls(self):
-        if hasattr(self, "floating_controls"):
+        if hasattr(self, "floating_controls") and not self.floating_controls.isHidden():
             self.floating_controls.move(10, 10)
             self.floating_controls.raise_()
-        if hasattr(self, "los_controls") and hasattr(self, "floating_controls") and hasattr(self, "web_view"):
+        if hasattr(self, "los_controls") and hasattr(self, "web_view"):
             if getattr(self.los_controls, "_user_moved", False):
                 return
-            fl_w = self.floating_controls.width()
-            los_w = self.los_controls.width()
-            try:
-                web_w = int(self.web_view.width())
-            except Exception:
-                web_w = 800
-            if fl_w + los_w + 30 <= web_w:
-                self.los_controls.move(max(fl_w + 20, 430), 10)
+            if hasattr(self, "floating_controls") and not self.floating_controls.isHidden():
+                fl_w = self.floating_controls.width()
+                los_w = self.los_controls.width()
+                try:
+                    web_w = int(self.web_view.width())
+                except Exception:
+                    web_w = 800
+                if fl_w + los_w + 30 <= web_w:
+                    self.los_controls.move(fl_w + 20, 10)
+                else:
+                    self.los_controls.move(10, self.floating_controls.height() + 16)
             else:
-                self.los_controls.move(10, max(58, self.floating_controls.height() + 16))
+                self.los_controls.move(10, 10)
             self.los_controls.raise_()
 
     def run_js(self, script: str, callback: Optional[Callable] = None):
@@ -13731,9 +13756,12 @@ class MeshMapWidget(QWidget):
         # 5. Format Time
         time_str = ""
         try:
-            time_str = datetime.fromisoformat(msg.timestamp.replace("Z", "+00:00")).strftime("%H:%M:%S")
+            dt = datetime.fromisoformat(str(msg.timestamp).replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            time_str = dt.astimezone().strftime("%H:%M:%S")
         except Exception:
-            time_str = msg.timestamp[:8]
+            time_str = str(msg.timestamp)[:8]
 
         # 6. Status Text Update
         known_count = sum(1 for r in repeaters_info if r["is_known"] and not r.get("is_phantom"))

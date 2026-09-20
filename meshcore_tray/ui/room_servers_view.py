@@ -25,30 +25,14 @@ logger = logging.getLogger("meshcore_tray.room_servers_view")
 
 
 def format_last_seen(ts: Optional[str]) -> str:
-    """Formats timestamp into DD/MM/YY HH:MM format."""
+    """Formats timestamp into DD/MM/YY HH:MM format in local time."""
     if not ts:
         return "No activity yet"
     try:
-        clean = str(ts).strip().replace("T", " ")
-        if "." in clean:
-            clean = clean.split(".")[0]
-        if "+" in clean:
-            clean = clean.split("+")[0]
-
-        parts = clean.split(" ")
-        date_part = parts[0]
-        time_part = parts[1][:5] if len(parts) > 1 else ""
-
-        if "-" in date_part:
-            ymd = date_part.split("-")
-            if len(ymd) == 3:
-                year, month, day = ymd[0], ymd[1], ymd[2]
-                short_year = year[-2:]
-                formatted_date = f"{day}/{month}/{short_year}"
-                if time_part:
-                    return f"Seen: {formatted_date} {time_part}"
-                return f"Seen: {formatted_date}"
-        return f"Seen: {clean[:16]}"
+        dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return f"Seen: {dt.astimezone().strftime('%d/%m/%y %H:%M')}"
     except Exception:
         return f"Seen: {str(ts)[:16]}"
 
@@ -185,7 +169,15 @@ class MessageBubbleWidget(QFrame):
         top_row.addWidget(lbl_sender)
 
         # Timestamp
-        ts_clean = self.message.timestamp.split("T")[-1][:5] if "T" in self.message.timestamp else self.message.timestamp[:5]
+        ts_clean = ""
+        if self.message.timestamp:
+            try:
+                dt = datetime.fromisoformat(str(self.message.timestamp).replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                ts_clean = dt.astimezone().strftime("%H:%M")
+            except Exception:
+                ts_clean = self.message.timestamp.split("T")[-1][:5] if "T" in self.message.timestamp else self.message.timestamp[:5]
         lbl_ts = QLabel(ts_clean)
         lbl_ts.setStyleSheet("color: #64748B; font-size: 10px;")
         top_row.addWidget(lbl_ts)
