@@ -31,6 +31,7 @@ def test_splash_overlay_styling_and_safe_resize(qapp):
     """Verifies that the splash screen description is not clipped and resizing does not raise RuntimeError."""
     config = AppConfig()
     config.first_run_completed = True
+    config.check_updates_on_startup = False
     parent = QWidget()
     parent.resize(1000, 600)
 

@@ -270,6 +270,9 @@ class SplashOverlay(QWidget):
         overlay_layout.addWidget(self.backdrop)
 
     def _setup_version_checker(self):
+        import os
+        if os.environ.get("MESHCORE_TEST_MODE") == "1" and not getattr(self, "_allow_test_network", False):
+            return
         if getattr(self.config, "check_updates_on_startup", True):
             self._version_checker = VersionChecker.get_instance()
             self._version_checker.check_finished.connect(self._on_version_check_finished)
@@ -385,4 +388,8 @@ class SplashOverlay(QWidget):
     def _on_fade_finished(self):
         self.hide()
         self.dismissed.emit()
+        try:
+            self.setParent(None)
+        except Exception:
+            pass
         self.deleteLater()
