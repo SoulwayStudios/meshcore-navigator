@@ -78,3 +78,24 @@ def test_mesh_map_persists_filter_and_alert_settings():
     assert "helicopter" in config.meshcore.adsb_alert_categories
     assert "airliner" not in config.meshcore.adsb_alert_categories
     assert config.meshcore.adsb_alert_radius_mi == 10.0
+
+
+def test_3d_and_2d_adsb_distinct_class_icons():
+    """Verifies that 2D and 3D ADSB views use distinct tailored SVG icons for each aircraft class."""
+    html = get_leaflet_html()
+
+    # Shared class-specific SVG generator
+    assert "function getAircraftSvgContent(category, color)" in html
+    assert "case 'airliner':" in html
+    assert "case 'light':" in html
+    assert "case 'military':" in html
+    assert "case 'helicopter':" in html
+    assert "case 'glider':" in html
+
+    # 3D view uses class-specific SVG content
+    assert "var svgContent = getAircraftSvgContent(planeCat, planeColor);" in html
+    assert "${svgContent}" not in html  # pure JS concatenated
+
+    # 2D view uses getAircraftSvgContent
+    assert "var svgContent = getAircraftSvgContent(cat, color);" in html
+

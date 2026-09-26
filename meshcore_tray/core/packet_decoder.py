@@ -84,6 +84,66 @@ TYPE_COLORS = {
 # CoreScope Default Public Channel Key
 DEFAULT_PUBLIC_CHANNEL_KEY = bytes.fromhex("8b3387e9c5cdea6ac9e5edbaa115cd72")
 
+COMMUNITY_CHANNELS: List[str] = [
+    "thenorf",
+    "northeast",
+    "cumbria",
+    "yorkshire",
+    "northwest",
+    "scotland",
+    "wales",
+    "midlands",
+    "london",
+    "south",
+    "southwest",
+    "southeast",
+    "primary",
+    "emergency",
+    "testing",
+    "chat",
+    "ops"
+]
+
+
+def build_known_channel_keys(storage: Optional[Any] = None) -> Dict[str, bytes]:
+    """Builds a complete dictionary of channel name -> 16-byte AES keys.
+
+    Includes:
+    - Default 'Public' channel (both CoreScope default hex and derived "public")
+    - Well-known regional community channels (e.g. #thenorf, #northeast, #cumbria)
+    - All user-joined channels stored in local database
+    """
+    keys: Dict[str, bytes] = {
+        "Public": DEFAULT_PUBLIC_CHANNEL_KEY,
+        "public": derive_channel_key("public"),
+    }
+
+    # Add community channels (deriving keys for both clean name and with # prefix)
+    for name in COMMUNITY_CHANNELS:
+        clean = name.lstrip("#").lower()
+        key_clean = derive_channel_key(clean)
+        keys[f"#{clean}"] = key_clean
+        keys[clean] = key_clean
+        keys[f"#{clean}_raw"] = derive_channel_key(f"#{clean}")
+
+    # Add user joined channels from storage
+    if storage and hasattr(storage, "get_channels"):
+        try:
+            channels = storage.get_channels()
+            for ch in channels:
+                if ch.name:
+                    clean = ch.name.strip().lstrip("#").lower()
+                    if clean and clean != "public":
+                        k_clean = derive_channel_key(clean)
+                        keys[ch.name] = k_clean
+                        keys[f"#{clean}"] = k_clean
+                        keys[clean] = k_clean
+                        keys[f"#{clean}_raw"] = derive_channel_key(f"#{clean}")
+        except Exception:
+            pass
+
+    return keys
+
 
 @dataclass
 class PacketHeader:
@@ -447,7 +507,11 @@ def decode_meshcore_packet(
                 if res:
                     ts, flags, text, sender = res
                     payload.decryption_status = "DECRYPTED"
-                    payload.channel = cname
+                    clean_cname = cname.replace("_raw", "")
+                    if clean_cname.lower() in ("public", "public_raw"):
+                        payload.channel = "Public"
+                    else:
+                        payload.channel = clean_cname if clean_cname.startswith("#") else f"#{clean_cname}"
                     payload.text = text
                     payload.sender = sender
                     payload.timestamp = ts

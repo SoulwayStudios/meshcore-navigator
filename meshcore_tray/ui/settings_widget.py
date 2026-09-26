@@ -357,7 +357,7 @@ class SettingsWidget(QWidget):
             ("📡 Radio & Node", 0),
             ("🖼️ Pixoo Integration", 1),
             ("🔀 Channels & Filters", 2),
-            ("🎨 App UI Colors", 3),
+            ("🎨 App UI Colors & Map Tiles", 3),
             ("🌈 Pixoo Matrix Colors", 4),
             ("🔔 Watched Words & Alerts", 5),
             ("🌐 Gateway & Telemetry", 6),
@@ -1071,11 +1071,16 @@ class SettingsWidget(QWidget):
         c2.add_widget(self.chk_freshness)
         layout.addWidget(c2)
 
-        # Card 2B: Map Base Layer & CARTO Key
-        c_map_tiles = SettingsCard("🗺️ Map Base Layer & CARTO Basemap Key")
+        # Card 2B: 2D & 3D Map Tiles & API Keys
+        c_map_tiles = SettingsCard("🗺️ 2D & 3D Map Tiles & Provider API Keys")
+
+        # --- 2D Basemap Section ---
+        lbl_sec_2d = QLabel("<b>🗺️ 2D Basemap Layer & CARTO Dark API Key</b>")
+        lbl_sec_2d.setStyleSheet("color: #60A5FA; font-size: 12px; margin-top: 2px;")
+        c_map_tiles.add_widget(lbl_sec_2d)
 
         row_base = QHBoxLayout()
-        lbl_base = QLabel("Default Base Map:")
+        lbl_base = QLabel("Default 2D Base Map:")
         lbl_base.setFixedWidth(250)
         row_base.addWidget(lbl_base)
         self.combo_map_base = QComboBox()
@@ -1127,7 +1132,7 @@ class SettingsWidget(QWidget):
         """)
         row_key.addWidget(self.txt_carto_key, 1)
 
-        btn_get_free_key = QPushButton("🌐 Get Free Key")
+        btn_get_free_key = QPushButton("🌐 Get Free CARTO Key")
         btn_get_free_key.setToolTip("Open carto.com/basemaps/apikey in browser (free, no credit card required)")
         btn_get_free_key.setStyleSheet("""
             QPushButton {
@@ -1147,6 +1152,114 @@ class SettingsWidget(QWidget):
         btn_get_free_key.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://carto.com/basemaps/apikey")))
         row_key.addWidget(btn_get_free_key)
         c_map_tiles.add_layout(row_key)
+
+        lbl_carto_info = QLabel("💡 <i>CARTO Dark Matter tiles work without a key. Entering a free key removes the watermark and unlocks high-volume rate limits.</i>")
+        lbl_carto_info.setWordWrap(True)
+        lbl_carto_info.setStyleSheet("color: #9CA3AF; font-size: 11px; margin-bottom: 8px;")
+        c_map_tiles.add_widget(lbl_carto_info)
+
+        # --- 3D Globe & Airspace Section ---
+        lbl_sec_3d = QLabel("<b>🌐 3D Airspace & Globe Map Tile Provider</b>")
+        lbl_sec_3d.setStyleSheet("color: #34D399; font-size: 12px; margin-top: 6px; border-top: 1px solid #374151; padding-top: 8px;")
+        c_map_tiles.add_widget(lbl_sec_3d)
+
+        lbl_3d_info = QLabel(
+            "✨ <b>No API key required by default!</b> The 3D Map runs out-of-the-box on open-source "
+            "<b>OpenFreeMap Dark</b> vector tiles and <b>AWS Open Data Terrarium DEM</b> elevation without any account.<br>"
+            "If you want to use custom vector tiles (e.g. MapTiler, Mapbox, or self-hosted styles), configure them below:"
+        )
+        lbl_3d_info.setWordWrap(True)
+        lbl_3d_info.setStyleSheet("color: #9CA3AF; font-size: 11px; margin-bottom: 6px;")
+        c_map_tiles.add_widget(lbl_3d_info)
+
+        row_3d_style = QHBoxLayout()
+        lbl_3d_style = QLabel("3D Map Style URL:")
+        lbl_3d_style.setFixedWidth(250)
+        row_3d_style.addWidget(lbl_3d_style)
+        self.txt_map3d_custom_style_url = QLineEdit(getattr(self.config, "map3d_custom_style_url", ""))
+        self.txt_map3d_custom_style_url.setPlaceholderText("Default: https://tiles.openfreemap.org/styles/dark")
+        self.txt_map3d_custom_style_url.setStyleSheet("""
+            QLineEdit {
+                background-color: #2B2F38;
+                color: #FFFFFF;
+                border: 1px solid #414143;
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 11px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #34D399;
+            }
+        """)
+        row_3d_style.addWidget(self.txt_map3d_custom_style_url, 1)
+        c_map_tiles.add_layout(row_3d_style)
+
+        row_3d_key = QHBoxLayout()
+        lbl_3d_k = QLabel("3D Map API Key / Token:")
+        lbl_3d_k.setFixedWidth(250)
+        row_3d_key.addWidget(lbl_3d_k)
+        self.txt_map3d_key = QLineEdit(getattr(self.config, "map3d_api_key", ""))
+        self.txt_map3d_key.setPlaceholderText("Optional: MapTiler or Mapbox API key / access token")
+        self.txt_map3d_key.setStyleSheet("""
+            QLineEdit {
+                background-color: #2B2F38;
+                color: #FFFFFF;
+                border: 1px solid #414143;
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 11px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #34D399;
+            }
+        """)
+        row_3d_key.addWidget(self.txt_map3d_key, 1)
+
+        btn_get_3d_key = QPushButton("🌐 Get MapTiler Key")
+        btn_get_3d_key.setToolTip("Open cloud.maptiler.com/account/keys/ in browser (free account available)")
+        btn_get_3d_key.setStyleSheet("""
+            QPushButton {
+                background-color: #064E3B;
+                color: #A7F3D0;
+                border: 1px solid #059669;
+                border-radius: 4px;
+                padding: 4px 10px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #059669;
+                color: #FFFFFF;
+            }
+        """)
+        btn_get_3d_key.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://cloud.maptiler.com/account/keys/")))
+        row_3d_key.addWidget(btn_get_3d_key)
+        c_map_tiles.add_layout(row_3d_key)
+
+        # Quick Save button for map tiles
+        row_save_tiles = QHBoxLayout()
+        self.lbl_map_tiles_status = QLabel("")
+        self.lbl_map_tiles_status.setStyleSheet("color: #34D399; font-size: 11px; font-weight: bold;")
+        row_save_tiles.addWidget(self.lbl_map_tiles_status, 1)
+
+        self.btn_save_map_tiles = QPushButton("💾 Save & Apply Map Tiles")
+        self.btn_save_map_tiles.setStyleSheet("""
+            QPushButton {
+                background-color: #2563EB;
+                color: #FFFFFF;
+                border: 1px solid #3B82F6;
+                border-radius: 4px;
+                padding: 5px 14px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #1D4ED8;
+            }
+        """)
+        self.btn_save_map_tiles.clicked.connect(self._on_save_map_tiles_clicked)
+        row_save_tiles.addWidget(self.btn_save_map_tiles)
+        c_map_tiles.add_layout(row_save_tiles)
 
         layout.addWidget(c_map_tiles)
 
@@ -1388,8 +1501,16 @@ class SettingsWidget(QWidget):
         c.adsb_dist_far = self.btn_col_adsb_dist_far.current_hex
         if hasattr(self, "combo_map_base"):
             self.config.map_base_layer = self.combo_map_base.currentData() or "canvas"
+            self.config.meshcore.map_base_layer = self.config.map_base_layer
         if hasattr(self, "txt_carto_key"):
             self.config.carto_api_key = self.txt_carto_key.text().strip()
+            self.config.meshcore.carto_api_key = self.config.carto_api_key
+        if hasattr(self, "txt_map3d_key"):
+            self.config.map3d_api_key = self.txt_map3d_key.text().strip()
+            self.config.meshcore.map3d_api_key = self.config.map3d_api_key
+        if hasattr(self, "txt_map3d_custom_style_url"):
+            self.config.map3d_custom_style_url = self.txt_map3d_custom_style_url.text().strip()
+            self.config.meshcore.map3d_custom_style_url = self.config.map3d_custom_style_url
 
     def _sync_config_to_color_pickers(self):
         c = self.config.app_colors
@@ -1447,6 +1568,48 @@ class SettingsWidget(QWidget):
                 self.combo_map_base.setCurrentIndex(idx_b)
         if hasattr(self, "txt_carto_key"):
             self.txt_carto_key.setText(getattr(self.config, "carto_api_key", ""))
+        if hasattr(self, "txt_map3d_key"):
+            self.txt_map3d_key.setText(getattr(self.config, "map3d_api_key", ""))
+        if hasattr(self, "txt_map3d_custom_style_url"):
+            self.txt_map3d_custom_style_url.setText(getattr(self.config, "map3d_custom_style_url", ""))
+
+    def _on_save_map_tiles_clicked(self):
+        """Dedicated save handler for 2D/3D map tiles and API keys."""
+        btn = getattr(self, "btn_save_map_tiles", None)
+        orig_txt = btn.text() if btn else ""
+        if btn:
+            btn.setEnabled(False)
+            btn.setText("⏳ Saving...")
+            if not os.environ.get("PYTEST_CURRENT_TEST"):
+                QApplication.processEvents()
+        try:
+            if hasattr(self, "combo_map_base"):
+                self.config.map_base_layer = self.combo_map_base.currentData() or "canvas"
+                self.config.meshcore.map_base_layer = self.config.map_base_layer
+            if hasattr(self, "txt_carto_key"):
+                self.config.carto_api_key = self.txt_carto_key.text().strip()
+                self.config.meshcore.carto_api_key = self.config.carto_api_key
+            if hasattr(self, "txt_map3d_key"):
+                self.config.map3d_api_key = self.txt_map3d_key.text().strip()
+                self.config.meshcore.map3d_api_key = self.config.map3d_api_key
+            if hasattr(self, "txt_map3d_custom_style_url"):
+                self.config.map3d_custom_style_url = self.txt_map3d_custom_style_url.text().strip()
+                self.config.meshcore.map3d_custom_style_url = self.config.map3d_custom_style_url
+            self.config.save()
+            bus.emit(EventType.SETTINGS_UPDATED, self.config)
+            if btn:
+                btn.setText("✓ Saved!")
+                btn.setStyleSheet("background-color: #059669; color: #FFFFFF; font-weight: bold; border-radius: 4px; padding: 5px 14px; font-size: 11px;")
+            if hasattr(self, "lbl_map_tiles_status"):
+                self.lbl_map_tiles_status.setText("✓ Map tile keys saved and active!")
+                QTimer.singleShot(3500, lambda: self.lbl_map_tiles_status.setText(""))
+            if btn:
+                QTimer.singleShot(1800, lambda: (btn.setText(orig_txt), btn.setStyleSheet("background-color: #2563EB; color: #FFFFFF; border: 1px solid #3B82F6; border-radius: 4px; padding: 5px 14px; font-size: 11px; font-weight: bold;"), btn.setEnabled(True)))
+        except Exception as e:
+            logger.error(f"Failed to save map tile settings: {e}")
+            if btn:
+                btn.setText("❌ Error")
+                QTimer.singleShot(2000, lambda: (btn.setText(orig_txt), btn.setStyleSheet(""), btn.setEnabled(True)))
 
     def _on_save_theme_clicked(self):
         btn = getattr(self, "btn_save_theme", None)
@@ -2799,6 +2962,10 @@ class SettingsWidget(QWidget):
                     self.combo_map_base.setCurrentIndex(idx)
             if hasattr(self, "txt_carto_key"):
                 self.txt_carto_key.setText(getattr(self.config, "carto_api_key", ""))
+            if hasattr(self, "txt_map3d_key"):
+                self.txt_map3d_key.setText(getattr(self.config, "map3d_api_key", ""))
+            if hasattr(self, "txt_map3d_custom_style_url"):
+                self.txt_map3d_custom_style_url.setText(getattr(self.config, "map3d_custom_style_url", ""))
 
             # 4. Pixoo Colors
             if hasattr(self, "btn_col_channel"):

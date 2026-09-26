@@ -57,6 +57,8 @@ class MeshcoreConfig:
     space_weather_poll_interval_min: int = 15
     map_base_layer: str = "canvas"  # "corescope", "canvas", or "topo"
     carto_api_key: str = ""  # Free key from https://carto.com/basemaps/apikey for CoreScope Dark tiles
+    map3d_api_key: str = ""  # Optional API key for custom 3D vector tile provider (MapTiler, Mapbox, etc.)
+    map3d_custom_style_url: str = ""  # Optional custom 3D MapLibre style JSON URL (defaults to OpenFreeMap dark)
     adsb_radius_nm: int = 50
     adsb_target_node_id: str = ""
     adsb_target_alias: str = ""
@@ -258,6 +260,8 @@ class AppConfig:
     user_avatar_style: str = "droid"  # "droid" (Cyberpunk Radio Droid) or "letters" (Decorated 2-letter Initials)
     map_base_layer: str = "canvas"  # "corescope", "canvas", or "topo"
     carto_api_key: str = ""  # Free key from https://carto.com/basemaps/apikey for CoreScope Dark tiles
+    map3d_api_key: str = ""  # Optional API key for custom 3D vector tile provider (MapTiler, Mapbox, etc.)
+    map3d_custom_style_url: str = ""  # Optional custom 3D MapLibre style JSON URL (defaults to OpenFreeMap dark)
 
     def is_channel_favorite(self, channel_name: str) -> bool:
         if not channel_name:
@@ -458,6 +462,18 @@ class AppConfig:
             config.meshcore.carto_api_key = config.carto_api_key
         elif hasattr(config.meshcore, "carto_api_key") and config.meshcore.carto_api_key:
             config.carto_api_key = config.meshcore.carto_api_key
+
+        if "map3d_api_key" in data:
+            config.map3d_api_key = str(data["map3d_api_key"])
+            config.meshcore.map3d_api_key = config.map3d_api_key
+        elif hasattr(config.meshcore, "map3d_api_key") and config.meshcore.map3d_api_key:
+            config.map3d_api_key = config.meshcore.map3d_api_key
+
+        if "map3d_custom_style_url" in data:
+            config.map3d_custom_style_url = str(data["map3d_custom_style_url"])
+            config.meshcore.map3d_custom_style_url = config.map3d_custom_style_url
+        elif hasattr(config.meshcore, "map3d_custom_style_url") and config.meshcore.map3d_custom_style_url:
+            config.map3d_custom_style_url = config.meshcore.map3d_custom_style_url
         return config
 
     def save(self, filepath: Optional[Path] = None):

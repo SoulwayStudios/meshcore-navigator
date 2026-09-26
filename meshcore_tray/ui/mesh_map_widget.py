@@ -130,6 +130,91 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
         .btn-3d-preset:hover {
             filter: brightness(1.2);
         }
+        /* MapLibre 3D Dark Mode Controls (Zoom, Pitch Compass, Attribution) */
+        .maplibregl-ctrl-group {
+            background: #18191C !important;
+            border: 1px solid #33363E !important;
+            border-radius: 8px !important;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.7) !important;
+            overflow: hidden;
+        }
+        .maplibregl-ctrl-group:not(:empty) {
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.7) !important;
+        }
+        .maplibregl-ctrl-group button {
+            background-color: #18191C !important;
+            border: 0 !important;
+            width: 30px !important;
+            height: 30px !important;
+            transition: background-color 0.15s ease;
+        }
+        .maplibregl-ctrl-group button + button {
+            border-top: 1px solid #2B2D33 !important;
+        }
+        .maplibregl-ctrl-group button:hover {
+            background-color: #26282E !important;
+        }
+        .maplibregl-ctrl-group button:active {
+            background-color: #31343C !important;
+        }
+        .maplibregl-ctrl-group button .maplibregl-ctrl-icon {
+            filter: invert(0.92) brightness(1.2);
+        }
+        .maplibregl-ctrl.maplibregl-ctrl-attrib {
+            background-color: #18191C !important;
+            background: #18191C !important;
+            border: 1px solid #33363E !important;
+            border-radius: 12px !important;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.7) !important;
+            color: #94A3B8 !important;
+        }
+        .maplibregl-ctrl-attrib.maplibregl-compact {
+            background-color: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
+            padding: 0 !important;
+        }
+        .maplibregl-ctrl-attrib.maplibregl-compact:after {
+            display: none !important;
+        }
+        .maplibregl-ctrl-attrib-button,
+        summary.maplibregl-ctrl-attrib-button {
+            background-color: #18191C !important;
+            border: 1px solid #33363E !important;
+            border-radius: 50% !important;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.7) !important;
+            outline: none !important;
+            filter: none !important;
+            background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23CBD5E1' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cline x1='12' y1='16' x2='12' y2='12'/%3E%3Cline x1='12' y1='8' x2='12.01' y2='8'/%3E%3C/svg%3E") !important;
+            background-repeat: no-repeat !important;
+            background-position: center !important;
+            cursor: pointer;
+            transition: background-color 0.15s ease, border-color 0.15s ease;
+        }
+        .maplibregl-ctrl-attrib-button:hover,
+        summary.maplibregl-ctrl-attrib-button:hover {
+            background-color: #26282E !important;
+            border-color: #4B5563 !important;
+            background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23FFFFFF' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cline x1='12' y1='16' x2='12' y2='12'/%3E%3Cline x1='12' y1='8' x2='12.01' y2='8'/%3E%3C/svg%3E") !important;
+        }
+        .maplibregl-ctrl-attrib.maplibregl-compact-show {
+            background-color: #18191C !important;
+            border: 1px solid #33363E !important;
+            border-radius: 12px !important;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.7) !important;
+            padding: 3px 28px 3px 10px !important;
+        }
+        .maplibregl-ctrl-attrib.maplibregl-compact-show .maplibregl-ctrl-attrib-button {
+            background-color: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
+        }
+        .maplibregl-ctrl-attrib a {
+            color: #38BDF8 !important;
+        }
+        .maplibregl-ctrl-attrib a:hover {
+            color: #60A5FA !important;
+        }
         .leaflet-container {
             background-color: #12151a;
         }
@@ -335,6 +420,52 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
         .map-drag-handle-grip:hover {
             opacity: 0.95;
             color: #5865F2;
+        }
+        .map-overlay-min-btn, .map-overlay-pin-btn {
+            background: transparent;
+            border: none;
+            color: #9CA3AF;
+            font-size: 13px;
+            font-weight: bold;
+            cursor: pointer;
+            line-height: 1;
+            padding: 2px 6px;
+            border-radius: 4px;
+            transition: background 0.15s ease, color 0.15s ease;
+            user-select: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .map-overlay-min-btn:hover {
+            color: #38BDF8;
+            background: rgba(56, 189, 248, 0.18);
+        }
+        .map-overlay-pin-btn:hover {
+            color: #34D399;
+            background: rgba(52, 211, 153, 0.18);
+        }
+        .map-overlay-panel.is-minimised {
+            display: none !important;
+        }
+        .map-overlay-panel.flyout-active {
+            display: flex !important;
+            position: absolute !important;
+            z-index: 10050 !important;
+            box-shadow: 0 16px 48px rgba(0, 0, 0, 0.9), 0 0 16px rgba(56, 189, 248, 0.35) !important;
+            border-color: #38BDF8 !important;
+            animation: flyoutSlideIn 0.15s ease-out;
+        }
+        .map-overlay-panel.flyout-active.flyout-from-right {
+            animation: flyoutSlideInLeft 0.15s ease-out;
+        }
+        @keyframes flyoutSlideIn {
+            from { opacity: 0; transform: translateX(-8px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes flyoutSlideInLeft {
+            from { opacity: 0; transform: translateX(8px); }
+            to { opacity: 1; transform: translateX(0); }
         }
 
         .floating-route-panel {
@@ -3199,7 +3330,10 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             <span style="font-weight: 700; font-size: 12px; color: #58a6ff; display: flex; align-items: center; gap: 6px; pointer-events: none;">
                 <span style="opacity: 0.6; font-size: 10px;">⠿</span> <span>🏔️</span> 3D Terrain Perspective
             </span>
-            <button onclick="close3DMode()" style="background: none; border: none; color: #8b949e; cursor: pointer; font-size: 14px; padding: 2px 6px;">✕</button>
+            <div style="display: flex; align-items: center; gap: 4px;">
+                <button class="map-overlay-min-btn" onclick="minimizeOverlay('map_3d')" title="Minimise (Hover view button to peek)">—</button>
+                <button onclick="close3DMode()" style="background: none; border: none; color: #8b949e; cursor: pointer; font-size: 14px; padding: 2px 6px;">✕</button>
+            </div>
         </div>
         <div style="font-size: 10.5px; color: #8b949e; line-height: 1.4; margin-bottom: 8px;">
             Hold <b>Middle-click</b> to tilt camera & orbit in 3D. <b>Right-click</b> for Node/Map Menu.
@@ -3227,6 +3361,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 <span class="live-hud-title">⚡ LIVE PACKET FEED</span>
             </div>
             <div class="live-hud-header-right">
+                <button class="map-overlay-min-btn" onclick="minimizeOverlay('packet_hud')" title="Minimise (Hover view button to peek)">—</button>
                 <button class="live-hud-btn" onclick="toggleMapLegend()" title="Toggle Types & Roles Legend">🎨 Legend</button>
                 <button class="live-hud-btn live-hud-close" onclick="setPacketHudVisible(false)" title="Close HUD">✕</button>
             </div>
@@ -3240,7 +3375,10 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
     <div id="liveLegend" class="live-overlay live-legend" data-position="br" style="display: none;">
         <div class="live-hud-header" id="liveLegendDragHandle">
             <span class="live-hud-title">MAP LEGEND</span>
-            <button class="live-hud-btn live-hud-close" onclick="toggleMapLegend(false)" title="Close Legend">✕</button>
+            <div style="display: flex; align-items: center; gap: 4px;">
+                <button class="map-overlay-min-btn" onclick="minimizeOverlay('map_legend')" title="Minimise (Hover view button to peek)">—</button>
+                <button class="live-hud-btn live-hud-close" onclick="toggleMapLegend(false)" title="Close Legend">✕</button>
+            </div>
         </div>
         <div class="live-legend-content">
             <div class="legend-section-title">PACKET TYPES</div>
@@ -3273,7 +3411,10 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
     <div id="adsb-panel" class="adsb-panel map-overlay-panel" style="display: none;">
         <div class="adsb-header map-overlay-header" id="adsb-drag-handle">
             <span class="adsb-title"><span class="map-drag-handle-grip">⠿</span>✈️ ADS-B FLIGHTS <span id="adsb-count-badge" class="scope-pill-count">0</span></span>
-            <button class="adsb-close-btn" onclick="if (window.pyBridge && window.pyBridge.on_adsb_toggled) window.pyBridge.on_adsb_toggled(false)" title="Close ADS-B Layer">×</button>
+            <div style="display: flex; align-items: center; gap: 4px;">
+                <button class="map-overlay-min-btn" onclick="minimizeOverlay('adsb')" title="Minimise (Hover view button to peek)">—</button>
+                <button class="adsb-close-btn" onclick="if (window.pyBridge && window.pyBridge.on_adsb_toggled) window.pyBridge.on_adsb_toggled(false)" title="Close ADS-B Layer">×</button>
+            </div>
         </div>
         <div class="adsb-mode-bar">
             <button id="adsb-mode-alt" class="adsb-mode-pill active" onclick="setAdsbColorMode('altitude')">🏔️ Altitude</button>
@@ -3335,6 +3476,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             <span class="sat-title"><span class="map-drag-handle-grip">⠿</span>🛰️ SATELLITE TRACKER <span id="sat-count-badge" class="scope-pill-count">0</span></span>
             <div style="display: flex; align-items: center; gap: 4px;">
                 <button class="sat-refresh-btn" onclick="if (window.pyBridge && window.pyBridge.on_satellite_refresh) window.pyBridge.on_satellite_refresh()" title="Sync CelesTrak TLEs">↺</button>
+                <button class="map-overlay-min-btn" onclick="minimizeOverlay('satellites')" title="Minimise (Hover view button to peek)">—</button>
                 <button class="sat-close-btn" onclick="if (window.pyBridge && window.pyBridge.on_satellite_toggled) window.pyBridge.on_satellite_toggled(false)" title="Close Satellite Layer">×</button>
             </div>
         </div>
@@ -3392,7 +3534,10 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
     <div id="scope-filter-bar" class="scope-filter-bar map-overlay-panel" style="display: none;">
         <div class="map-overlay-header" id="scope-filter-drag-handle" style="margin: -8px -10px 4px -10px; padding: 4px 8px;">
             <div class="scope-filter-title" style="border-bottom:none; margin:0; padding:0; display:flex; align-items:center; gap:4px;"><span class="map-drag-handle-grip">⠿</span>🌐 Scopes</div>
-            <button class="tropo-legend-close" onclick="document.getElementById('scope-filter-bar').style.display='none'" title="Hide Scopes" style="font-size:12px; padding:0 2px;">×</button>
+            <div style="display: flex; align-items: center; gap: 4px;">
+                <button class="map-overlay-min-btn" onclick="minimizeOverlay('scopes')" title="Minimise (Hover view button to peek)">—</button>
+                <button class="tropo-legend-close" onclick="document.getElementById('scope-filter-bar').style.display='none'" title="Hide Scopes" style="font-size:12px; padding:0 2px;">×</button>
+            </div>
         </div>
         <div class="scope-options-bar">
             <label class="scope-chk-label">
@@ -3408,7 +3553,10 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
     <div id="path-mode-legend" class="path-mode-legend map-overlay-panel" style="display: none;">
         <div class="map-overlay-header" id="path-mode-drag-handle" style="margin: -8px -10px 4px -10px; padding: 4px 8px; cursor: move;">
             <span style="font-size: 11px; font-weight: 700; color: #F2F3F5; display: flex; align-items: center; gap: 4px;"><span class="map-drag-handle-grip">⠿</span>🧭 PATH MODES</span>
-            <button class="tropo-legend-close" onclick="document.getElementById('path-mode-legend').style.display='none'" title="Close Path Modes" style="font-size: 12px; padding: 0 2px;">×</button>
+            <div style="display: flex; align-items: center; gap: 4px;">
+                <button class="map-overlay-min-btn" onclick="minimizeOverlay('byte_paths')" title="Minimise (Hover view button to peek)">—</button>
+                <button class="tropo-legend-close" onclick="document.getElementById('path-mode-legend').style.display='none'" title="Close Path Modes" style="font-size: 12px; padding: 0 2px;">×</button>
+            </div>
         </div>
         <div class="path-mode-row">
             <div class="path-mode-left">
@@ -3462,7 +3610,10 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
     <div id="tropo-legend-panel" class="tropo-legend-panel map-overlay-panel">
         <div class="tropo-legend-header map-overlay-header" id="tropo-drag-handle">
             <span class="tropo-legend-title"><span class="map-drag-handle-grip">⠿</span>📡 TROPO FORECAST</span>
-            <button class="tropo-legend-close" onclick="if (window.pyBridge && window.pyBridge.on_tropo_toggled) window.pyBridge.on_tropo_toggled(false)" title="Close Tropo Overlay">×</button>
+            <div style="display: flex; align-items: center; gap: 4px;">
+                <button class="map-overlay-min-btn" onclick="minimizeOverlay('tropo')" title="Minimise (Hover view button to peek)">—</button>
+                <button class="tropo-legend-close" onclick="if (window.pyBridge && window.pyBridge.on_tropo_toggled) window.pyBridge.on_tropo_toggled(false)" title="Close Tropo Overlay">×</button>
+            </div>
         </div>
         <div class="tropo-stepper">
             <button class="tropo-step-btn" onclick="if (window.pyBridge && window.pyBridge.on_tropo_stepped) window.pyBridge.on_tropo_stepped(-3)" title="Previous 3h">◀</button>
@@ -3532,7 +3683,10 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
     <div id="activity-heatmap-bar" class="activity-heatmap-bar map-overlay-panel" style="display: none;">
         <div class="map-overlay-header" id="activity-heatmap-drag-handle" style="margin: -8px -10px 4px -10px; padding: 4px 8px;">
             <div class="activity-bar-title"><span class="map-drag-handle-grip">⠿</span>🔥 NODE ACTIVITY</div>
-            <button class="activity-bar-close" onclick="closeActivityHeatmap()" title="Close Activity Heatmap">×</button>
+            <div style="display: flex; align-items: center; gap: 4px;">
+                <button class="map-overlay-min-btn" onclick="minimizeOverlay('activity_heatmap')" title="Minimise (Hover view button to peek)">—</button>
+                <button class="activity-bar-close" onclick="closeActivityHeatmap()" title="Close Activity Heatmap">×</button>
+            </div>
         </div>
         <div class="activity-btn-group">
             <button id="act-btn-1h" class="activity-tf-btn active" onclick="setActivityTimeframe(1)">1 hour</button>
@@ -3563,7 +3717,10 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
     <div id="new-nodes-panel" class="new-nodes-panel map-overlay-panel" style="display: none;">
         <div class="map-overlay-header new-nodes-header" id="new-nodes-drag-handle">
             <div class="new-nodes-title"><span class="map-drag-handle-grip">⠿</span>👋 NEW NODES DISCOVERY</div>
-            <button class="new-nodes-close-btn" onclick="closeNewNodes()" title="Close New Nodes View">×</button>
+            <div style="display: flex; align-items: center; gap: 4px;">
+                <button class="map-overlay-min-btn" onclick="minimizeOverlay('new_nodes')" title="Minimise (Hover view button to peek)">—</button>
+                <button class="new-nodes-close-btn" onclick="closeNewNodes()" title="Close New Nodes View">×</button>
+            </div>
         </div>
         <div class="new-nodes-btn-group">
             <button id="nn-btn-24h" class="new-nodes-tf-btn" onclick="setNewNodesTimeframe(24)">1 day</button>
@@ -3581,7 +3738,10 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
     <div id="mqtt-nodes-panel" class="mqtt-nodes-panel map-overlay-panel" style="display: none;">
         <div class="map-overlay-header mqtt-nodes-header" id="mqtt-nodes-drag-handle">
             <div class="mqtt-nodes-title"><span class="map-drag-handle-grip">⠿</span>🌐 MQTT DISCOVERED NODES</div>
-            <button class="mqtt-nodes-close-btn" onclick="closeMqttNodes()" title="Close MQTT Nodes View">×</button>
+            <div style="display: flex; align-items: center; gap: 4px;">
+                <button class="map-overlay-min-btn" onclick="minimizeOverlay('mqtt_nodes')" title="Minimise (Hover view button to peek)">—</button>
+                <button class="mqtt-nodes-close-btn" onclick="closeMqttNodes()" title="Close MQTT Nodes View">×</button>
+            </div>
         </div>
         <div class="mqtt-nodes-stats-card">
             <span style="color: #949BA4;">MQTT Ingest: <span id="mqtt-discovered-count" style="font-family: monospace; color: #FB923C; font-weight: 700;">0 nodes</span></span>
@@ -3595,7 +3755,10 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
     <div id="thunderstorm-panel" class="thunderstorm-panel map-overlay-panel" style="display: none;">
         <div class="thunderstorm-header map-overlay-header" id="thunderstorm-drag-handle">
             <span class="thunderstorm-title"><span class="map-drag-handle-grip">⠿</span>🌩️ THUNDERSTORMS <span id="strike-count-badge" class="scope-pill-count">0 strikes</span></span>
-            <button class="thunderstorm-close-btn" onclick="if (window.pyBridge && window.pyBridge.on_thunderstorm_toggled) window.pyBridge.on_thunderstorm_toggled(false)" title="Close Thunderstorm Layer">×</button>
+            <div style="display: flex; align-items: center; gap: 4px;">
+                <button class="map-overlay-min-btn" onclick="minimizeOverlay('thunderstorm')" title="Minimise (Hover view button to peek)">—</button>
+                <button class="thunderstorm-close-btn" onclick="if (window.pyBridge && window.pyBridge.on_thunderstorm_toggled) window.pyBridge.on_thunderstorm_toggled(false)" title="Close Thunderstorm Layer">×</button>
+            </div>
         </div>
         <div class="thunder-stepper">
             <button class="thunder-step-btn" onclick="stepThunderstormRadar(-1)" title="Previous radar frame">◀</button>
@@ -3631,7 +3794,10 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
     <div id="search-node-id-panel" class="search-node-id-panel map-overlay-panel" style="display: none;">
         <div class="map-overlay-header" id="search-node-drag-handle" style="margin: -8px -10px 4px -10px; padding: 4px 8px;">
             <span style="font-size: 11px; font-weight: 700; color: #23A55A; display: flex; align-items: center; gap: 4px;"><span class="map-drag-handle-grip">⠿</span>🔍 SEARCH NODE IDS</span>
-            <button class="tropo-legend-close" onclick="closeSearchNodeIdPanel()" title="Close Search Panel" style="font-size: 12px; padding: 0 2px;">×</button>
+            <div style="display: flex; align-items: center; gap: 4px;">
+                <button class="map-overlay-min-btn" onclick="minimizeOverlay('search_node_id')" title="Minimise (Hover view button to peek)">—</button>
+                <button class="tropo-legend-close" onclick="closeSearchNodeIdPanel()" title="Close Search Panel" style="font-size: 12px; padding: 0 2px;">×</button>
+            </div>
         </div>
         <input type="text" id="search-node-input" class="search-node-input" placeholder="Type Node ID or prefix (e.g. !a1b2, 4f)..." oninput="searchNodeIds(this.value)" autocomplete="off" spellcheck="false" />
         <div class="search-node-status">
@@ -3650,6 +3816,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             </div>
             <div style="display: flex; align-items: center; gap: 4px;">
                 <button class="aurora-refresh-btn" onclick="if (window.pyBridge && window.pyBridge.on_space_weather_refresh) window.pyBridge.on_space_weather_refresh()" title="Refresh NOAA Feeds">↺</button>
+                <button class="map-overlay-min-btn" onclick="minimizeOverlay('space_weather')" title="Minimise (Hover view button to peek)">—</button>
                 <button class="aurora-close-btn" onclick="if (window.pyBridge && window.pyBridge.on_space_weather_toggled) window.pyBridge.on_space_weather_toggled(false)" title="Close Layer">×</button>
             </div>
         </div>
@@ -6270,6 +6437,177 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             }
         };
 
+        window._minimisedOverlays = window._minimisedOverlays || {};
+        window._flyoutHideTimers = window._flyoutHideTimers || {};
+        window._overlaySavedPositions = window._overlaySavedPositions || {};
+        window._overlayDockPosition = 'left';
+
+        window.setOverlayDockPosition = function(pos) {
+            window._overlayDockPosition = (pos === 'right') ? 'right' : 'left';
+        };
+
+        window.getOverlayElement = function(layerKey) {
+            var map = {
+                'adsb': 'adsb-panel',
+                'satellites': 'satellite-panel',
+                'scopes': 'scope-filter-bar',
+                'byte_paths': 'path-mode-legend',
+                'tropo': 'tropo-legend-panel',
+                'activity_heatmap': 'activity-heatmap-bar',
+                'new_nodes': 'new-nodes-panel',
+                'mqtt_nodes': 'mqtt-nodes-panel',
+                'thunderstorm': 'thunderstorm-panel',
+                'search_node_id': 'search-node-id-panel',
+                'space_weather': 'aurora-legend-panel',
+                'map_3d': 'map3dControls',
+                'packet_hud': 'livePacketHud',
+                'map_legend': 'liveLegend'
+            };
+            var id = map[layerKey];
+            return id ? document.getElementById(id) : null;
+        };
+
+        window.minimizeOverlay = function(layerKey) {
+            var el = window.getOverlayElement(layerKey);
+            if (!el) return;
+            window._minimisedOverlays[layerKey] = true;
+            el.classList.add('is-minimised');
+            el.classList.remove('flyout-active');
+            el.classList.remove('flyout-from-right');
+            el.style.display = 'none';
+            window._ensurePinButton(el, layerKey);
+        };
+
+        window.pinOverlay = function(layerKey) {
+            var el = window.getOverlayElement(layerKey);
+            if (!el) return;
+            window._minimisedOverlays[layerKey] = false;
+            el.classList.remove('is-minimised');
+            el.classList.remove('flyout-active');
+            el.classList.remove('flyout-from-right');
+            el.style.display = 'flex';
+            var pinBtn = el.querySelector('.map-overlay-pin-btn');
+            if (pinBtn) pinBtn.style.display = 'none';
+            var saved = window._overlaySavedPositions[layerKey];
+            if (saved) {
+                el.style.left = saved.left || '';
+                el.style.top = saved.top || '';
+                el.style.right = saved.right || '';
+                el.style.bottom = saved.bottom || '';
+            }
+        };
+
+        window._ensurePinButton = function(el, layerKey) {
+            var pinBtn = el.querySelector('.map-overlay-pin-btn');
+            if (pinBtn) {
+                pinBtn.style.display = 'inline-flex';
+                return;
+            }
+            var hdr = el.querySelector('.map-overlay-header') || el.querySelector('.live-hud-header') || el.firstElementChild;
+            if (!hdr) return;
+            pinBtn = document.createElement('button');
+            pinBtn.className = 'map-overlay-pin-btn';
+            pinBtn.title = 'Pin Panel to Map';
+            pinBtn.innerHTML = '📌';
+            pinBtn.onclick = function(e) {
+                e.stopPropagation();
+                window.pinOverlay(layerKey);
+            };
+            var firstBtn = hdr.querySelector('button');
+            if (firstBtn && firstBtn.parentNode) {
+                firstBtn.parentNode.insertBefore(pinBtn, firstBtn);
+            } else {
+                hdr.appendChild(pinBtn);
+            }
+        };
+
+        window.handleLayerHover = function(layerKey, isHovered, buttonY) {
+            var el = window.getOverlayElement(layerKey);
+            if (!el) return;
+            if (!window._minimisedOverlays[layerKey]) return;
+
+            if (isHovered) {
+                // Skim transition: immediately hide any other active flyout
+                for (var k in window._minimisedOverlays) {
+                    if (k !== layerKey && window._minimisedOverlays[k]) {
+                        var otherEl = window.getOverlayElement(k);
+                        if (otherEl && otherEl.classList.contains('flyout-active')) {
+                            otherEl.classList.remove('flyout-active');
+                            otherEl.classList.remove('flyout-from-right');
+                            otherEl.style.display = 'none';
+                            if (window._flyoutHideTimers[k]) {
+                                clearTimeout(window._flyoutHideTimers[k]);
+                                delete window._flyoutHideTimers[k];
+                            }
+                        }
+                    }
+                }
+
+                if (window._flyoutHideTimers[layerKey]) {
+                    clearTimeout(window._flyoutHideTimers[layerKey]);
+                    delete window._flyoutHideTimers[layerKey];
+                }
+
+                if (!window._overlaySavedPositions[layerKey]) {
+                    window._overlaySavedPositions[layerKey] = {
+                        left: el.style.left,
+                        top: el.style.top,
+                        right: el.style.right,
+                        bottom: el.style.bottom
+                    };
+                }
+
+                var clampedY = Math.max(10, Math.min(buttonY - 10, window.innerHeight - 300));
+                el.style.top = clampedY + 'px';
+                el.style.bottom = 'auto';
+
+                if (window._overlayDockPosition === 'right') {
+                    // Flyout to the left when dock is at far right of screen
+                    el.style.right = '8px';
+                    el.style.left = 'auto';
+                    el.classList.add('flyout-from-right');
+                } else {
+                    // Flyout to the right when dock is at left of map
+                    el.style.left = '8px';
+                    el.style.right = 'auto';
+                    el.classList.remove('flyout-from-right');
+                }
+
+                window._ensurePinButton(el, layerKey);
+
+                if (!el._hasFlyoutListeners) {
+                    el._hasFlyoutListeners = true;
+                    el.addEventListener('mouseenter', function() {
+                        if (window._flyoutHideTimers[layerKey]) {
+                            clearTimeout(window._flyoutHideTimers[layerKey]);
+                            delete window._flyoutHideTimers[layerKey];
+                        }
+                    });
+                    el.addEventListener('mouseleave', function() {
+                        if (window._minimisedOverlays[layerKey] && el.classList.contains('flyout-active')) {
+                            window._flyoutHideTimers[layerKey] = setTimeout(function() {
+                                el.classList.remove('flyout-active');
+                                el.classList.remove('flyout-from-right');
+                                el.style.display = 'none';
+                            }, 400);
+                        }
+                    });
+                }
+
+                el.classList.remove('is-minimised');
+                el.classList.add('flyout-active');
+                el.style.display = 'flex';
+            } else {
+                window._flyoutHideTimers[layerKey] = setTimeout(function() {
+                    if (window._minimisedOverlays[layerKey] && el.classList.contains('flyout-active')) {
+                        el.classList.remove('flyout-active');
+                        el.classList.remove('flyout-from-right');
+                        el.style.display = 'none';
+                    }
+                }, 400);
+            }
+        };
+
         window.toggleMapLegend = function(force) {
             var el = document.getElementById('liveLegend');
             if (!el) return;
@@ -8541,6 +8879,26 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             }
         };
 
+        window._map3dCustomStyleUrl = '';
+        window._map3dApiKey = '';
+
+        window.setMap3DConfig = function(customStyleUrl, apiKey) {
+            window._map3dCustomStyleUrl = customStyleUrl ? customStyleUrl.trim() : '';
+            window._map3dApiKey = apiKey ? apiKey.trim() : '';
+            if (map3d && map3dInitialized) {
+                var s = window._map3dCustomStyleUrl || 'https://tiles.openfreemap.org/styles/dark';
+                if (window._map3dApiKey) {
+                    var sep = s.indexOf('?') === -1 ? '?' : '&';
+                    s += sep + 'key=' + encodeURIComponent(window._map3dApiKey);
+                }
+                try {
+                    map3d.setStyle(s);
+                } catch(e) {
+                    console.error('[3D Map] Error updating custom style:', e);
+                }
+            }
+        };
+
         function initMap3D() {
             if (map3dInitialized) return;
             map3dInitialized = true;
@@ -8548,10 +8906,19 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             var curCenter = map.getCenter();
             var curZoom = map.getZoom();
 
+            var style3D = (window._map3dCustomStyleUrl && window._map3dCustomStyleUrl.trim()) ? window._map3dCustomStyleUrl.trim() : 'https://tiles.openfreemap.org/styles/dark';
+            if (window._map3dApiKey && window._map3dApiKey.trim()) {
+                var key3D = window._map3dApiKey.trim();
+                if (style3D.indexOf('key=') === -1 && style3D.indexOf('access_token=') === -1) {
+                    var sep = style3D.indexOf('?') === -1 ? '?' : '&';
+                    style3D += sep + 'key=' + encodeURIComponent(key3D);
+                }
+            }
+
             try {
                 map3d = new maplibregl.Map({
                     container: 'map-3d',
-                    style: 'https://tiles.openfreemap.org/styles/dark',
+                    style: style3D,
                     center: [curCenter.lng, curCenter.lat],
                     zoom: Math.max(3, curZoom - 0.5),
                     pitch: 58,
@@ -8568,6 +8935,13 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                         if (url && (url.indexOf('elevation-tiles-prod/terrarium/7/62/40.png') !== -1 || url.indexOf('/7/62/40.png') !== -1)) {
                             if (window._cleanDem76240) {
                                 return { url: window._cleanDem76240 };
+                            }
+                        }
+                        if (url && window._map3dApiKey && window._map3dApiKey.trim()) {
+                            var k = window._map3dApiKey.trim();
+                            if ((url.indexOf('maptiler') !== -1 || url.indexOf('mapbox') !== -1) && url.indexOf('key=') === -1 && url.indexOf('access_token=') === -1) {
+                                var sChar = url.indexOf('?') === -1 ? '?' : '&';
+                                return { url: url + sChar + 'key=' + encodeURIComponent(k) };
                             }
                         }
                         return { url: url };
@@ -9851,6 +10225,33 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             return pts;
         }
 
+        function getAircraftSvgContent(category, color) {
+            color = color || '#06B6D4';
+            switch(category) {
+                case 'airliner':
+                    return '<path fill="' + color + '" stroke="#0F172A" stroke-width="0.8" d="M12 1.5 C11.3 1.5 10.7 2.2 10.7 3.2 L10.7 8.5 L2 13.2 L2 15.2 L10.7 13 L10.7 18.2 L8 20.4 L8 22 L12 21 L16 22 L16 20.4 L13.3 18.2 L13.3 13 L22 15.2 L22 13.2 L13.3 8.5 L13.3 3.2 C13.3 2.2 12.7 1.5 12 1.5 Z"/>' +
+                           '<rect x="6.6" y="11.8" width="1.8" height="3.4" rx="0.9" fill="' + color + '" stroke="#0F172A" stroke-width="0.6"/>' +
+                           '<rect x="15.6" y="11.8" width="1.8" height="3.4" rx="0.9" fill="' + color + '" stroke="#0F172A" stroke-width="0.6"/>';
+                case 'light':
+                    return '<path fill="' + color + '" stroke="#0F172A" stroke-width="0.8" d="M12 1.2 L13.2 2.8 L13.2 7.8 L22.5 8.2 L22.5 11 L13.2 11 L13.2 17.8 L16.8 19.4 L16.8 21.2 L12 20.4 L7.2 21.2 L7.2 19.4 L10.8 17.8 L10.8 11 L1.5 11 L1.5 8.2 L10.8 7.8 L10.8 2.8 Z"/>' +
+                           '<ellipse cx="12" cy="1.6" rx="3.8" ry="0.9" fill="' + color + '" stroke="#0F172A" stroke-width="0.6" opacity="0.85"/>';
+                case 'military':
+                    return '<path fill="' + color + '" stroke="#0F172A" stroke-width="0.8" d="M12 0.8 L13.2 4.5 L14.5 7 L22.5 14.2 L22.5 15.8 L15.5 14.2 L15.5 18 L18.2 21.5 L18.2 22.8 L15.2 21.8 L13.2 22.5 L13 23.2 L11 23.2 L10.8 22.5 L8.8 21.8 L5.8 22.8 L5.8 21.5 L8.5 18 L8.5 14.2 L1.5 15.8 L1.5 14.2 L9.5 7 L10.8 4.5 Z"/>' +
+                           '<polygon points="12,4.5 13,8.5 12,10.5 11,8.5" fill="#0F172A" opacity="0.6"/>';
+                case 'helicopter':
+                    return '<path fill="' + color + '" stroke="#0F172A" stroke-width="0.6" d="M11 0.5 H13 V2.5 H11 Z M1 2.2 H23 V3.8 H1 Z M12 2.2 A1.6 1.6 0 1 0 12 5.4 A1.6 1.6 0 1 0 12 2.2 Z"/>' +
+                           '<path fill="' + color + '" stroke="#0F172A" stroke-width="0.8" d="M12 4.5 C9.8 4.5 8.2 6.5 8.2 10 C8.2 12.5 9.5 14.5 10.8 15.2 L10.8 21.2 L9 21.5 L9 22.8 L12 22.5 L12 23.5 H12.8 V20.5 H13.2 L13.2 15.2 C14.5 14.5 15.8 12.5 15.8 10 C15.8 6.5 14.2 4.5 12 4.5 Z"/>' +
+                           '<path fill="' + color + '" stroke="#0F172A" stroke-width="0.6" d="M13.5 20 H15 V23.8 H13.5 Z"/>' +
+                           '<line x1="6.8" y1="8" x2="6.8" y2="14" stroke="' + color + '" stroke-width="1.2" stroke-linecap="round"/>' +
+                           '<line x1="17.2" y1="8" x2="17.2" y2="14" stroke="' + color + '" stroke-width="1.2" stroke-linecap="round"/>';
+                case 'glider':
+                    return '<path fill="' + color + '" stroke="#0F172A" stroke-width="0.8" d="M12 2.2 C11.5 2.2 11.1 2.7 11.1 3.5 L11.1 9.2 L0.5 10.2 L0.5 11.4 L11.1 11.2 L11.1 20.8 L8.2 21.2 L8.2 22.4 L12 22 L15.8 22.4 L15.8 21.2 L12.9 20.8 L12.9 11.2 L23.5 11.4 L23.5 10.2 L12.9 9.2 L12.9 3.5 C12.9 2.7 12.5 2.2 12 2.2 Z"/>';
+                default:
+                    return '<path fill="' + color + '" stroke="#0F172A" stroke-width="0.8" d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/>';
+            }
+        }
+        window.getAircraftSvgContent = getAircraftSvgContent;
+
         function syncAdsbTo3D() {
             if (!map3d) return;
             var floatLayer = document.getElementById('adsb-3d-floating-layer');
@@ -10028,6 +10429,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 // Scaling 3D altitude above terrain so aircraft float with distinct vertical separation in 3D perspective
                 var displayAltM = groundElev + Math.max(300, (rawAltM / 10000.0) * 46000.0);
 
+                var planeCat = ac.category || 'general';
                 var planeColor = (typeof getAircraftColor === 'function') ? getAircraftColor(ac) : '#06B6D4';
                 var track = ac.track || 0;
                 var callsign = ac.flight || ac.hex || 'AC';
@@ -10043,6 +10445,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     callsign: callsign,
                     track: track,
                     color: planeColor,
+                    category: planeCat,
                     planeData: ac
                 });
 
@@ -10073,10 +10476,14 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     var curPitch = (map3d && map3d.getPitch) ? map3d.getPitch() : 0;
                     var curBearing = (map3d && map3d.getBearing) ? map3d.getBearing() : 0;
                     var relTrack = track - curBearing;
+                    var iconW = 26;
+                    var iconH = 26;
+                    var svgContent = getAircraftSvgContent(planeCat, planeColor);
+
                     el.innerHTML = '<div style="position:relative; width:0; height:0; pointer-events:none;">' +
                         '<div class="adsb-plane-svg-glyph" style="position:absolute; left:0; top:0; margin-left:-13px; margin-top:-13px; transform: perspective(800px) rotateX(' + curPitch.toFixed(1) + 'deg) rotateZ(' + relTrack.toFixed(1) + 'deg); transform-style:preserve-3d; display:inline-block; pointer-events:auto; filter:drop-shadow(0 0 6px ' + planeColor + ');">' +
-                        '<svg width="26" height="26" viewBox="0 0 24 24" style="display:block;">' +
-                        '<path fill="' + planeColor + '" stroke="#0F172A" stroke-width="0.8" d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/>' +
+                        '<svg width="' + iconW + '" height="' + iconH + '" viewBox="0 0 24 24" style="display:block;">' +
+                        svgContent +
                         '</svg></div>' +
                         '<div style="position:absolute; left:18px; top:-12px; background:rgba(15,23,42,0.92); border:1px solid ' + planeColor + '; border-radius:3px; padding:1px 5px; font-size:9px; color:#F8FAFC; white-space:nowrap; font-weight:bold; box-shadow:0 2px 8px rgba(0,0,0,0.85); pointer-events:auto;">' +
                         callsign.trim() + ' <span style="color:#38BDF8; font-weight:normal;">' + altFormatted + '</span>' +
@@ -12052,20 +12459,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
         }
 
         function getAircraftSvgPath(category) {
-            switch(category) {
-                case 'airliner':
-                    return '<path d="M12 2c-.6 0-1.1.5-1.1 1.4v5.3L3.2 12.8v2.1l7.7-2.3v5.2l-2.2 1.6v1.4l3.3-.9 3.3.9v-1.4l-2.2-1.6v-5.2l7.7 2.3v-2.1L13.1 8.7V3.4c0-.9-.5-1.4-1.1-1.4z"/>';
-                case 'light':
-                    return '<path d="M12 1.5c-.8 0-1.2.7-1.2 1.8v3.2L1.5 8.2v2.3l9.3-.8v6l-2.7 1.6v1.4l3.1-.7 3.1.7v-1.4l-2.7-1.6v-6l9.3.8V8.2l-9.3-1.7V3.3c0-1.1-.4-1.8-1.2-1.8z"/>';
-                case 'military':
-                    return '<path d="M12 1L13.8 6.5L21.5 13.5L19.5 15.5L14 13L14 17.5L16.5 21L15 22.2L12 20.8L9 22.2L7.5 21L10 17.5L10 13L4.5 15.5L2.5 13.5L10.2 6.5Z"/>';
-                case 'helicopter':
-                    return '<path d="M11 1.5h2v1.8h-2z M2 3.3h20v1.4H13v1.5c2.3.4 4.2 2.3 4.2 5.1 0 2.1-1.1 3.8-2.8 4.6L14 18.2h3.2v1.5H6.8v-1.5H10l-.4-3.4c-2.4-.6-3.8-2.4-3.8-4.7 0-2.8 1.9-4.7 4.2-5.1V4.7H2z M17.2 17.5h2v-2.8h-2z"/>';
-                case 'glider':
-                    return '<path d="M11.5 1c-.6 0-1 .6-1 1.8v3.5L1 8v1.3l9.5-.7v9.8l-2.4 1.1v1.1l3.9-.6 3.9.6v-1.1l-2.4-1.1V8.6l9.5.7V8l-9.5-1.7V2.8c0-1.2-.4-1.8-1-1.8z"/>';
-                default:
-                    return '<path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/>';
-            }
+            return getAircraftSvgContent(category, 'currentColor');
         }
 
         function getAircraftCategoryBadge(category) {
@@ -12687,9 +13081,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             var color = getAircraftColor(plane);
             var distress = getAircraftDistressInfo(plane);
 
-            var pathD = getAircraftSvgPath(cat);
-            var iconW = (cat === 'glider') ? 26 : ((cat === 'airliner') ? 24 : 22);
-            var iconH = (cat === 'glider') ? 26 : ((cat === 'airliner') ? 24 : 22);
+            var svgContent = getAircraftSvgContent(cat, color);
+            var iconW = (cat === 'glider') ? 28 : ((cat === 'airliner') ? 26 : ((cat === 'helicopter') ? 26 : 24));
+            var iconH = iconW;
 
             var pulseHtml = '';
             var distressTagHtml = '';
@@ -12705,8 +13099,8 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             var html = '<div class="adsb-plane-container">' +
                        pulseHtml +
                        '<div class="adsb-plane-marker" style="transform: rotate(' + track + 'deg);">' +
-                       '<svg width="' + iconW + '" height="' + iconH + '" viewBox="0 0 24 24" fill="' + color + '" style="filter: drop-shadow(0 0 3px rgba(0,0,0,0.85));">' +
-                       pathD +
+                       '<svg width="' + iconW + '" height="' + iconH + '" viewBox="0 0 24 24" style="filter: drop-shadow(0 0 3px rgba(0,0,0,0.85)); display: block;">' +
+                       svgContent +
                        '</svg>' +
                        '</div>' +
                        distressTagHtml +
@@ -14302,8 +14696,27 @@ class MeshMapWidget(QWidget):
 
     def attach_layer_dock(self, dock: QWidget):
         """Attaches the vertical MapLayerDockWidget to the left edge of the map canvas."""
+        self.layer_dock = dock
         if hasattr(self, "map_content_layout"):
             self.map_content_layout.insertWidget(0, dock)
+
+    def set_layer_dock_expanded(self, expanded: bool):
+        """Repositions the MapLayerDockWidget to the far right when maximized, or left when normal."""
+        if hasattr(self, "layer_dock") and self.layer_dock and hasattr(self, "map_content_layout"):
+            self.map_content_layout.removeWidget(self.layer_dock)
+            if expanded:
+                # Add after map_splitter to place on far right edge of the screen
+                self.map_content_layout.addWidget(self.layer_dock)
+            else:
+                # Insert at index 0 before map_splitter (normal mode on left edge of map)
+                self.map_content_layout.insertWidget(0, self.layer_dock)
+            
+        dock_pos = "right" if expanded else "left"
+        self.run_js(f"if (window.setOverlayDockPosition) window.setOverlayDockPosition('{dock_pos}');")
+
+    def on_layer_hovered(self, layer_key: str, is_hovered: bool, y_pos: int = 0):
+        """Dispatches layer button hover events to Leaflet/MapLibre to trigger overlay peek flyout."""
+        self.run_js(f"if (window.handleLayerHover) window.handleLayerHover('{layer_key}', {str(is_hovered).lower()}, {int(y_pos)});")
 
     def pause_geometry_motion(self):
         """Temporarily pauses JS dispatch and watchdog during window moves, resizes or splitter drags.
@@ -14724,6 +15137,9 @@ class MeshMapWidget(QWidget):
                 self._update_scope_overlays()
         carto_key = getattr(cfg, "carto_api_key", "")
         self.run_js(f"if (window.setCartoApiKey) window.setCartoApiKey('{carto_key}');")
+        map3d_key = getattr(cfg, "map3d_api_key", "")
+        map3d_style = getattr(cfg, "map3d_custom_style_url", "")
+        self.run_js(f"if (window.setMap3DConfig) window.setMap3DConfig({json.dumps(map3d_style)}, {json.dumps(map3d_key)});")
         self.refresh_map_data()
 
     def _on_map_loaded(self, ok: bool):
@@ -14754,6 +15170,11 @@ class MeshMapWidget(QWidget):
         carto_key = getattr(self.config, "carto_api_key", "") if self.config else ""
         if carto_key:
             self.run_js(f"if (window.setCartoApiKey) window.setCartoApiKey('{carto_key}');")
+
+        map3d_key = getattr(self.config, "map3d_api_key", "") if self.config else ""
+        map3d_style = getattr(self.config, "map3d_custom_style_url", "") if self.config else ""
+        if map3d_key or map3d_style:
+            self.run_js(f"if (window.setMap3DConfig) window.setMap3DConfig({json.dumps(map3d_style)}, {json.dumps(map3d_key)});")
 
         base_layer = getattr(self.config, "map_base_layer", "canvas") if self.config else "canvas"
         if base_layer in ("topo", "corescope", "carto"):
@@ -15226,16 +15647,16 @@ class MeshMapWidget(QWidget):
         act_topo.triggered.connect(lambda: self.set_base_map_layer("topo"))
 
         menu.addSeparator()
-        act_carto_key = menu.addAction("🔑 Configure Carto API Key (Free)...")
+        act_carto_key = menu.addAction("🔑 Configure Map API Keys (2D & 3D)...")
         act_carto_key.triggered.connect(self.prompt_carto_api_key)
 
         menu.exec(self.btn_base_map.mapToGlobal(pos))
 
     def prompt_carto_api_key(self):
-        """Displays modal dialog for entering or obtaining a free CARTO basemap API key."""
+        """Displays modal dialog for configuring 2D CARTO and 3D vector tile provider API keys."""
         dlg = QDialog(self)
-        dlg.setWindowTitle("CARTO Basemaps API Key")
-        dlg.setFixedWidth(470)
+        dlg.setWindowTitle("Map API Keys & Tile Providers (2D & 3D)")
+        dlg.setFixedWidth(520)
         dlg.setStyleSheet("""
             QDialog {
                 background-color: #1E1F22;
@@ -15286,43 +15707,92 @@ class MeshMapWidget(QWidget):
                 background-color: #2563EB;
                 color: #FFFFFF;
             }
+            QPushButton#btnGet3DKey {
+                background-color: #064E3B;
+                color: #A7F3D0;
+                border: 1px solid #059669;
+                font-weight: bold;
+            }
+            QPushButton#btnGet3DKey:hover {
+                background-color: #059669;
+                color: #FFFFFF;
+            }
         """)
 
         layout = QVBoxLayout(dlg)
-        layout.setSpacing(12)
+        layout.setSpacing(10)
         layout.setContentsMargins(18, 18, 18, 18)
 
-        title_lbl = QLabel("<b>🔑 CARTO Dark Basemap API Key</b>")
-        title_lbl.setStyleSheet("font-size: 14px; color: #60A5FA;")
-        layout.addWidget(title_lbl)
+        # --- 2D CARTO Section ---
+        title_2d = QLabel("<b>🗺️ 2D Basemap — CARTO Dark API Key</b>")
+        title_2d.setStyleSheet("font-size: 13px; color: #60A5FA;")
+        layout.addWidget(title_2d)
 
-        desc_lbl = QLabel(
-            "CARTO requires an API key for its raster basemaps. "
-            "Without a key, Dark tiles display an <i>'API KEY REQUIRED'</i> watermark.<br><br>"
-            "Keys are <b>100% free</b> (up to 5 million requests/month) and available "
-            "immediately with no credit card required."
+        desc_2d = QLabel(
+            "CARTO Dark Matter tiles work without a key, but display an <i>'API KEY REQUIRED'</i> watermark. "
+            "Entering a free key removes the watermark and increases request rate limits.<br>"
+            "Keys are <b>100% free</b> (up to 5M requests/mo) and available with no credit card required."
         )
-        desc_lbl.setWordWrap(True)
-        layout.addWidget(desc_lbl)
+        desc_2d.setWordWrap(True)
+        layout.addWidget(desc_2d)
 
         btn_get_key = QPushButton("🌐 Get Free Key at carto.com/basemaps/apikey")
         btn_get_key.setObjectName("btnGetKey")
         btn_get_key.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://carto.com/basemaps/apikey")))
         layout.addWidget(btn_get_key)
 
-        lbl_input = QLabel("Paste your CARTO API key:")
+        lbl_input = QLabel("CARTO Basemaps API key:")
         layout.addWidget(lbl_input)
 
         cur_key = getattr(self.config, "carto_api_key", "") if self.config else ""
         txt_key = QLineEdit(cur_key)
-        txt_key.setPlaceholderText("e.g. default_public... or your CARTO key")
+        txt_key.setPlaceholderText("Paste free key from carto.com to remove watermark")
         layout.addWidget(txt_key)
+
+        # --- 3D Map Section ---
+        title_3d = QLabel("<b>🌐 3D Airspace & Globe — Tile Provider Settings</b>")
+        title_3d.setStyleSheet("font-size: 13px; color: #34D399; margin-top: 8px; border-top: 1px solid #374151; padding-top: 10px;")
+        layout.addWidget(title_3d)
+
+        desc_3d = QLabel(
+            "✨ <b>No API key required by default!</b> The 3D Map uses open-source <b>OpenFreeMap Dark</b> "
+            "vector tiles and <b>AWS Open Data Terrarium DEM</b> elevation without any account.<br>"
+            "If you want to use custom vector tiles (e.g. MapTiler, Mapbox, or self-hosted styles), configure them below:"
+        )
+        desc_3d.setWordWrap(True)
+        layout.addWidget(desc_3d)
+
+        btn_get_3d = QPushButton("🌐 Get Free MapTiler Key (cloud.maptiler.com)")
+        btn_get_3d.setObjectName("btnGet3DKey")
+        btn_get_3d.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://cloud.maptiler.com/account/keys/")))
+        layout.addWidget(btn_get_3d)
+
+        lbl_3d_style = QLabel("3D Map Style URL:")
+        layout.addWidget(lbl_3d_style)
+
+        cur_3d_style = getattr(self.config, "map3d_custom_style_url", "") if self.config else ""
+        txt_3d_style = QLineEdit(cur_3d_style)
+        txt_3d_style.setPlaceholderText("Default: https://tiles.openfreemap.org/styles/dark")
+        layout.addWidget(txt_3d_style)
+
+        lbl_3d_key = QLabel("3D Map API Key / Token:")
+        layout.addWidget(lbl_3d_key)
+
+        cur_3d_key = getattr(self.config, "map3d_api_key", "") if self.config else ""
+        txt_3d_key = QLineEdit(cur_3d_key)
+        txt_3d_key.setPlaceholderText("Optional: MapTiler or Mapbox API key / access token")
+        layout.addWidget(txt_3d_key)
+
+        # Store widget references on dialog for convenience
+        dlg.txt_carto_key = txt_key
+        dlg.txt_map3d_key = txt_3d_key
+        dlg.txt_map3d_style = txt_3d_style
 
         btn_box = QHBoxLayout()
         btn_box.addStretch(1)
 
-        btn_clear = QPushButton("Clear")
-        btn_clear.clicked.connect(lambda: txt_key.setText(""))
+        btn_clear = QPushButton("Clear All")
+        btn_clear.clicked.connect(lambda: (txt_key.setText(""), txt_3d_style.setText(""), txt_3d_key.setText("")))
         btn_box.addWidget(btn_clear)
 
         btn_cancel = QPushButton("Cancel")
@@ -15335,18 +15805,23 @@ class MeshMapWidget(QWidget):
 
         def _do_save():
             new_key = txt_key.text().strip()
+            new_3d_style = txt_3d_style.text().strip()
+            new_3d_key = txt_3d_key.text().strip()
             if self.config:
                 self.config.carto_api_key = new_key
+                self.config.meshcore.carto_api_key = new_key
+                self.config.map3d_api_key = new_3d_key
+                self.config.meshcore.map3d_api_key = new_3d_key
+                self.config.map3d_custom_style_url = new_3d_style
+                self.config.meshcore.map3d_custom_style_url = new_3d_style
                 try:
                     self.config.save()
                 except Exception:
                     pass
             self.run_js(f"window.setCartoApiKey && window.setCartoApiKey('{new_key}');")
+            self.run_js(f"window.setMap3DConfig && window.setMap3DConfig({json.dumps(new_3d_style)}, {json.dumps(new_3d_key)});")
             if hasattr(self, "watcher_status"):
-                if new_key:
-                    self.watcher_status.setText("🔑 CARTO API key applied — map tiles refreshed")
-                else:
-                    self.watcher_status.setText("🔑 CARTO API key cleared")
+                self.watcher_status.setText("🔑 Map tile provider keys applied — refreshed")
             dlg.accept()
 
         btn_save.clicked.connect(_do_save)

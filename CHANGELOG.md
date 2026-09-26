@@ -7,6 +7,25 @@ and this project follows semantic versioning with automated build increments:
 - **Patch (+0.0.1)**: Routine bug fixes, UI adjustments, maintenance, and regular GitHub commits.
 - **Minor (+0.1.0)**: Substantial new features and architectural additions.
 
+## [0.10.0] - 2026-09-26
+
+### Added
+- **3D Terrain & Airspace Perspective (MapLibre GL)**:
+  - Real-time 3D globe and terrain elevation powered by AWS Open Data Terrarium DEM and OpenFreeMap Dark vector tiles.
+  - Camera pitch, bearing, and orbit controls with 58° tactical pitch and top-down presets.
+  - Seamless dark styling for MapLibre zoom buttons, compass needle, and compact attribution button with custom dark SVG info icon and cyan link highlights.
+  - Provider key and tile style configuration modal for custom vector tile endpoints.
+- **Expandable Map & Mirrored Far-Right Dock**:
+  - Full-window map mode toggle (`Ctrl+M`) expanding the map over the full UI.
+  - Mirrored dock placement moving map overlay toolbar to the far-right screen edge when maximized.
+  - Direction-aware flyouts (expanding leftwards in maximized mode, rightwards in standard view).
+- **Decluttering Overlay Minimization & Hover Peek**:
+  - Minimized overlay tab bar (`—` button) collapsing floating cards into compact edge tabs.
+  - 400ms hover peek bridge with smooth preview transition and inline pin/unpin button (`📌`).
+- **Unified RF + MQTT Community Channel Decoding**:
+  - Automatic wire-level AES key derivation and decryption for regional hashtags (`#thenorf`, `#northeast`, etc.).
+  - 1-Click Join prompt enabling immediate subscription to discovered community channels.
+
 ## [EXPERIMENTAL] [0.8.0] - 2026-09-19
 
 ### Added

@@ -483,5 +483,59 @@ def test_gateway_mqtt_and_satellite_settings_persistence(qapp, tmp_path, monkeyp
     assert widget.mqtt_host_input.text() == "broker.emqx.io"
 
 
+def test_settings_2d_and_3d_map_tile_keys_persistence(qapp, tmp_path, monkeypatch):
+    """Verifies that 2D CARTO API key, 3D style URL, and 3D API key persist and save cleanly."""
+    cfg_file = tmp_path / "config.json"
+    monkeypatch.setattr("meshcore_tray.config.CONFIG_FILE", cfg_file)
+    config = AppConfig()
+    config.carto_api_key = "initial_carto_key"
+    config.map3d_api_key = "initial_3d_key"
+    config.map3d_custom_style_url = "https://example.com/style.json"
+    config.save(cfg_file)
+
+    storage = Storage(tmp_path / "test_maps.db")
+    widget = SettingsWidget(config=config, storage=storage)
+
+    assert hasattr(widget, "txt_carto_key")
+    assert hasattr(widget, "txt_map3d_key")
+    assert hasattr(widget, "txt_map3d_custom_style_url")
+    assert hasattr(widget, "btn_save_map_tiles")
+
+    assert widget.txt_carto_key.text() == "initial_carto_key"
+    assert widget.txt_map3d_key.text() == "initial_3d_key"
+    assert widget.txt_map3d_custom_style_url.text() == "https://example.com/style.json"
+
+    # Modify the keys
+    widget.txt_carto_key.setText("new_carto_secret_999")
+    widget.txt_map3d_key.setText("maptiler_test_token_456")
+    widget.txt_map3d_custom_style_url.setText("https://api.maptiler.com/maps/dark-v2/style.json")
+
+    # Use the dedicated Save & Apply Map Tiles button
+    widget._on_save_map_tiles_clicked()
+
+    # Check in-memory config
+    assert config.carto_api_key == "new_carto_secret_999"
+    assert config.map3d_api_key == "maptiler_test_token_456"
+    assert config.map3d_custom_style_url == "https://api.maptiler.com/maps/dark-v2/style.json"
+
+    # Check disk persistence
+    disk_cfg = AppConfig.load(cfg_file)
+    assert disk_cfg.carto_api_key == "new_carto_secret_999"
+    assert disk_cfg.map3d_api_key == "maptiler_test_token_456"
+    assert disk_cfg.map3d_custom_style_url == "https://api.maptiler.com/maps/dark-v2/style.json"
+
+    # Check reload()
+    disk_cfg.carto_api_key = "reloaded_carto"
+    disk_cfg.map3d_api_key = "reloaded_3d"
+    disk_cfg.map3d_custom_style_url = "https://reloaded.org/style.json"
+    widget.config = disk_cfg
+    widget.reload()
+
+    assert widget.txt_carto_key.text() == "reloaded_carto"
+    assert widget.txt_map3d_key.text() == "reloaded_3d"
+    assert widget.txt_map3d_custom_style_url.text() == "https://reloaded.org/style.json"
+
+
+
 
 

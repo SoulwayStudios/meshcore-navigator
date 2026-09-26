@@ -48,6 +48,9 @@ LAYER_SVGS = {
     "mqtt_nodes": '<path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" stroke="{color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><circle cx="12" cy="15" r="1.5" fill="{color}"/><path d="M8 12a5 5 0 0 1 8 0" stroke="{color}" stroke-width="1.5" stroke-linecap="round" fill="none"/>',
     # 3D Terrain & Globe View (UKMesh MapLibre GL 3D perspective with terrain elevation):
     "map_3d": '<path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="{color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>',
+    # Expand Map & Collapse Left Pane:
+    "expand_map": '<polyline points="15 3 21 3 21 9" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/><polyline points="9 21 3 21 3 15" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/><line x1="21" y1="3" x2="14" y2="10" stroke="{color}" stroke-width="2" stroke-linecap="round"/><line x1="3" y1="21" x2="10" y2="14" stroke="{color}" stroke-width="2" stroke-linecap="round"/>',
+    "collapse_map": '<polyline points="4 14 10 14 10 20" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/><polyline points="20 10 14 10 14 4" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/><line x1="14" y1="10" x2="21" y2="3" stroke="{color}" stroke-width="2" stroke-linecap="round"/><line x1="10" y1="14" x2="3" y2="21" stroke="{color}" stroke-width="2" stroke-linecap="round"/>',
 }
 
 # Primary navigation action bar vector glyphs (white inactive, glowing emerald active)
@@ -263,6 +266,16 @@ class DockButton(QPushButton):
 class LayerButton(QPushButton):
     """Compact toggle button for map layers with crisp white inactive icons and glowing emerald active icons."""
 
+    hover_changed = pyqtSignal(str, bool, int)  # (layer_key, is_hovered, y_pos)
+
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        self.hover_changed.emit(self.raw_text, True, self.pos().y())
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        self.hover_changed.emit(self.raw_text, False, self.pos().y())
+
     def __init__(self, key_or_text: str = "", tooltip: str = "", icon_name: Optional[str] = None, parent=None):
         super().__init__(parent)
         self.setFixedSize(44, 44)
@@ -420,6 +433,85 @@ class LayerButton(QPushButton):
             """)
 
 
+class ExpandMapButton(QPushButton):
+    """Toggle button at the top of MapLayerDockWidget to collapse left panes and expand map view."""
+
+    expand_toggled = pyqtSignal(bool)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(44, 44)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setCheckable(True)
+        self.is_expanded = False
+        self._icon_expand = create_layer_icon("expand_map", active=False)
+        self._icon_collapse = create_layer_icon("collapse_map", active=True)
+        self.clicked.connect(self._on_clicked)
+        self._update_display()
+
+    def _on_clicked(self):
+        self.is_expanded = not self.is_expanded
+        self.setChecked(self.is_expanded)
+        self._update_display()
+        self.expand_toggled.emit(self.is_expanded)
+
+    def set_expanded(self, expanded: bool):
+        self.is_expanded = bool(expanded)
+        self.setChecked(self.is_expanded)
+        self._update_display()
+
+    def _update_display(self):
+        if self.is_expanded:
+            if self._icon_collapse:
+                self.setIcon(self._icon_collapse)
+                self.setIconSize(QSize(22, 22))
+                self.setText("")
+            else:
+                self.setText("⇲")
+            self.setToolTip("Restore Chat & Channels Pane (Ctrl+M)")
+            self.setStyleSheet("""
+                QPushButton {
+                    background: qlineargradient(x1:0, y1:0, x2:0.8, y2:1, stop:0 #064E3B, stop:1 #022C22);
+                    color: #34D399;
+                    border: 1.5px solid #10B981;
+                    border-radius: 14px;
+                    font-size: 16px;
+                    font-weight: bold;
+                    padding: 0px;
+                    text-align: center;
+                }
+                QPushButton:hover {
+                    background: qlineargradient(x1:0, y1:0, x2:0.8, y2:1, stop:0 #047857, stop:1 #064E3B);
+                    border-color: #34D399;
+                    color: #FFFFFF;
+                }
+            """)
+        else:
+            if self._icon_expand:
+                self.setIcon(self._icon_expand)
+                self.setIconSize(QSize(22, 22))
+                self.setText("")
+            else:
+                self.setText("⇱")
+            self.setToolTip("Expand Map (Collapse Chat & Sidebar) (Ctrl+M)")
+            self.setStyleSheet("""
+                QPushButton {
+                    background-color: #24262B;
+                    color: #FFFFFF;
+                    border: 1px solid #33363E;
+                    border-radius: 14px;
+                    font-size: 16px;
+                    padding: 0px;
+                    text-align: center;
+                }
+                QPushButton:hover {
+                    background-color: #2F3239;
+                    color: #FFFFFF;
+                    border-color: #64748B;
+                }
+            """)
+
+
 class CycleFilterButton(QPushButton):
     """4-state cycle button for filtering nodes (ALL, CLIENTS, REPEATERS, ROOMS)."""
 
@@ -484,7 +576,9 @@ class CycleFilterButton(QPushButton):
 class MapLayerDockWidget(QWidget):
     """Vertical dock bar for Map Layer Overlays (48px wide), positioned beside the Leaflet map."""
 
+    expand_map_toggled = pyqtSignal(bool)
     layer_toggled = pyqtSignal(str, bool)
+    layer_hovered = pyqtSignal(str, bool, int)
     node_filter_changed = pyqtSignal(str)
 
     def __init__(self, config: Optional[AppConfig] = None, parent=None):
@@ -505,6 +599,11 @@ class MapLayerDockWidget(QWidget):
         layout.setContentsMargins(2, 8, 2, 8)
         layout.setSpacing(6)
         layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+
+        # 0. Expand / Restore Map View Action Button (Index 0 at top of action bar)
+        self.btn_expand_map = ExpandMapButton(parent=self)
+        self.btn_expand_map.expand_toggled.connect(self.expand_map_toggled.emit)
+        layout.addWidget(self.btn_expand_map)
 
         # 1. Node Type Cycle Filter
         self.btn_cycle_filter = CycleFilterButton(parent=self)
@@ -623,6 +722,16 @@ class MapLayerDockWidget(QWidget):
         self.btn_map_3d.setChecked(False)
         self.btn_map_3d.toggled.connect(lambda ch: self.layer_toggled.emit("map_3d", ch))
         layout.addWidget(self.btn_map_3d)
+
+        # Wire hover signals for action bar flyouts
+        for btn in (
+            self.btn_rf_links, self.btn_byte_paths, self.btn_heatmap, self.btn_orbitals,
+            self.btn_tropo, self.btn_thunderstorm, self.btn_adsb, self.btn_scopes,
+            self.btn_rf_los, self.btn_space_weather, self.btn_satellites,
+            self.btn_search_node_id, self.btn_packet_hud, self.btn_map_legend,
+            self.btn_new_nodes, self.btn_mqtt_nodes, self.btn_map_3d
+        ):
+            btn.hover_changed.connect(self.layer_hovered.emit)
 
         layout.addStretch()
 

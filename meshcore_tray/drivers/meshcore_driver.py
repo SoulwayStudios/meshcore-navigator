@@ -16,7 +16,7 @@ from meshcore_tray.core.models import (
     is_valid_alias, is_valid_node_id, is_valid_coordinate, is_plausible_rf_coordinate, is_room_server_contact
 )
 from meshcore_tray.core.event_bus import bus, EventType
-from meshcore_tray.core.packet_decoder import decode_meshcore_packet
+from meshcore_tray.core.packet_decoder import decode_meshcore_packet, build_known_channel_keys
 from meshcore_tray.core.deduplicator import get_deduplicator
 from meshcore_tray.drivers.base_driver import BaseRadioDriver
 
@@ -1625,10 +1625,19 @@ class MeshCoreDriver(BaseRadioDriver):
             if not inferred_payload or inferred_payload in ("FLOOD", "UNK", "UNKNOWN"):
                 if raw_hex:
                     try:
-                        dec = decode_meshcore_packet(raw_hex)
+                        k_dict = build_known_channel_keys(self.storage)
+                        dec = decode_meshcore_packet(raw_hex, channel_keys=k_dict)
                         if dec and dec.header and dec.header.payload_type_name:
                             inferred_payload = dec.header.payload_type_name.upper()
                             decoded_struct = dec.to_dict()
+                            if dec.payload and dec.payload.type_name == "GRP_TXT" and dec.payload.text:
+                                msg_text = dec.payload.text
+                                data["message"] = dec.payload.text
+                                data["msg_text"] = dec.payload.text
+                                data["text"] = dec.payload.text
+                                data["chan_name"] = dec.payload.channel or "Public"
+                                if dec.payload.sender:
+                                    data["sender"] = dec.payload.sender
                     except Exception:
                         pass
             if not inferred_payload or inferred_payload in ("FLOOD", "UNK", "UNKNOWN"):
@@ -1699,12 +1708,50 @@ class MeshCoreDriver(BaseRadioDriver):
 
             if has_channel_msg:
                 chan_name = data.get("chan_name", "")
-                logger.info(f"Live OTA decrypted channel message on '{chan_name}': {str(msg_text)[:40]}")
-                if "channel_idx" not in data and chan_name and self.storage:
-                    ch = self.storage.get_channel(chan_name)
-                    if ch:
-                        data["channel_idx"] = ch.channel_id
-                self._handle_channel_msg(data)
+                norm_c = "Public" if str(chan_name).strip().lower().lstrip("#") == "public" else (chan_name if str(chan_name).startswith("#") else f"#{chan_name}")
+                logger.info(f"Live OTA decrypted channel message on '{norm_c}': {str(msg_text)[:40]}")
+                
+                # Check if channel is joined by user
+                is_joined = True
+                if self.storage and norm_c != "Public":
+                    try:
+                        ch_clean = norm_c.lstrip("#")
+                        is_joined = bool(self.storage.get_channel(norm_c) or self.storage.get_channel(ch_clean))
+                    except Exception:
+                        is_joined = True
+
+                if is_joined:
+                    if "channel_idx" not in data and chan_name and self.storage:
+                        ch = self.storage.get_channel(chan_name) or self.storage.get_channel(norm_c)
+                        if ch:
+                            data["channel_idx"] = ch.channel_id
+                    self._handle_channel_msg(data)
+                else:
+                    # Save message into SQLite so backlog is pre-cached
+                    sender_disp = str(data.get("sender") or (hop_nodes[0] if hop_nodes else "RF-Node"))
+                    msg_obj = MessageEnvelope(
+                        id=pkt_id,
+                        channel=norm_c,
+                        sender_id="rf",
+                        sender_name=sender_disp,
+                        text=str(msg_text),
+                        timestamp=datetime.now(timezone.utc).isoformat(),
+                        source_driver="meshcore",
+                        metadata={"snr": snr, "hops": len(hop_nodes), "sources": ["radio"]}
+                    )
+                    if self.storage:
+                        try:
+                            self.storage.save_message(msg_obj, auto_create_channel=False)
+                        except Exception as e:
+                            logger.debug("Failed saving OTA message to storage: %s", e)
+                    logger.info("Captured RF traffic on unjoined channel %s from %s: %s", norm_c, sender_disp, str(msg_text)[:40])
+                    bus.emit(EventType.CHANNEL_ACTIVITY_DETECTED, {
+                        "channel": norm_c,
+                        "sender": sender_disp,
+                        "text": str(msg_text),
+                        "source": "radio",
+                        "timestamp": msg_obj.timestamp
+                    })
 
             # Live learn node advertisement and GPS coordinates over-the-air
             adv_key = str(data.get("adv_key") or "").strip().lower()

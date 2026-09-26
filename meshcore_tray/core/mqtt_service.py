@@ -23,7 +23,7 @@ except ImportError:
 from meshcore_tray.config import AppConfig, MqttConfig
 from meshcore_tray.core.event_bus import bus, EventType
 from meshcore_tray.core.models import PacketPathInfo, MessageEnvelope, NodeContact, is_valid_coordinate
-from meshcore_tray.core.packet_decoder import PacketDecoder, DecodedPacket
+from meshcore_tray.core.packet_decoder import PacketDecoder, DecodedPacket, build_known_channel_keys
 from meshcore_tray.core.deduplicator import get_deduplicator
 from meshcore_tray.storage import Storage
 
@@ -101,8 +101,8 @@ class MqttService:
         self._dedup_cache: OrderedDict[str, float] = OrderedDict()
         self._max_dedup_cache = 1000
 
-        # Dedicated packet decoder
-        self.decoder = PacketDecoder()
+        # Dedicated packet decoder initialized with all known and community channel keys
+        self.decoder = PacketDecoder(channel_keys=build_known_channel_keys(self.storage))
 
         # Subscribe to outgoing radio packet events for gateway forwarding
         bus.subscribe(EventType.PACKET_PATH_TRACED, self._on_local_packet_traced)
@@ -436,7 +436,8 @@ class MqttService:
                     self.storage.tag_message_source(channel=ch, text=txt, source="mqtt")
             return
 
-        # 4. Decode using PacketDecoder
+        # 4. Decode using PacketDecoder with latest channel keys
+        self.decoder.channel_keys = build_known_channel_keys(self.storage)
         decoded = self.decoder.decode_hex(raw_hex, snr=snr_hint, rssi=rssi_hint)
         if not decoded and not text_hint:
             logger.debug("Could not decode packet from MQTT: %s", raw_hex[:16])
@@ -623,28 +624,49 @@ class MqttService:
         # 7. Dispatch to EventBus
         bus.emit(EventType.PACKET_PATH_TRACED, path_info)
 
-        # If decrypted group text message or JSON chat message, save to storage and emit MESSAGE_RECEIVED
+        # If decrypted group text message or JSON chat message, save to storage and emit MESSAGE_RECEIVED or CHANNEL_ACTIVITY_DETECTED
         msg_text_to_save = (decoded.payload.text if (decoded and decoded.payload) else None) or text_hint
         if ((decoded and decoded.payload and decoded.payload.type_name == "GRP_TXT") or text_hint) and msg_text_to_save:
             raw_c = (decoded.payload.channel if (decoded and decoded.payload) else None) or channel_hint or "Public"
             norm_c = "Public" if str(raw_c).strip().lower().lstrip("#") == "public" else (raw_c if str(raw_c).startswith("#") else f"#{raw_c}")
             hops_count = len(decoded.path.hops) if (decoded and decoded.path and decoded.path.hops) else 0
+            sender_disp = (decoded.payload.sender if (decoded and decoded.payload) else None) or sender_name
             msg_obj = MessageEnvelope(
                 id=path_info.packet_id,
                 channel=norm_c,
                 sender_id=sender_id,
-                sender_name=(decoded.payload.sender if (decoded and decoded.payload) else None) or sender_name,
+                sender_name=sender_disp,
                 text=msg_text_to_save,
                 timestamp=datetime.now(timezone.utc).isoformat(),
                 source_driver="mqtt",
                 metadata={"snr": snr_hint, "rssi": rssi_hint, "hops": hops_count, "sources": ["mqtt"]}
             )
+            # Check if user is currently joined to this channel
+            is_joined = True
+            if self.storage and norm_c != "Public":
+                try:
+                    ch_clean = norm_c.lstrip("#")
+                    is_joined = bool(self.storage.get_channel(norm_c) or self.storage.get_channel(ch_clean))
+                except Exception:
+                    is_joined = True
+
             if self.storage:
                 try:
-                    self.storage.save_message(msg_obj)
+                    self.storage.save_message(msg_obj, auto_create_channel=is_joined)
                 except Exception as e:
                     logger.debug("Failed saving MQTT message to storage: %s", e)
-            bus.emit(EventType.MESSAGE_RECEIVED, msg_obj)
+
+            if is_joined:
+                bus.emit(EventType.MESSAGE_RECEIVED, msg_obj)
+            else:
+                logger.info("Captured MQTT traffic on unjoined channel %s from %s: %s", norm_c, sender_disp, msg_text_to_save[:40])
+                bus.emit(EventType.CHANNEL_ACTIVITY_DETECTED, {
+                    "channel": norm_c,
+                    "sender": sender_disp,
+                    "text": msg_text_to_save,
+                    "source": "mqtt",
+                    "timestamp": msg_obj.timestamp
+                })
 
 
     def publish_packet(self, raw_hex: str, metadata: Optional[Dict[str, Any]] = None) -> bool:

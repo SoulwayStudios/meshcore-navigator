@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 from PyQt6.QtCore import Qt, QPoint, QTimer, QUrl
-from PyQt6.QtGui import QIcon, QDesktopServices
+from PyQt6.QtGui import QIcon, QDesktopServices, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QSplitter,
     QLabel, QPushButton, QFrame, QStackedWidget, QMenu, QApplication,
@@ -222,6 +222,14 @@ class MainWindow(QMainWindow):
         self.main_splitter.addWidget(self.mesh_map)
         self.main_splitter.splitterMoved.connect(lambda pos, idx: self.mesh_map.pause_geometry_motion())
 
+        # Wire expand map action button, action bar layer hover events, and Ctrl+M shortcut
+        if hasattr(self.map_layer_dock, "expand_map_toggled"):
+            self.map_layer_dock.expand_map_toggled.connect(self.toggle_expand_map)
+        if hasattr(self.map_layer_dock, "layer_hovered"):
+            self.map_layer_dock.layer_hovered.connect(self.mesh_map.on_layer_hovered)
+        self.expand_map_shortcut = QShortcut(QKeySequence("Ctrl+M"), self)
+        self.expand_map_shortcut.activated.connect(self.toggle_expand_map)
+
         # Wire Heard Floods interactive signals to Mesh Map
         self.heard_floods_view.flood_hovered.connect(self.mesh_map.preview_packet_path)
         self.heard_floods_view.flood_unhovered.connect(self.mesh_map.clear_preview_packet_path)
@@ -289,6 +297,10 @@ class MainWindow(QMainWindow):
 
         self.update_banner = self._create_update_banner()
         content_layout.addWidget(self.update_banner)
+
+        self.channel_activity_banner = self._create_channel_activity_banner()
+        content_layout.addWidget(self.channel_activity_banner)
+
         content_layout.addWidget(self.main_stack, 1)
 
         main_layout.addWidget(content_container, 1)
@@ -371,6 +383,138 @@ class MainWindow(QMainWindow):
         banner.hide()
         return banner
 
+    def _create_channel_activity_banner(self) -> QFrame:
+        """Creates a subtle, sleek prompt banner for traffic detected on unjoined channels."""
+        banner = QFrame()
+        banner.setObjectName("channelActivityBanner")
+        banner.setStyleSheet("""
+            QFrame#channelActivityBanner {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #1E1B4B, stop:1 #0F172A);
+                border-bottom: 1px solid #6366F1;
+                padding: 4px 12px;
+            }
+        """)
+        layout = QHBoxLayout(banner)
+        layout.setContentsMargins(12, 6, 12, 6)
+        layout.setSpacing(12)
+
+        self.channel_activity_lbl = QLabel()
+        self.channel_activity_lbl.setStyleSheet("color: #E0E7FF; font-size: 12px;")
+        layout.addWidget(self.channel_activity_lbl, 1)
+
+        self.channel_activity_join_btn = QPushButton("+ Join Channel")
+        self.channel_activity_join_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.channel_activity_join_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #4F46E5, stop:1 #4338CA);
+                color: #FFFFFF;
+                border: 1px solid #818CF8;
+                border-radius: 4px;
+                padding: 4px 12px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #6366F1, stop:1 #4F46E5);
+                border-color: #C7D2FE;
+            }
+        """)
+        layout.addWidget(self.channel_activity_join_btn)
+
+        close_btn = QPushButton("✕")
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                color: #94A3B8;
+                border: none;
+                font-size: 13px;
+                padding: 2px 6px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                color: #F8FAFC;
+                background-color: rgba(255, 255, 255, 0.1);
+            }
+        """)
+        close_btn.clicked.connect(banner.hide)
+        layout.addWidget(close_btn)
+
+        banner.hide()
+        return banner
+
+    def _on_channel_activity_detected(self, data: dict):
+        """Prompts user when active decrypted traffic is detected on a channel they have not joined."""
+        chan = data.get("channel", "")
+        sender = data.get("sender", "Unknown")
+        text = data.get("text", "")
+        source = str(data.get("source", "radio")).upper()
+
+        if not chan:
+            return
+
+        # Check if already joined
+        if self.storage and chan != "Public":
+            try:
+                ch_clean = chan.lstrip("#")
+                if self.storage.get_channel(chan) or self.storage.get_channel(ch_clean):
+                    return
+            except Exception:
+                pass
+
+        snippet = text[:60] + ("…" if len(text) > 60 else "")
+        self.channel_activity_lbl.setText(
+            f"<b>💬 Active traffic detected on {chan}</b> (from @{sender} via {source}): <i>\"{snippet}\"</i>"
+        )
+        self.channel_activity_join_btn.setText(f"+ Join {chan}")
+        try:
+            self.channel_activity_join_btn.clicked.disconnect()
+        except Exception:
+            pass
+        self.channel_activity_join_btn.clicked.connect(lambda: self._join_discovered_channel(chan))
+        self.channel_activity_banner.show()
+
+    def _join_discovered_channel(self, channel_name: str):
+        self.channel_activity_banner.hide()
+        self._on_join_channel(channel_name)
+
+    def toggle_expand_map(self, expanded: Optional[bool] = None):
+        """Toggles full map view by collapsing the left-hand navigation and chat panes."""
+        # If currently on another tab (e.g. DMs, Repeaters, Satellites), switch to Map view first!
+        if self.main_stack.currentIndex() != 0:
+            self.nav_dock.switch_view("main")
+
+        current_expanded = getattr(self, "_map_is_expanded", False)
+        target_expanded = (not current_expanded) if expanded is None else bool(expanded)
+        self._map_is_expanded = target_expanded
+
+        if target_expanded:
+            sizes = self.main_splitter.sizes()
+            if any(s > 0 for s in sizes[:2]):
+                self._pre_expand_sizes = sizes
+            self.sidebar.hide()
+            self.center_stack.hide()
+            total_w = sum(sizes) if sum(sizes) > 0 else self.width()
+            pixoo_w = sizes[3] if len(sizes) > 3 and self.pixoo_panel.isVisible() else 0
+            map_w = max(100, total_w - pixoo_w)
+            self.main_splitter.setSizes([0, 0, map_w, pixoo_w])
+        else:
+            self.sidebar.show()
+            self.center_stack.show()
+            if hasattr(self, "_pre_expand_sizes") and self._pre_expand_sizes:
+                self.main_splitter.setSizes(self._pre_expand_sizes)
+            else:
+                show_mirror = getattr(self.config.pixoo, "show_live_mirror", False) if (self.config and hasattr(self.config, "pixoo")) else False
+                self.main_splitter.setSizes([200, 420, 560, 240 if show_mirror else 0])
+
+        if hasattr(self.map_layer_dock, "btn_expand_map"):
+            self.map_layer_dock.btn_expand_map.set_expanded(target_expanded)
+
+        if hasattr(self.mesh_map, "set_layer_dock_expanded"):
+            self.mesh_map.set_layer_dock_expanded(target_expanded)
+
+        self.mesh_map.pause_geometry_motion()
+
     def _on_update_available(self, release_info: ReleaseInfo):
         """Displays fallback update banner if the splash overlay is not actively showing it."""
         if self.splash_overlay is not None and self.splash_overlay.isVisible():
@@ -396,6 +540,7 @@ class MainWindow(QMainWindow):
         bus.subscribe(EventType.CONNECTION_STATUS_CHANGED, self._on_connection_changed)
         bus.subscribe(EventType.SETTINGS_UPDATED, self._on_settings_updated)
         bus.subscribe(EventType.SYNC_STATUS, self._on_sync_status_received)
+        bus.subscribe(EventType.CHANNEL_ACTIVITY_DETECTED, self._on_channel_activity_detected)
         bus.subscribe(EventType.FAVORITES_UPDATED, lambda _: (
             self.sidebar.reload(),
             self.dms_view.reload_contacts(),

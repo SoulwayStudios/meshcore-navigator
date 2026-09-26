@@ -944,7 +944,7 @@ class Storage:
 
     # --- Message Operations ---
 
-    def save_message(self, msg: MessageEnvelope):
+    def save_message(self, msg: MessageEnvelope, auto_create_channel: bool = True):
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
@@ -1030,7 +1030,7 @@ class Storage:
                     cursor.execute("""
                         UPDATE channels SET last_activity_ts = ? WHERE channel_id = ?
                     """, (msg.timestamp, c_row["channel_id"]))
-                else:
+                elif auto_create_channel:
                     # Auto-create channel so it immediately appears in the channel list (e.g. #thenorf)
                     cursor.execute("SELECT MAX(channel_id) as max_id FROM channels")
                     max_r = cursor.fetchone()

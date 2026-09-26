@@ -4,6 +4,30 @@
 
 ---
 
+## 🌟 What's New in v0.10.0
+
+### 🌐 3D Terrain & Airspace Perspective
+- **MapLibre GL 3D Globe & Elevation**: Seamless digital elevation model (DEM) terrain rendering using AWS Open Data Terrarium elevation tiles and OpenFreeMap Dark vector tiles (100% key-free out of the box).
+- **Interactive Camera Pitch & Orbit**: Smooth 3D tilt, bearing rotation, and pitch controls (`Ctrl+Middle-drag` or middle-click) with instant preset toggles (`📐 58° Pitch` and `🧭 Top-down`).
+- **Dark Themed 3D Controls**: Fully styled navigation controls (Zoom in, Zoom out, Pitch/Bearing compass) and attribution info button in sleek `#18191C` dark charcoal with crisp slate/white SVG icons and cyan links, perfectly matching the dark map aesthetic.
+- **Custom Tile Style & API Key Manager**: Built-in modal dialog supporting custom vector tile styles (e.g. MapTiler, Mapbox, or self-hosted) and 2D CARTO dark basemap keys.
+
+### 🗺️ Expandable Map & Mirrored Dual-Dock Layout
+- **Full Window Map Mode (`Ctrl+M`)**: Dedicated maximize/restore toggle expanding the map canvas across the entire application interface.
+- **Adaptive Dock Mirroring**: When the map is maximized, the map overlay bar relocates to the far right edge (mirroring the main left navigation bar).
+- **Directional Flyouts**: Flyout overlay cards automatically expand to the left when docked on the far right in maximized mode, and expand to the right in standard view.
+
+### 🪟 Smart Overlay Minimization & Hover Peek
+- **Decluttering Minimization (`—`)**: Floating map overlays (Weather Radar, Space Weather, ADS-B Flight Radar, Route Inspector) collapse into sleek minimized tabs along the map edge.
+- **Hover Peek Bridge**: Hovering over minimized overlay tabs reveals a 400ms preview bridge with smooth fading.
+- **Interactive Pinning (`📌`)**: One-click pin button on peek cards allows restoring or locking cards directly back onto the active map canvas.
+
+### 📡 Unified RF + MQTT Community Channel Decoding & 1-Click Join
+- **Wire-Level AES Community Channel Decryption**: Automatically derives hashtag AES keys and decrypts regional traffic (e.g. `#thenorf`, `#northeast`) overheard across local RF or remote MQTT brokers.
+- **1-Click Channel Join**: Detected community channel packets display a prompt offering users immediate 1-click addition to their active channel list.
+
+---
+
 ## 🌟 What's New in v0.9.0
 
 ### ✈️ ADS-B Aircraft Type Filtering & Proximity Alert System
