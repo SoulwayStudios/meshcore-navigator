@@ -307,6 +307,11 @@ class SplashOverlay(QWidget):
                 self.status_lbl.setText(f"✓ Version v{__version__} is up to date")
 
     def _setup_timing(self):
+        import os
+        if os.environ.get("MESHCORE_TEST_MODE") == "1":
+            self._min_timer_done = True
+            return
+
         # Ensure a minimum comfortable display time (1.8s) so splash doesn't jarringly flicker
         min_display_ms = 1800
         self._min_timer = QTimer(self)
@@ -388,8 +393,4 @@ class SplashOverlay(QWidget):
     def _on_fade_finished(self):
         self.hide()
         self.dismissed.emit()
-        try:
-            self.setParent(None)
-        except Exception:
-            pass
         self.deleteLater()
