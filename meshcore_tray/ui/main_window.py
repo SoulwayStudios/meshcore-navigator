@@ -1,6 +1,7 @@
 """Main Modal Window for MeshCore Pixoo System Tray with Discord-Inspired Architecture."""
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 from typing import Optional
@@ -216,6 +217,7 @@ class MainWindow(QMainWindow):
                 lambda active: self.map_layer_dock.set_layer_active("map_legend", active)
             )
         self.mesh_map.lightning_proximity_alert.connect(self._on_lightning_proximity_alert)
+        self.mesh_map.adsb_proximity_alert.connect(self._on_adsb_proximity_alert)
         self.nav_dock.node_filter_changed.connect(self.mesh_map.set_node_filter_mode)
         self.main_splitter.addWidget(self.mesh_map)
         self.main_splitter.splitterMoved.connect(lambda pos, idx: self.mesh_map.pause_geometry_motion())
@@ -503,6 +505,12 @@ class MainWindow(QMainWindow):
         elif layer_key == "new_nodes":
             if hasattr(self.mesh_map, "set_new_nodes"):
                 self.mesh_map.set_new_nodes(is_active)
+        elif layer_key == "mqtt_nodes":
+            if hasattr(self.mesh_map, "set_mqtt_nodes"):
+                self.mesh_map.set_mqtt_nodes(is_active)
+        elif layer_key == "map_3d":
+            if hasattr(self.mesh_map, "set_3d_mode"):
+                self.mesh_map.set_3d_mode(is_active)
         elif layer_key == "age_fade":
             if self.config and hasattr(self.config, "meshcore"):
                 self.config.meshcore.node_freshness_fading = is_active
@@ -527,20 +535,68 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 logger.debug(f"Failed to show proximity tray message: {e}")
 
+    def _on_adsb_proximity_alert(self, hex_code: str, flight: str, dist_mi: float, category: str):
+        """Displays desktop/tray notification for nearby watched aircraft within 10 miles."""
+        cat_title = category.capitalize()
+        icon_str = "⚔️" if category == "military" else ("🚁" if category == "helicopter" else "✈️")
+        msg = f"{icon_str} {cat_title} Proximity Alert: {flight} ({hex_code.upper()}) is {dist_mi:.1f} mi away."
+        logger.warning(msg)
+        if hasattr(self, "mesh_map") and hasattr(self.mesh_map, "_notify_user"):
+            self.mesh_map._notify_user(msg)
+        if getattr(self, "_tray_icon", None) and self._tray_icon.isVisible():
+            try:
+                self._tray_icon.showMessage(
+                    f"{icon_str} {cat_title} Aircraft Proximity Alert",
+                    f"{flight} ({hex_code.upper()}) is within {dist_mi:.1f} miles of observed location.",
+                    QSystemTrayIcon.MessageIcon.Warning if category == "military" else QSystemTrayIcon.MessageIcon.Information,
+                    8000,
+                )
+            except Exception as e:
+                logger.debug(f"Failed to show ADS-B proximity tray message: {e}")
+
     def _on_visualise_packet_path_info(self, path):
-        """Highlights a selected packet path on the map and centers on the originator."""
+        """Replays and visualises the selected packet path with animation on the map."""
         if not path:
             return
         if hasattr(self, "mesh_map"):
+            # Close any open node popup so it does not obscure the path or leave broken boxes
+            self.mesh_map.run_js(
+                "if (typeof map !== 'undefined' && map && map.closePopup) map.closePopup(); "
+                "if (window._map3dNodePopup) { try { window._map3dNodePopup.remove(); } catch(e){} }"
+            )
+            # 1. Draw persistent route line preview
             self.mesh_map.preview_packet_path(path)
-            if getattr(path, "coordinates", None) and len(path.coordinates) > 0:
-                lat, lon = path.coordinates[0]
-                self.mesh_map.center_on_node(
-                    getattr(path, "sender_id", "") or "",
-                    lat,
-                    lon,
-                    getattr(path, "sender_name", "") or ""
-                )
+            # 2. Trigger dynamic traveling CoreScope particle beam animation on 2D and 3D
+            self.mesh_map.trigger_corescope_trace(path)
+            # 3. Fit bounds comfortably around the entire path route
+            coords = getattr(path, "coordinates", None) or []
+            if len(coords) >= 2:
+                coords_json = json.dumps(coords)
+                self.mesh_map.run_js(f"""
+                    (function() {{
+                        var pts = {coords_json};
+                        if (pts && pts.length >= 2) {{
+                            if (window._is3DActive && typeof map3d !== 'undefined' && map3d) {{
+                                var bounds = new maplibregl.LngLatBounds();
+                                pts.forEach(function(p) {{ bounds.extend([p[1], p[0]]); }});
+                                map3d.fitBounds(bounds, {{ padding: 60, maxZoom: 12, duration: 800 }});
+                            }} else if (typeof map !== 'undefined' && map && map.fitBounds) {{
+                                map.fitBounds(pts, {{ padding: [50, 50], maxZoom: 12 }});
+                            }}
+                        }}
+                    }})();
+                """)
+            elif len(coords) == 1:
+                lat, lon = coords[0]
+                self.mesh_map.run_js(f"""
+                    (function() {{
+                        if (window._is3DActive && typeof map3d !== 'undefined' && map3d) {{
+                            map3d.easeTo({{ center: [{lon}, {lat}], zoom: 11, duration: 800 }});
+                        }} else if (typeof map !== 'undefined' && map && map.setView) {{
+                            map.setView([{lat}, {lon}], 11);
+                        }}
+                    }})();
+                """)
 
     def _on_track_node_adsb(self, node_id: str, lat: float, lon: float, alias: str):
         self.nav_dock.switch_view("main")

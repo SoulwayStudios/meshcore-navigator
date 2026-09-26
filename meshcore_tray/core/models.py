@@ -193,6 +193,7 @@ class NodeContact:
     scope_name: Optional[str] = None
     allowed_regions: Optional[List[str]] = field(default_factory=list)
     first_seen: str = field(default_factory=current_iso_time)
+    source: str = "radio"
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

@@ -44,6 +44,10 @@ LAYER_SVGS = {
     "map_legend": '<rect x="3" y="4" width="18" height="16" rx="2" stroke="{color}" stroke-width="1.8" fill="none"/><circle cx="7" cy="8" r="1.5" fill="{color}"/><line x1="11" y1="8" x2="17" y2="8" stroke="{color}" stroke-width="1.5" stroke-linecap="round"/><circle cx="7" cy="12" r="1.5" fill="{color}"/><line x1="11" y1="12" x2="17" y2="12" stroke="{color}" stroke-width="1.5" stroke-linecap="round"/><circle cx="7" cy="16" r="1.5" fill="{color}"/><line x1="11" y1="16" x2="17" y2="16" stroke="{color}" stroke-width="1.5" stroke-linecap="round"/>',
     # Newly Discovered Nodes: Waving hand greeting glyph (Friendly "Hello / New Node" wave)
     "new_nodes": '<path d="M7.5 11.5V5.5a1.8 1.8 0 0 1 3.6 0v5M11.1 5.5a1.8 1.8 0 0 1 3.6 0v5M14.7 7a1.8 1.8 0 0 1 3.6 0v5.5c0 4.2-3 7-7.2 7S4 16.7 4 12.5v-2a1.8 1.8 0 0 1 3.5 0v3" stroke="{color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M19 4a4.5 4.5 0 0 1 2.2 4M17.5 1.5a7.5 7.5 0 0 1 4 6.5" stroke="{color}" stroke-width="1.5" stroke-linecap="round" fill="none"/>',
+    # MQTT Discovered Nodes: Vector Cloud with radiating mesh waves / network connection
+    "mqtt_nodes": '<path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" stroke="{color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/><circle cx="12" cy="15" r="1.5" fill="{color}"/><path d="M8 12a5 5 0 0 1 8 0" stroke="{color}" stroke-width="1.5" stroke-linecap="round" fill="none"/>',
+    # 3D Terrain & Globe View (UKMesh MapLibre GL 3D perspective with terrain elevation):
+    "map_3d": '<path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="{color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>',
 }
 
 # Primary navigation action bar vector glyphs (white inactive, glowing emerald active)
@@ -73,6 +77,10 @@ def create_layer_icon(icon_name: str, active: bool = False) -> Optional[QIcon]:
     try:
         if icon_name == "new_nodes" and active:
             color = "#FFD700"
+        elif icon_name == "mqtt_nodes" and active:
+            color = "#F97316"
+        elif icon_name == "map_3d" and active:
+            color = "#00D2FF"
         else:
             color = "#34D399" if active else "#FFFFFF"
         svg_str = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">{inner_svg.format(color=color)}</svg>'
@@ -87,6 +95,14 @@ def create_layer_icon(icon_name: str, active: bool = False) -> Optional[QIcon]:
                 glow.setColorAt(0.0, QColor(255, 215, 0, 110))
                 glow.setColorAt(0.6, QColor(218, 165, 32, 45))
                 glow.setColorAt(1.0, QColor(218, 165, 32, 0))
+            elif icon_name == "mqtt_nodes":
+                glow.setColorAt(0.0, QColor(249, 115, 22, 120))
+                glow.setColorAt(0.6, QColor(234, 88, 12, 50))
+                glow.setColorAt(1.0, QColor(234, 88, 12, 0))
+            elif icon_name == "map_3d":
+                glow.setColorAt(0.0, QColor(0, 210, 255, 120))
+                glow.setColorAt(0.6, QColor(0, 150, 220, 50))
+                glow.setColorAt(1.0, QColor(0, 150, 220, 0))
             else:
                 glow.setColorAt(0.0, QColor(52, 211, 153, 90))
                 glow.setColorAt(0.6, QColor(16, 185, 129, 35))
@@ -294,6 +310,9 @@ class LayerButton(QPushButton):
             "🎨": "map_legend",
             "new_nodes": "new_nodes",
             "👋": "new_nodes",
+            "mqtt_nodes": "mqtt_nodes",
+            "map_3d": "map_3d",
+            "🏔️": "map_3d",
         }
         return mapping.get(text) or (text if text in LAYER_SVGS else None)
 
@@ -322,6 +341,40 @@ class LayerButton(QPushButton):
                     QPushButton:hover {
                         background: qlineargradient(x1:0, y1:0, x2:0.8, y2:1, stop:0 #B45309, stop:1 #78350F);
                         border-color: #FCD34D;
+                        color: #FFFFFF;
+                    }
+                """)
+            elif self.icon_name == "mqtt_nodes":
+                self.setStyleSheet("""
+                    QPushButton {
+                        background: qlineargradient(x1:0, y1:0, x2:0.8, y2:1, stop:0 #9A3412, stop:1 #431407);
+                        color: #FB923C;
+                        border: 1.5px solid #F97316;
+                        border-radius: 14px;
+                        font-size: 18px;
+                        padding: 0px;
+                        text-align: center;
+                    }
+                    QPushButton:hover {
+                        background: qlineargradient(x1:0, y1:0, x2:0.8, y2:1, stop:0 #C2410C, stop:1 #9A3412);
+                        border-color: #FDBA74;
+                        color: #FFFFFF;
+                    }
+                """)
+            elif self.icon_name == "map_3d":
+                self.setStyleSheet("""
+                    QPushButton {
+                        background: qlineargradient(x1:0, y1:0, x2:0.8, y2:1, stop:0 #083344, stop:1 #02202E);
+                        color: #38BDF8;
+                        border: 1.5px solid #0EA5E9;
+                        border-radius: 14px;
+                        font-size: 18px;
+                        padding: 0px;
+                        text-align: center;
+                    }
+                    QPushButton:hover {
+                        background: qlineargradient(x1:0, y1:0, x2:0.8, y2:1, stop:0 #0E7490, stop:1 #083344);
+                        border-color: #7DD3FC;
                         color: #FFFFFF;
                     }
                 """)
@@ -477,8 +530,9 @@ class MapLayerDockWidget(QWidget):
         layout.addWidget(self.btn_heatmap)
 
         # 5. Orbital View
+        init_orbitals = getattr(self.config.meshcore, "map_show_companion_orbitals", False) if (self.config and hasattr(self.config, "meshcore")) else False
         self.btn_orbitals = LayerButton("orbitals", "Orbital View", parent=self)
-        self.btn_orbitals.setChecked(False)
+        self.btn_orbitals.setChecked(init_orbitals)
         self.btn_orbitals.toggled.connect(lambda ch: self.layer_toggled.emit("orbitals", ch))
         layout.addWidget(self.btn_orbitals)
 
@@ -558,6 +612,18 @@ class MapLayerDockWidget(QWidget):
         self.btn_new_nodes.toggled.connect(lambda ch: self.layer_toggled.emit("new_nodes", ch))
         layout.addWidget(self.btn_new_nodes)
 
+        # 18. MQTT Discovered Nodes View (Orange Highlight Mode)
+        self.btn_mqtt_nodes = LayerButton("mqtt_nodes", "MQTT Discovered Nodes (Orange Highlight View)", parent=self)
+        self.btn_mqtt_nodes.setChecked(False)
+        self.btn_mqtt_nodes.toggled.connect(lambda ch: self.layer_toggled.emit("mqtt_nodes", ch))
+        layout.addWidget(self.btn_mqtt_nodes)
+
+        # 19. 3D Terrain & Globe View (UKMesh MapLibre 3D Perspective)
+        self.btn_map_3d = LayerButton("map_3d", "3D Terrain & Globe View (UKMesh Style MapLibre 3D Perspective)", parent=self)
+        self.btn_map_3d.setChecked(False)
+        self.btn_map_3d.toggled.connect(lambda ch: self.layer_toggled.emit("map_3d", ch))
+        layout.addWidget(self.btn_map_3d)
+
         layout.addStretch()
 
     def set_layer_active(self, layer_key: str, is_active: bool):
@@ -579,11 +645,15 @@ class MapLayerDockWidget(QWidget):
             "activity_timeline": self.btn_activity_timeline,
             "map_legend": self.btn_map_legend,
             "new_nodes": self.btn_new_nodes,
+            "mqtt_nodes": self.btn_mqtt_nodes,
+            "map_3d": self.btn_map_3d,
         }
         btn = mapping.get(layer_key)
         if btn:
             btn.blockSignals(True)
             btn.setChecked(bool(is_active))
+            if hasattr(btn, "_update_style"):
+                btn._update_style(bool(is_active))
             btn.blockSignals(False)
 
     def _on_satellites_toggled(self, is_active: bool):
@@ -642,6 +712,10 @@ class NavDockWidget(QWidget):
         self.btn_satellites = self.map_layers.btn_satellites
         self.btn_packet_hud = self.map_layers.btn_packet_hud
         self.btn_activity_timeline = self.map_layers.btn_activity_timeline
+        self.btn_map_legend = self.map_layers.btn_map_legend
+        self.btn_new_nodes = self.map_layers.btn_new_nodes
+        self.btn_mqtt_nodes = self.map_layers.btn_mqtt_nodes
+        self.btn_map_3d = self.map_layers.btn_map_3d
 
         self.map_layers.layer_toggled.connect(self.layer_toggled.emit)
         self.map_layers.node_filter_changed.connect(self.node_filter_changed.emit)

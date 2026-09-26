@@ -365,33 +365,42 @@ def test_settings_widget_mqtt_community_presets(qapp, tmp_path):
     dialog = SettingsDialog(config=config, storage=storage)
     assert hasattr(dialog, "combo_mqtt_preset")
 
-    # 1. Lincomatic MeshCore Broker
+    # 1. 🇬🇧 UKMesh Network (WebSockets/TLS)
     dialog.combo_mqtt_preset.setCurrentIndex(1)
+    assert dialog.mqtt_host_input.text() == "mqtt.ukmesh.com"
+    assert dialog.mqtt_port_spin.value() == 443
+    assert dialog.mqtt_user_input.text() == "soulway"
+    assert dialog.chk_mqtt_tls.isChecked() is True
+    assert dialog.combo_mqtt_transport.currentData() == "websockets"
+    assert "public/+/+/packets" in dialog.mqtt_topics_input.text()
+
+    # 2. Lincomatic MeshCore Broker
+    dialog.combo_mqtt_preset.setCurrentIndex(2)
     assert dialog.mqtt_host_input.text() == "mqtt.lincomatic.com"
     assert dialog.mqtt_port_spin.value() == 8883
     assert dialog.chk_mqtt_tls.isChecked() is True
     assert "meshcore/#" in dialog.mqtt_topics_input.text()
 
-    # 2. 🇬🇧 IPNet UK MeshCore Observer
-    dialog.combo_mqtt_preset.setCurrentIndex(2)
+    # 3. 🇬🇧 IPNet UK MeshCore Observer
+    dialog.combo_mqtt_preset.setCurrentIndex(3)
     assert dialog.mqtt_host_input.text() == "mqtt.ipnt.uk"
     assert dialog.mqtt_port_spin.value() == 1883
     assert "meshcore/uk/#" in dialog.mqtt_topics_input.text()
 
-    # 3. 🇬🇧 NorthMesh UK MeshCore Network
-    dialog.combo_mqtt_preset.setCurrentIndex(3)
+    # 4. 🇬🇧 NorthMesh UK MeshCore Network
+    dialog.combo_mqtt_preset.setCurrentIndex(4)
     assert dialog.mqtt_host_input.text() == "mqtt.northmesh.co.uk"
     assert dialog.mqtt_port_spin.value() == 1883
     assert "meshcore/uk/#" in dialog.mqtt_topics_input.text()
 
-    # 4. Local Bridge / meshcoretomqtt
-    dialog.combo_mqtt_preset.setCurrentIndex(4)
+    # 5. Local Bridge / meshcoretomqtt
+    dialog.combo_mqtt_preset.setCurrentIndex(5)
     assert dialog.mqtt_host_input.text() == "localhost"
     assert dialog.mqtt_port_spin.value() == 1883
     assert dialog.chk_mqtt_tls.isChecked() is False
 
-    # 5. EMQX Sandbox
-    dialog.combo_mqtt_preset.setCurrentIndex(5)
+    # 6. EMQX Sandbox
+    dialog.combo_mqtt_preset.setCurrentIndex(6)
     assert dialog.mqtt_host_input.text() == "broker.emqx.io"
     assert dialog.mqtt_port_spin.value() == 1883
 

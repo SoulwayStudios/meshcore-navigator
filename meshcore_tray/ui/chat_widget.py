@@ -293,6 +293,36 @@ class MessageBubble(QFrame):
 
         header.addWidget(sender_lbl)
         header.addWidget(chan_tag)
+
+        # Source badges: RF, MQTT, or RF+MQTT
+        src_driver = str(getattr(self.msg, "source_driver", "") or "").lower()
+        meta_sources = []
+        if self.msg.metadata and isinstance(self.msg.metadata, dict):
+            raw_s = self.msg.metadata.get("sources", [])
+            if isinstance(raw_s, list):
+                meta_sources = [str(s).lower() for s in raw_s]
+
+        has_rf = ("rf" in src_driver or "radio" in src_driver or "rf" in meta_sources or (not self.msg.is_outgoing and not src_driver))
+        has_mqtt = ("mqtt" in src_driver or "mqtt" in meta_sources)
+
+        if not self.msg.is_outgoing:
+            if has_rf:
+                rf_badge = QLabel("RF")
+                rf_badge.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+                rf_badge.setStyleSheet(
+                    "background: rgba(2, 132, 199, 0.22); color: #38BDF8; border: 1px solid #0284C7; "
+                    "border-radius: 3px; padding: 1px 4px; font-size: 9px; font-weight: bold;"
+                )
+                header.addWidget(rf_badge)
+            if has_mqtt:
+                mqtt_badge = QLabel("MQTT")
+                mqtt_badge.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+                mqtt_badge.setStyleSheet(
+                    "background: rgba(217, 119, 6, 0.22); color: #FBBF24; border: 1px solid #D97706; "
+                    "border-radius: 3px; padding: 1px 4px; font-size: 9px; font-weight: bold;"
+                )
+                header.addWidget(mqtt_badge)
+
         header.addStretch()
 
         # Repeats heard indicator for outgoing messages

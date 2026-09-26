@@ -42,6 +42,7 @@ class MeshCoreDriver(BaseRadioDriver):
         self._cmd_lock: Optional[asyncio.Lock] = None
         self.hardware_contacts_count: int = 0
         self._is_pruning_hardware: bool = False
+        bus.subscribe(EventType.CONTACT_DELETED, self._on_contact_deleted)
 
     def _get_cmd_lock(self) -> asyncio.Lock:
         if not hasattr(self, "_cmd_lock") or self._cmd_lock is None:
@@ -1203,6 +1204,14 @@ class MeshCoreDriver(BaseRadioDriver):
 
                 raw_alias = str(c.get("adv_name") or "").strip()
                 alias = raw_alias if is_valid_alias(raw_alias) else pubkey[:8]
+
+                # Check if this contact has been deleted/tombstoned by user
+                if self.storage and hasattr(self.storage, "is_contact_deleted"):
+                    if self.storage.is_contact_deleted(pubkey[:12]) or self.storage.is_contact_deleted(pubkey):
+                        logger.debug(f"Skipping contact {pubkey[:12]} ({alias}) as it was deleted by user.")
+                        self._dispatch_task(self._async_remove_hardware_contact(pubkey))
+                        continue
+
                 existing = self.storage.get_contact(pubkey[:12]) if self.storage else None
                 if not is_valid_alias(raw_alias) and existing and is_valid_alias(existing.alias):
                     alias = existing.alias
@@ -1248,6 +1257,12 @@ class MeshCoreDriver(BaseRadioDriver):
                     lat = float(lat_raw)
                     lon = float(lon_raw)
 
+                # Reject inverted longitude North Sea coords (e.g. ac98 entered with +6.2 instead of -6.2)
+                if lat is not None and lon is not None:
+                    if (52.0 <= lat <= 58.0 and 3.5 <= lon <= 8.5) and ("ac98" in alias.lower() or pubkey.startswith("180967b7bd8c")):
+                        logger.warning(f"Rejecting inverted longitude North Sea coordinates ({lat}, {lon}) for {alias} ({pubkey[:12]})")
+                        lat, lon = None, None
+
                 # Protect existing valid coordinates from corrupted flash dumps
                 if existing and existing.latitude is not None and existing.longitude is not None:
                     if not is_valid_alias(raw_alias):
@@ -1275,7 +1290,8 @@ class MeshCoreDriver(BaseRadioDriver):
                     longitude=lon,
                     out_path_len=out_path_len,
                     out_path_hash_mode=out_path_hash_mode,
-                    out_path=out_path
+                    out_path=out_path,
+                    source=existing.source if (existing and existing.source) else "radio"
                 )
                 contacts_list.append(contact)
 
@@ -1376,7 +1392,8 @@ class MeshCoreDriver(BaseRadioDriver):
                 longitude=lon,
                 out_path_len=out_path_len,
                 out_path_hash_mode=out_path_hash_mode,
-                out_path=out_path
+                out_path=out_path,
+                source=c_exist.source if (c_exist and c_exist.source) else "radio"
             )
             if self.storage:
                 self.storage.save_contact(contact)
@@ -3152,3 +3169,54 @@ class MeshCoreDriver(BaseRadioDriver):
         """Dispatches an asynchronous hardware contact prune task safely."""
         self._dispatch_task(self.prune_hardware_contacts(target_free_slots))
         return True
+
+    def _on_contact_deleted(self, node_id: Any):
+        """Called when a contact is deleted by the user via UI or storage.
+        Removes the contact from the physical radio hardware flash memory.
+        """
+        if not node_id:
+            return
+        clean_id = str(node_id).strip().lstrip("!@").lower()
+        self._dispatch_task(self._async_remove_hardware_contact(clean_id))
+
+    async def _async_remove_hardware_contact(self, node_id_prefix_or_pk: str):
+        """Finds full public key on radio hardware and deletes the contact from MCU flash."""
+        if not self.client or not self.is_connected():
+            return
+        target = (node_id_prefix_or_pk or "").strip().lower()
+        if not target:
+            return
+        try:
+            full_pk = None
+            if len(target) == 64:
+                full_pk = target
+            else:
+                async with self._get_cmd_lock():
+                    contacts_res = await self.client.commands.get_contacts(timeout=3.0)
+                if contacts_res and contacts_res.type != McEventType.ERROR:
+                    raw = self._extract_payload(contacts_res)
+                    for pk in raw.keys():
+                        pk_str = str(pk).strip().lower()
+                        if pk_str == target or pk_str.startswith(target) or target in pk_str:
+                            full_pk = pk_str
+                            break
+
+            if not full_pk:
+                logger.debug(f"Hardware remove_contact: node {target} not found in radio flash.")
+                return
+
+            async with self._get_cmd_lock():
+                res = await self.client.commands.remove_contact(full_pk)
+            if res and res.type != McEventType.ERROR:
+                logger.info(f"Successfully pruned contact {target} ({full_pk[:12]}) from radio flash memory.")
+                self.hardware_contacts_count = max(0, self.hardware_contacts_count - 1)
+                bus.emit(EventType.HARDWARE_CONTACTS_UPDATED, {
+                    "count": self.hardware_contacts_count,
+                    "limit": getattr(self, "HARDWARE_CONTACT_LIMIT", 125),
+                    "pruned": 1
+                })
+            else:
+                logger.debug(f"Hardware remove_contact response for {target}: {getattr(res, 'type', None)}")
+        except Exception as e:
+            logger.warning(f"Failed removing contact {target} from radio hardware: {e}")
+

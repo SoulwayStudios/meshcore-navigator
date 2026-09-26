@@ -60,6 +60,10 @@ class MeshcoreConfig:
     adsb_radius_nm: int = 50
     adsb_target_node_id: str = ""
     adsb_target_alias: str = ""
+    adsb_filter_categories: List[str] = field(default_factory=lambda: ["airliner", "light", "military", "helicopter", "glider", "general"])
+    adsb_alert_enabled: bool = True
+    adsb_alert_categories: List[str] = field(default_factory=lambda: ["military"])
+    adsb_alert_radius_mi: float = 10.0
     path_hash_mode: int = 1  # 0 = 1-Byte Path, 1 = 2-Byte Multibyte Path, 2 = 3-Byte Multibyte Path
     autoadd_contacts: bool = True
     advert_loc_policy: int = 0  # 0 = Precise GPS, 1 = Approximate, 2 = Private / None
@@ -203,18 +207,20 @@ class SatelliteConfig:
 
 @dataclass
 class MqttConfig:
-    enabled: bool = False
-    broker_host: str = "localhost"
-    broker_port: int = 1883
-    username: str = ""
-    password: str = ""
-    use_tls: bool = False
+    enabled: bool = True
+    broker_host: str = "mqtt.ukmesh.com"
+    broker_port: int = 443
+    username: str = "soulway"
+    password: str = "ZM3d2A94ZBu5btbK"
+    use_tls: bool = True
+    transport: str = "websockets"  # "tcp" or "websockets"
+    ws_path: str = "/mqtt"
     client_id: str = ""
-    subscribe_topics: List[str] = field(default_factory=lambda: ["meshcore/#", "meshcore/uk/#", "meshcoretomqtt/#"])
+    subscribe_topics: List[str] = field(default_factory=lambda: ["public/+/+/packets", "public/#"])
     publish_enabled: bool = False
     publish_topic: str = "meshcore/packets"
     dedup_window_secs: float = 5.0
-    preset_name: str = ""
+    preset_name: str = "🇬🇧 UKMesh Network"
 
 
 @dataclass
@@ -400,6 +406,10 @@ class AppConfig:
             config.satellites = SatelliteConfig(**{k: v for k, v in data["satellites"].items() if k in SatelliteConfig.__dataclass_fields__})
         if "mqtt" in data:
             config.mqtt = MqttConfig(**{k: v for k, v in data["mqtt"].items() if k in MqttConfig.__dataclass_fields__})
+            if "ukmesh.com" in config.mqtt.broker_host.lower():
+                # Ensure UKMesh uses public/ topic tree
+                if not any("public/" in t for t in config.mqtt.subscribe_topics):
+                    config.mqtt.subscribe_topics = ["public/+/+/packets", "public/#"]
 
         if "favorite_channels" in data:
             config.favorite_channels = list(data["favorite_channels"])

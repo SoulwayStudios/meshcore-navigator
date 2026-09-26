@@ -131,6 +131,84 @@ class Storage:
                     cursor.execute("UPDATE contacts SET first_seen = '2024-01-01T00:00:00+00:00' WHERE (first_seen IS NULL OR first_seen = '')")
                 except Exception:
                     pass
+            if "source" not in contact_cols:
+                cursor.execute("ALTER TABLE contacts ADD COLUMN source TEXT DEFAULT 'radio'")
+            # One-time fix: repair MQTT-discovered contacts incorrectly marked as 'radio' by schema default
+            try:
+                cursor.execute("""
+                    UPDATE contacts
+                    SET source = 'mqtt'
+                    WHERE source != 'mqtt'
+                      AND (
+                          node_id IN (
+                              SELECT substr(sender_id, 1, 12) FROM packet_paths 
+                              WHERE source = 'mqtt' OR packet_id LIKE 'mqtt-%'
+                          )
+                          OR node_id IN (
+                              SELECT lower(substr(sender_id, 1, 12)) FROM packet_paths 
+                              WHERE source = 'mqtt' OR packet_id LIKE 'mqtt-%'
+                          )
+                          OR alias IN (
+                              SELECT sender_name FROM packet_paths 
+                              WHERE (source = 'mqtt' OR packet_id LIKE 'mqtt-%') 
+                                AND sender_name IS NOT NULL AND sender_name != ''
+                          )
+                          OR public_key IN (
+                              SELECT sender_id FROM packet_paths 
+                              WHERE source = 'mqtt' OR packet_id LIKE 'mqtt-%'
+                          )
+                          OR public_key IN (
+                              SELECT lower(sender_id) FROM packet_paths 
+                              WHERE source = 'mqtt' OR packet_id LIKE 'mqtt-%'
+                          )
+                      )
+                      AND node_id NOT IN (
+                          SELECT substr(sender_id, 1, 12) FROM packet_paths 
+                          WHERE source = 'radio' AND packet_id NOT LIKE 'mqtt-%'
+                      )
+                """)
+            except Exception as e:
+                logger.debug(f"MQTT contacts source repair skipped: {e}")
+            # One-time fix: repair 10x-shifted coordinates for UK nodes corrupted by 1e7 divisor
+            try:
+                cursor.execute("""
+                    UPDATE contacts
+                    SET latitude = ROUND(latitude * 10.0, 6),
+                        longitude = ROUND(longitude * 10.0, 6)
+                    WHERE latitude >= 4.0 AND latitude <= 8.0
+                      AND longitude >= -2.0 AND longitude <= 2.0
+                """)
+            except Exception as e:
+                logger.debug(f"Coordinate scale repair skipped: {e}")
+
+            # Deleted Contacts table (tombstones to prevent resurrection of user-deleted nodes from radio hardware)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS deleted_contacts (
+                    node_id TEXT PRIMARY KEY,
+                    deleted_at TEXT
+                )
+            """)
+
+            # Purge corrupt North Sea duplicate of ac98 RPTR (54.4, 6.2)
+            try:
+                cursor.execute("""
+                    DELETE FROM contacts 
+                    WHERE (lower(node_id) = '180967b7bd8c' OR (alias LIKE '%ac98%' AND longitude > 3.0))
+                """)
+                cursor.execute("""
+                    DELETE FROM neighbours 
+                    WHERE (lower(node_id) = '180967b7bd8c' OR (alias LIKE '%ac98%' AND longitude > 3.0))
+                """)
+                cursor.execute("""
+                    DELETE FROM docked_companions 
+                    WHERE (lower(node_id) = '180967b7bd8c' OR lower(repeater_id) = '180967b7bd8c')
+                """)
+                cursor.execute("""
+                    INSERT OR IGNORE INTO deleted_contacts (node_id, deleted_at)
+                    VALUES ('180967b7bd8c', '2026-09-20T16:00:00+00:00')
+                """)
+            except Exception as e:
+                logger.debug(f"Purge corrupt North Sea node skipped: {e}")
 
             # Channels table
             cursor.execute("""
@@ -870,32 +948,64 @@ class Storage:
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
-            # Precedence rule: Physical RF Radio messages supersede MQTT network messages
+            # Precedence & Dual-Source Tagging: RF and MQTT messages cross-tag instead of deleting or dropping
             clean_chan = (msg.channel or "").strip()
             clean_text = (msg.text or "").strip()
-            if clean_chan and clean_text:
+            if not msg.is_outgoing and clean_chan and clean_text:
+                cursor.execute("""
+                    SELECT id, metadata_json, source_driver FROM messages
+                    WHERE (channel = ? OR channel = ? OR channel = ?)
+                      AND text = ?
+                      AND is_outgoing = 0
+                      AND timestamp >= datetime('now', '-180 seconds')
+                    LIMIT 1
+                """, (clean_chan, clean_chan.lstrip('#'), f"#{clean_chan.lstrip('#')}", clean_text))
+                existing_msg = cursor.fetchone()
+                if existing_msg:
+                    # Message was already heard from another or same source. Merge sources instead of duplicating.
+                    ex_meta = {}
+                    try:
+                        ex_meta = json.loads(existing_msg["metadata_json"] or "{}")
+                    except Exception:
+                        pass
+                    sources = ex_meta.get("sources", [])
+                    if not sources:
+                        sources = ["mqtt"] if existing_msg["source_driver"] == "mqtt" else ["rf"]
+                    cur_src = "mqtt" if msg.source_driver == "mqtt" else "rf"
+                    if cur_src not in sources:
+                        sources.append(cur_src)
+                    ex_meta["sources"] = sources
+
+                    if msg.metadata:
+                        for k, v in msg.metadata.items():
+                            if k not in ("sources",) and v is not None:
+                                ex_meta[k] = v
+
+                    # If this is an RF message arriving after MQTT, promote to radio message ID & driver
+                    if msg.source_driver != "mqtt" and existing_msg["source_driver"] == "mqtt":
+                        target_id = msg.id
+                        target_driver = msg.source_driver
+                    else:
+                        target_id = existing_msg["id"]
+                        target_driver = existing_msg["source_driver"]
+
+                    cursor.execute("""
+                        UPDATE messages
+                        SET id = ?, source_driver = ?, metadata_json = ?
+                        WHERE id = ?
+                    """, (target_id, target_driver, json.dumps(ex_meta), existing_msg["id"]))
+                    conn.commit()
+                    logger.debug("Cross-tagged message %s with sources %s", target_id, sources)
+                    return
+
+            # Ensure sources list in new message metadata
+            if msg.metadata is None:
+                msg.metadata = {}
+            if "sources" not in msg.metadata:
                 if msg.source_driver == "mqtt":
-                    # Drop incoming MQTT message if radio already heard this exact message recently
-                    cursor.execute("""
-                        SELECT id FROM messages
-                        WHERE (source_driver != 'mqtt' OR source_driver IS NULL)
-                          AND (channel = ? OR channel = ? OR channel = ?)
-                          AND text = ?
-                          AND timestamp >= datetime('now', '-120 seconds')
-                        LIMIT 1
-                    """, (clean_chan, clean_chan.lstrip('#'), f"#{clean_chan.lstrip('#')}", clean_text))
-                    if cursor.fetchone():
-                        logger.debug("Dropped MQTT message '%s' on %s because it was already heard over RF radio", clean_text[:20], clean_chan)
-                        return
-                else:
-                    # Physical radio message: remove any earlier MQTT placeholder for the same text
-                    cursor.execute("""
-                        DELETE FROM messages
-                        WHERE source_driver = 'mqtt'
-                          AND (channel = ? OR channel = ? OR channel = ?)
-                          AND text = ?
-                          AND timestamp >= datetime('now', '-120 seconds')
-                    """, (clean_chan, clean_chan.lstrip('#'), f"#{clean_chan.lstrip('#')}", clean_text))
+                    msg.metadata["sources"] = ["mqtt"]
+                elif not msg.is_outgoing:
+                    msg.metadata["sources"] = ["rf"]
 
             cursor.execute("""
                 INSERT OR REPLACE INTO messages (
@@ -911,11 +1021,25 @@ class Storage:
                 msg.delivery_status, int(msg.is_outgoing), int(msg.is_mention),
                 json.dumps(msg.matched_keywords), getattr(msg, "repeats_heard", 0)
             ))
-            # Touch channel activity
-            if not msg.is_direct_message and msg.channel:
-                cursor.execute("""
-                    UPDATE channels SET last_activity_ts = ? WHERE name = ?
-                """, (msg.timestamp, msg.channel))
+            # Touch or auto-create channel
+            if not msg.is_direct_message and clean_chan:
+                cursor.execute("SELECT channel_id FROM channels WHERE name = ? OR name = ? OR name = ? LIMIT 1",
+                               (clean_chan, clean_chan.lstrip("#"), f"#{clean_chan.lstrip('#')}"))
+                c_row = cursor.fetchone()
+                if c_row:
+                    cursor.execute("""
+                        UPDATE channels SET last_activity_ts = ? WHERE channel_id = ?
+                    """, (msg.timestamp, c_row["channel_id"]))
+                else:
+                    # Auto-create channel so it immediately appears in the channel list (e.g. #thenorf)
+                    cursor.execute("SELECT MAX(channel_id) as max_id FROM channels")
+                    max_r = cursor.fetchone()
+                    next_id = (max_r["max_id"] + 1) if (max_r and max_r["max_id"] is not None) else 1
+                    formatted_name = "Public" if clean_chan.lower().lstrip("#") == "public" else (clean_chan if clean_chan.startswith("#") else f"#{clean_chan}")
+                    cursor.execute("""
+                        INSERT INTO channels (channel_id, name, is_favorite, is_pixoo_enabled, last_activity_ts, unread_count)
+                        VALUES (?, ?, 0, 1, ?, 0)
+                    """, (next_id, formatted_name, msg.timestamp))
 
             # Auto-record contact if incoming message (preserve existing favorite status, GPS coords, default 0)
             if not msg.is_outgoing and msg.sender_name and msg.sender_name not in ("Unknown", "Anonymous"):
@@ -955,6 +1079,44 @@ class Storage:
             )
         except Exception as e:
             logger.debug(f"Scope discovery hook note: {e}")
+
+    def tag_message_source(self, channel: str, text: str, source: str = "mqtt") -> bool:
+        """Tags an existing message with an additional source (e.g. 'rf+mqtt') without creating duplicate rows."""
+        clean_chan = (channel or "").strip()
+        clean_text = (text or "").strip()
+        if not clean_chan or not clean_text:
+            return False
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, metadata_json, source_driver FROM messages
+                WHERE (channel = ? OR channel = ? OR channel = ?)
+                  AND text = ?
+                  AND timestamp >= datetime('now', '-300 seconds')
+                LIMIT 1
+            """, (clean_chan, clean_chan.lstrip('#'), f"#{clean_chan.lstrip('#')}", clean_text))
+            row = cursor.fetchone()
+            if not row:
+                return False
+            ex_meta = {}
+            try:
+                ex_meta = json.loads(row["metadata_json"] or "{}")
+            except Exception:
+                pass
+            sources = ex_meta.get("sources", [])
+            if not sources:
+                sources = ["mqtt"] if row["source_driver"] == "mqtt" else ["rf"]
+            if source not in sources:
+                sources.append(source)
+            ex_meta["sources"] = sources
+            new_driver = "rf+mqtt" if ("rf" in sources and "mqtt" in sources) else (sources[0] if sources else "rf")
+            cursor.execute("""
+                UPDATE messages
+                SET source_driver = ?, metadata_json = ?
+                WHERE id = ?
+            """, (new_driver, json.dumps(ex_meta), row["id"]))
+            conn.commit()
+            return True
 
     def get_messages(self, channel: Optional[str] = None, contact_id: Optional[str] = None, limit: int = 150, include_dms: bool = False) -> List[MessageEnvelope]:
         with self._get_connection() as conn:
@@ -1294,22 +1456,23 @@ class Storage:
                 allowed_reg = []
         return NodeContact(
             node_id=r["node_id"] or (r["alias"] if "alias" in keys else ""),
-            alias=r["alias"] or r["node_id"],
-            is_favorite=bool(r["is_favorite"]),
-            last_seen=r["last_seen"] or "",
-            public_key=r["public_key"] or "",
-            is_repeater=bool(r["is_repeater"]),
-            snr_db=r["snr_db"] or 0.0,
-            rssi_dbm=r["rssi_dbm"] or -100.0,
-            latitude=r["latitude"],
-            longitude=r["longitude"],
+            alias=r["alias"] if ("alias" in keys and r["alias"]) else (r["node_id"] if "node_id" in keys else ""),
+            is_favorite=bool(r["is_favorite"]) if ("is_favorite" in keys and r["is_favorite"] is not None) else False,
+            last_seen=r["last_seen"] if ("last_seen" in keys and r["last_seen"]) else "",
+            public_key=r["public_key"] if ("public_key" in keys and r["public_key"]) else "",
+            is_repeater=bool(r["is_repeater"]) if ("is_repeater" in keys and r["is_repeater"] is not None) else False,
+            snr_db=r["snr_db"] if ("snr_db" in keys and r["snr_db"] is not None) else 0.0,
+            rssi_dbm=r["rssi_dbm"] if ("rssi_dbm" in keys and r["rssi_dbm"] is not None) else -100.0,
+            latitude=r["latitude"] if "latitude" in keys else None,
+            longitude=r["longitude"] if "longitude" in keys else None,
             out_path_len=r["out_path_len"] if ("out_path_len" in keys and r["out_path_len"] is not None) else -1,
             out_path_hash_mode=r["out_path_hash_mode"] if ("out_path_hash_mode" in keys and r["out_path_hash_mode"] is not None) else -1,
             out_path=r["out_path"] if ("out_path" in keys and r["out_path"]) else "",
             scope_name=r["scope_name"] if ("scope_name" in keys and r["scope_name"]) else "",
             allowed_regions=allowed_reg,
             is_room_server=bool(r["is_room_server"]) if ("is_room_server" in keys and r["is_room_server"] is not None) else False,
-            first_seen=r["first_seen"] if ("first_seen" in keys and r["first_seen"]) else ""
+            first_seen=r["first_seen"] if ("first_seen" in keys and r["first_seen"]) else "",
+            source=r["source"] if ("source" in keys and r["source"]) else "radio"
         )
 
     def mark_all_contacts_as_known(self) -> int:
@@ -1338,10 +1501,19 @@ class Storage:
         if not is_valid_node_id(nid) and not is_valid_node_id(pk):
             return
 
+        # Do not resurrect user-deleted contacts
+        if self.is_contact_deleted(nid) or (pk and self.is_contact_deleted(pk[:12])):
+            return
+
         lat = contact.latitude
         lon = contact.longitude
         if not is_valid_coordinate(lat, lon):
             lat, lon = None, None
+
+        # Sanitize inverted-longitude North Sea coords (e.g. ac98 entered with +6.2 instead of -6.2)
+        if lat is not None and lon is not None:
+            if (52.0 <= lat <= 58.0 and 3.5 <= lon <= 8.5) and ("ac98" in (contact.alias or "").lower() or nid.lower() == "180967b7bd8c" or pk.startswith("180967b7bd8c")):
+                lat, lon = None, None
 
         last_seen = contact.last_seen or ""
         if last_seen:
@@ -1407,12 +1579,13 @@ class Storage:
             first_seen = getattr(contact, "first_seen", "") or ""
             if not first_seen:
                 first_seen = datetime.now(timezone.utc).isoformat()
+            c_source = getattr(contact, "source", "radio") or "radio"
 
             cursor.execute("""
                 INSERT INTO contacts (
                     node_id, alias, is_favorite, last_seen, public_key, is_repeater, snr_db, rssi_dbm, latitude, longitude,
-                    out_path_len, out_path_hash_mode, out_path, scope_name, allowed_regions, is_room_server, first_seen
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    out_path_len, out_path_hash_mode, out_path, scope_name, allowed_regions, is_room_server, first_seen, source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(node_id) DO UPDATE SET
                     alias = CASE WHEN excluded.alias != '' THEN excluded.alias ELSE contacts.alias END,
                     is_favorite = CASE WHEN excluded.is_favorite != 0 THEN excluded.is_favorite ELSE contacts.is_favorite END,
@@ -1429,7 +1602,8 @@ class Storage:
                     out_path = CASE WHEN excluded.out_path != '' THEN excluded.out_path ELSE contacts.out_path END,
                     scope_name = CASE WHEN excluded.scope_name != '' THEN excluded.scope_name ELSE contacts.scope_name END,
                     allowed_regions = CASE WHEN excluded.allowed_regions != '[]' AND excluded.allowed_regions != '' THEN excluded.allowed_regions ELSE contacts.allowed_regions END,
-                    first_seen = CASE WHEN contacts.first_seen IS NOT NULL AND contacts.first_seen != '' THEN contacts.first_seen ELSE excluded.first_seen END
+                    first_seen = CASE WHEN contacts.first_seen IS NOT NULL AND contacts.first_seen != '' THEN contacts.first_seen ELSE excluded.first_seen END,
+                    source = CASE WHEN excluded.source = 'mqtt' THEN 'mqtt' WHEN contacts.source = 'mqtt' AND excluded.source = 'radio' THEN 'mqtt' ELSE excluded.source END
             """, (
                 nid, alias, int(contact.is_favorite), last_seen,
                 pk,
@@ -1442,6 +1616,7 @@ class Storage:
                 al_reg_json,
                 is_room_flag,
                 first_seen,
+                c_source,
                 1 if update_role else 0,
                 1 if update_role else 0
             ))
@@ -1463,6 +1638,9 @@ class Storage:
             cursor.execute("SELECT lower(node_id) FROM room_credentials")
             cred_ids = {r[0].lstrip("!@") for r in cursor.fetchall() if r[0]}
 
+            cursor.execute("SELECT lower(node_id) FROM deleted_contacts")
+            deleted_set = {r[0].lstrip("!@") for r in cursor.fetchall() if r[0]}
+
             rows = []
             for c in contacts:
                 raw_id = (c.node_id or "").strip()
@@ -1471,6 +1649,11 @@ class Storage:
                     continue
                 if not raw_id and pk:
                     raw_id = pk[:12]
+
+                # Do not resurrect user-deleted contacts from radio hardware sync
+                clean_raw = raw_id.lower().lstrip("!@")
+                if clean_raw in deleted_set or (pk and pk[:12] in deleted_set):
+                    continue
 
                 target_id = raw_id
                 target_alias = c.alias
@@ -1494,6 +1677,11 @@ class Storage:
                 c_lon = c.longitude
                 if not is_valid_coordinate(c_lat, c_lon):
                     c_lat, c_lon = None, None
+
+                # Sanitize inverted-longitude North Sea coords (e.g. ac98 entered with +6.2 instead of -6.2)
+                if c_lat is not None and c_lon is not None:
+                    if (52.0 <= c_lat <= 58.0 and 3.5 <= c_lon <= 8.5) and ("ac98" in (target_alias or "").lower() or raw_id.lower() == "180967b7bd8c" or pk.startswith("180967b7bd8c")):
+                        c_lat, c_lon = None, None
 
                 # Protect existing known UK/Ireland coordinates from far-away corruption
                 if ex_lat is not None and ex_lon is not None and (-12.0 <= ex_lon <= 3.0 and 49.0 <= ex_lat <= 62.0):
@@ -1523,6 +1711,7 @@ class Storage:
                 c_first_seen = getattr(c, "first_seen", "") or ""
                 if not c_first_seen:
                     c_first_seen = c_last_seen or datetime.now(timezone.utc).isoformat()
+                c_source = getattr(c, "source", "radio") or "radio"
 
                 rows.append((
                     target_id, target_alias, int(c.is_favorite), c_last_seen,
@@ -1534,14 +1723,15 @@ class Storage:
                     sc_name,
                     al_reg_json,
                     is_room_flag,
-                    c_first_seen
+                    c_first_seen,
+                    c_source
                 ))
 
             cursor.executemany("""
                 INSERT INTO contacts (
                     node_id, alias, is_favorite, last_seen, public_key, is_repeater, snr_db, rssi_dbm, latitude, longitude,
-                    out_path_len, out_path_hash_mode, out_path, scope_name, allowed_regions, is_room_server, first_seen
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    out_path_len, out_path_hash_mode, out_path, scope_name, allowed_regions, is_room_server, first_seen, source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(node_id) DO UPDATE SET
                     alias = CASE WHEN excluded.alias != '' THEN excluded.alias ELSE contacts.alias END,
                     is_favorite = CASE WHEN excluded.is_favorite != 0 THEN excluded.is_favorite ELSE contacts.is_favorite END,
@@ -1558,7 +1748,8 @@ class Storage:
                     out_path = CASE WHEN excluded.out_path != '' THEN excluded.out_path ELSE contacts.out_path END,
                     scope_name = CASE WHEN excluded.scope_name != '' THEN excluded.scope_name ELSE contacts.scope_name END,
                     allowed_regions = CASE WHEN excluded.allowed_regions != '[]' AND excluded.allowed_regions != '' THEN excluded.allowed_regions ELSE contacts.allowed_regions END,
-                    first_seen = CASE WHEN contacts.first_seen IS NOT NULL AND contacts.first_seen != '' THEN contacts.first_seen ELSE excluded.first_seen END
+                    first_seen = CASE WHEN contacts.first_seen IS NOT NULL AND contacts.first_seen != '' THEN contacts.first_seen ELSE excluded.first_seen END,
+                    source = CASE WHEN contacts.source = 'mqtt' THEN 'mqtt' WHEN excluded.source = 'mqtt' THEN 'mqtt' ELSE excluded.source END
             """, rows)
             conn.commit()
         if hasattr(self, "_contact_by_key_cache"):
@@ -1604,14 +1795,14 @@ class Storage:
         if channel:
             c_clean = channel.strip().lstrip("#").lower()
             if c_clean not in ("public", "general", "test", "ops", "telemetry", "emergency", "all"):
-                if re.match(r'^(gb-[a-z0-9]+|sco-[a-z0-9]+|[a-z]{3,15})$', c_clean):
+                if re.match(r'^(gb-[a-z0-9]+|sco-[a-z0-9]+|eng-[a-z0-9]+|[a-z]{3,15})$', c_clean):
                     candidates.add(c_clean)
 
         # 2. From message text hashtags: e.g. #scope:gb-mid, #gb-mid, #scope:wales, [scope:xyz]
         if text:
             for m in re.finditer(r'(?:#scope:|\[scope:)([a-zA-Z0-9_-]+)\]?', text, re.IGNORECASE):
                 candidates.add(m.group(1).lower())
-            for m in re.finditer(r'#(gb-[a-zA-Z0-9]+|sco-[a-zA-Z0-9]+)', text, re.IGNORECASE):
+            for m in re.finditer(r'#(gb-[a-zA-Z0-9]+|sco-[a-zA-Z0-9]+|eng-[a-zA-Z0-9]+)', text, re.IGNORECASE):
                 candidates.add(m.group(1).lower())
 
         if not candidates:
@@ -1732,6 +1923,14 @@ class Storage:
                 "description": "Northern England regional backbone (Cumbria, Yorkshire, North East)",
                 "center": [54.30, -1.80],
             },
+            "eng-ne": {
+                "id": "eng-ne",
+                "name": "eng-ne",
+                "display_name": "North East England (#eng-ne)",
+                "color": "#FF6D00",  # Neon Deep Amber / Coral
+                "description": "North East England (Newcastle, Sunderland, Durham, Teesside, Northumberland)",
+                "center": [54.97, -1.61],
+            },
             "sco": {
                 "id": "sco",
                 "name": "sco",
@@ -1824,9 +2023,16 @@ class Storage:
                     assigned_scope = "cax"
                 elif re.search(r'\b(CUMBRIA|M7NCY|KESWICK|WORKINGTON|PENRITH|KENDAL|WHITEHAVEN|AMBLESIDE|WINDERMERE|BARROW)\b', alias_u) or alias_u.startswith("CUM-"):
                     assigned_scope = "gb-cum"
-                elif re.search(r'\b(NWK|M7FWD|LANCASTER|PRESTON|MANCHESTER|LIVERPOOL|BLACKPOOL|WHITTLE|CHESHIRE|WARRINGTON|BOLTON|WIGAN)\b', alias_u) or alias_u.startswith("NWK-"):
+                elif re.search(r'\b(NWK|M7FWD|LANCASTER|PRESTON|MANCHESTER|LIVERPOOL|BLACKPOOL|WHITTLE|CHESHIRE|WARRINGTON|BOLTON|WIGAN|STOKE|NEWCASTLE[- ]?UNDER[- ]?LYME)\b', alias_u) or alias_u.startswith("NWK-"):
                     assigned_scope = "gb-nwk"
-                elif re.search(r'\b(GB-NTH|YORKSHIRE|LEEDS|SHEFFIELD|NEWCASTLE|DURHAM)\b', alias_u) or alias_u.startswith("NTH-"):
+                elif (
+                    re.search(r'\b(ENG-NE|SUNDERLAND|DURHAM|TEESSIDE|MIDDLESBROUGH|NORTHUMBERLAND|GATESHEAD|TYNE|TYNESIDE|DARLINGTON|HARTLEPOOL)\b', alias_u)
+                    or ("NEWCASTLE" in alias_u and not re.search(r'\b(UNDER[- ]?LYME|ST5|STAFFS|STAFFORDSHIRE)\b', alias_u) and lat >= 54.3)
+                    or alias_u.startswith("NE-")
+                    or alias_u.startswith("ENG-NE")
+                ) and (lat >= 54.2):
+                    assigned_scope = "eng-ne"
+                elif re.search(r'\b(GB-NTH|YORKSHIRE|LEEDS|SHEFFIELD)\b', alias_u) or alias_u.startswith("NTH-"):
                     assigned_scope = "gb-nth"
 
             # 3. Geographic bounding box fallback
@@ -1843,6 +2049,8 @@ class Storage:
                     assigned_scope = "gb-cum"
                 elif 53.0 <= lat < 54.10 and -3.30 <= lon <= -2.00:
                     assigned_scope = "gb-nwk"
+                elif 54.45 <= lat <= 55.85 and -2.25 <= lon <= -0.80:
+                    assigned_scope = "eng-ne"
                 elif 53.5 <= lat <= 54.8 and -2.00 < lon <= -0.50:
                     assigned_scope = "gb-nth"
 
@@ -2451,21 +2659,24 @@ class Storage:
         if not hop_prefix:
             return None
         clean_prefix = hop_prefix.lstrip("!@").strip().lower()
-        with self._get_connection() as conn:
-            cur = conn.cursor()
-            # 1. Exact match on clean_prefix
-            cur.execute("SELECT node_id FROM hop_route_preferences WHERE lower(hop_prefix) = ?", (clean_prefix,))
-            r = cur.fetchone()
-            if r and r["node_id"]:
-                return r["node_id"]
-            # 2. Check if clean_prefix starts with or matches any saved prefix
-            cur.execute("SELECT hop_prefix, node_id FROM hop_route_preferences")
-            all_rows = cur.fetchall()
-            for row in all_rows:
-                h_pref = row["hop_prefix"].lower()
-                n_id = row["node_id"].lstrip("!").lower()
-                if (clean_prefix.startswith(h_pref) or h_pref.startswith(clean_prefix)) and n_id.startswith(clean_prefix):
-                    return row["node_id"]
+        try:
+            with self._get_connection() as conn:
+                cur = conn.cursor()
+                # 1. Exact match on clean_prefix
+                cur.execute("SELECT node_id FROM hop_route_preferences WHERE lower(hop_prefix) = ?", (clean_prefix,))
+                r = cur.fetchone()
+                if r and r["node_id"]:
+                    return r["node_id"]
+                # 2. Check if clean_prefix starts with or matches any saved prefix
+                cur.execute("SELECT hop_prefix, node_id FROM hop_route_preferences")
+                all_rows = cur.fetchall()
+                for row in all_rows:
+                    h_pref = row["hop_prefix"].lower()
+                    n_id = row["node_id"].lstrip("!").lower()
+                    if (clean_prefix.startswith(h_pref) or h_pref.startswith(clean_prefix)) and n_id.startswith(clean_prefix):
+                        return row["node_id"]
+                return None
+        except sqlite3.OperationalError:
             return None
 
     def get_all_hop_preferences(self) -> List[Dict[str, Any]]:
@@ -3249,14 +3460,38 @@ class Storage:
         self.mark_as_read("floods", packet_id or "flood", ts)
         self.set_app_state("last_read_flood_ts", ts)
 
+    def is_contact_deleted(self, node_id: str) -> bool:
+        """Returns True if the node has been deleted/tombstoned by the user."""
+        if not node_id:
+            return False
+        clean_id = node_id.strip().lstrip("!@").lower()
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT 1 FROM deleted_contacts WHERE lower(node_id) = ? OR lower(node_id) = ? LIMIT 1",
+                    (node_id.lower(), clean_id)
+                )
+                return cursor.fetchone() is not None
+        except Exception:
+            return False
+
     def delete_contact(self, node_id: str):
-        """Deletes a contact and its associated records from SQLite."""
+        """Deletes a contact and its associated records from SQLite and records a tombstone."""
         if not node_id:
             return
         raw_id = (node_id or "").strip()
         clean_id = raw_id.lstrip("!@").strip()
+        now_iso = datetime.now(timezone.utc).isoformat()
         with self._get_connection() as conn:
             cursor = conn.cursor()
+            try:
+                cursor.execute("""
+                    INSERT OR IGNORE INTO deleted_contacts (node_id, deleted_at)
+                    VALUES (?, ?)
+                """, (clean_id.lower(), now_iso))
+            except Exception:
+                pass
             cursor.execute("""
                 DELETE FROM contacts
                 WHERE node_id = ? COLLATE NOCASE

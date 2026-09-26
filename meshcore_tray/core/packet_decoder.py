@@ -300,8 +300,10 @@ def decode_advert_payload(buf: bytes) -> DecodedPayload:
         offset = 1
         if flags.has_location and len(appdata) >= offset + 8:
             lat_i, lon_i = struct.unpack("<ii", appdata[offset:offset + 8])
-            adv.lat = round(lat_i / 10000000.0, 6)
-            adv.lon = round(lon_i / 10000000.0, 6)
+            # MeshCore encodes coordinates in microdegrees (1e6, 6 decimal places) or 1e7
+            scale = 10000000.0 if (abs(lat_i) > 90000000 or abs(lon_i) > 180000000) else 1000000.0
+            adv.lat = round(lat_i / scale, 6)
+            adv.lon = round(lon_i / scale, 6)
             offset += 8
 
         if flags.has_feat1 and len(appdata) >= offset + 2:

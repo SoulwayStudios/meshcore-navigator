@@ -76,8 +76,14 @@ def _load_vendor_js(filename: str) -> str:
 def get_leaflet_html() -> str:
     global _CACHED_LEAFLET_HTML
     if _CACHED_LEAFLET_HTML is None:
-        vendor_css = f"<style>\n{_load_vendor_asset('leaflet.css')}\n</style>\n"
+        vendor_css = (
+            f"<style>\n{_load_vendor_asset('leaflet.css')}\n</style>\n"
+            f"<style>\n{_load_vendor_asset('maplibre-gl.css')}\n</style>\n"
+        )
+        clean_dem_b64 = _load_vendor_asset("dem_7_62_40_clean.b64").strip()
+        clean_dem_script = f"<script>window._cleanDem76240 = 'data:image/png;base64,{clean_dem_b64}';</script>\n" if clean_dem_b64 else ""
         vendor_js = (
+            f"{clean_dem_script}"
             f"<script>{_load_vendor_asset('leaflet.js')}</script>\n"
             f"<script>{_load_vendor_asset('d3.v4.min.js')}</script>\n"
             f"<script>{_load_vendor_asset('d3-contour.min.js')}</script>\n"
@@ -99,7 +105,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
     <!-- __VENDOR_SCRIPTS__ -->
     <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
     <style>
-        html, body, #map {
+        html, body, #map, #map-3d {
             width: 100%;
             height: 100%;
             margin: 0;
@@ -107,6 +113,22 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             background-color: #12151a;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             color: #c9d1d9;
+        }
+        #map-3d {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #0d1117;
+            display: none;
+            z-index: 10;
+        }
+        .maplibregl-canvas {
+            outline: none;
+        }
+        .btn-3d-preset:hover {
+            filter: brightness(1.2);
         }
         .leaflet-container {
             background-color: #12151a;
@@ -569,6 +591,19 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             animation-play-state: paused !important;
         }
 
+        .orbital-host-container {
+            width: 120px !important;
+            height: 120px !important;
+            pointer-events: none !important;
+        }
+
+        .orbital-host-inner {
+            width: 120px;
+            height: 120px;
+            position: relative;
+            pointer-events: none;
+        }
+
         .orbital-tactical-tooltip {
             position: fixed;
             z-index: 10000;
@@ -633,6 +668,14 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             background: #000000 !important;
             border: 1.5px solid #4B5563 !important;
             box-shadow: 0 0 6px rgba(0, 0, 0, 0.9) !important;
+        }
+
+        /* MQTT Discovered nodes: orange pinpoint with vibrant orange glow */
+        .node-dot-mqtt {
+            background: #F97316 !important;
+            background-color: #F97316 !important;
+            border: 1.5px solid #FFFFFF !important;
+            box-shadow: 0 0 14px rgba(249, 115, 22, 0.95), 0 0 4px #FFFFFF !important;
         }
 
         /* Hover animations when mouse enters the 20px hitbox */
@@ -795,6 +838,16 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             color: #E5E7EB !important;
             margin: 10px 14px !important;
             line-height: 1.4 !important;
+            min-width: 250px !important;
+            max-width: 320px !important;
+            width: 270px !important;
+            box-sizing: border-box !important;
+        }
+        .custom-popup {
+            min-width: 250px !important;
+        }
+        .custom-popup .leaflet-popup-content-wrapper {
+            min-width: 250px !important;
         }
         .leaflet-container a.leaflet-popup-close-button {
             color: #9CA3AF !important;
@@ -802,6 +855,68 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
         }
         .leaflet-container a.leaflet-popup-close-button:hover {
             color: #FFFFFF !important;
+        }
+        /* MapLibre GL 3D dark popups and tooltips */
+        .maplibregl-popup-content,
+        .custom-popup .maplibregl-popup-content {
+            background-color: #222327 !important;
+            color: #E5E7EB !important;
+            border: 1px solid #414143 !important;
+            border-radius: 8px !important;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.7) !important;
+            padding: 10px 14px !important;
+            line-height: 1.4 !important;
+            min-width: 250px !important;
+            max-width: 320px !important;
+            width: 270px !important;
+            box-sizing: border-box !important;
+        }
+        .maplibregl-popup-tip,
+        .custom-popup .maplibregl-popup-tip {
+            border-top-color: #222327 !important;
+            border-bottom-color: #222327 !important;
+            border-left-color: #222327 !important;
+            border-right-color: #222327 !important;
+        }
+        .maplibregl-popup-close-button {
+            color: #9CA3AF !important;
+            padding: 6px 8px !important;
+            font-size: 16px !important;
+            background: transparent !important;
+            border: none !important;
+            cursor: pointer !important;
+        }
+        .maplibregl-popup-close-button:hover {
+            color: #FFFFFF !important;
+        }
+        /* 3D ADS-B Popup styling (single holding box, topmost z-index) */
+        .maplibregl-popup.adsb-3d-popup {
+            z-index: 2000 !important;
+            pointer-events: auto !important;
+        }
+        .adsb-3d-popup .maplibregl-popup-content {
+            background: rgba(26, 28, 32, 0.96) !important;
+            border: 1px solid #41444C !important;
+            border-radius: 8px !important;
+            color: #FFFFFF !important;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.85) !important;
+            font-size: 10px !important;
+            padding: 10px 12px !important;
+            line-height: 1.35 !important;
+            width: auto !important;
+            min-width: 220px !important;
+            max-width: 340px !important;
+            box-sizing: border-box !important;
+            pointer-events: auto !important;
+        }
+        .adsb-3d-popup .maplibregl-popup-tip {
+            border-top-color: rgba(26, 28, 32, 0.96) !important;
+            border-bottom-color: rgba(26, 28, 32, 0.96) !important;
+            border-left-color: rgba(26, 28, 32, 0.96) !important;
+            border-right-color: rgba(26, 28, 32, 0.96) !important;
+        }
+        .adsb-3d-popup .maplibregl-popup-close-button {
+            display: none !important;
         }
         .popup-title {
             font-weight: bold;
@@ -1301,6 +1416,10 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
         .activity-bar-close:hover {
             color: #FFFFFF;
         }
+        .node-activity-heat-aura {
+            filter: blur(8px);
+            pointer-events: none;
+        }
 
         /* Floating New Nodes Discovery Panel - Discord Grey Theme */
         .new-nodes-panel {
@@ -1424,6 +1543,83 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             background: #35373C;
             border-color: #FFD700;
             color: #FFFFFF;
+        }
+
+        /* Floating MQTT Discovered Nodes Panel - Discord Grey / Orange Accent Theme */
+        .mqtt-nodes-panel {
+            position: absolute;
+            bottom: 24px;
+            left: 12px;
+            z-index: 1000;
+            width: 275px;
+            padding: 8px 10px 8px 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            user-select: none;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            box-sizing: border-box;
+            background: rgba(30, 31, 34, 0.96) !important;
+            backdrop-filter: blur(12px) !important;
+            -webkit-backdrop-filter: blur(12px) !important;
+            border: 1px solid #383A40 !important;
+            border-radius: 8px !important;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.65) !important;
+        }
+        .mqtt-nodes-panel:hover, .mqtt-nodes-panel.active-drag {
+            border-color: #F97316 !important;
+            box-shadow: 0 12px 36px rgba(0, 0, 0, 0.8), 0 0 12px rgba(249, 115, 22, 0.25) !important;
+        }
+        .mqtt-nodes-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid #383A40;
+            padding-bottom: 4px;
+            margin: -2px -2px 2px -2px;
+            flex-shrink: 0;
+            cursor: move;
+        }
+        .mqtt-nodes-title {
+            font-size: 11px;
+            font-weight: 700;
+            color: #FB923C;
+            letter-spacing: 0.5px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            text-transform: uppercase;
+        }
+        .mqtt-nodes-close-btn {
+            background: transparent;
+            border: none;
+            color: #949BA4;
+            font-size: 15px;
+            font-weight: bold;
+            line-height: 1;
+            cursor: pointer;
+            padding: 0 4px;
+            border-radius: 4px;
+            transition: all 0.15s ease;
+        }
+        .mqtt-nodes-close-btn:hover {
+            color: #FFFFFF;
+            background: #ED4245;
+        }
+        .mqtt-nodes-stats-card {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 11px;
+            background: rgba(17, 18, 20, 0.85);
+            padding: 6px 8px;
+            border-radius: 5px;
+            border: 1px solid #2B2D31;
+        }
+        .mqtt-nodes-desc {
+            font-size: 10px;
+            color: #9CA3AF;
+            line-height: 1.3;
         }
 
         /* Floating Thunderstorm & Radar Panel - Portrait Card */
@@ -1823,7 +2019,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             flex-direction: column;
             gap: 6px;
             user-select: none;
-            width: 235px;
+            width: 252px;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         }
         .adsb-mode-bar {
@@ -1997,6 +2193,83 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 opacity: 1;
                 box-shadow: 0 0 8px 2px rgba(239, 68, 68, 0.85);
             }
+        }
+        .adsb-filter-card {
+            background: rgba(26, 28, 32, 0.70);
+            border: 1px solid #383A40;
+            border-radius: 6px;
+            padding: 5px 7px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .adsb-sub-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .adsb-sub-title {
+            font-size: 8.5px;
+            font-weight: 700;
+            color: #9CA3AF;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+        .adsb-sub-actions {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 8.5px;
+        }
+        .adsb-link-btn {
+            color: #38BDF8;
+            text-decoration: none;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        .adsb-link-btn:hover {
+            text-decoration: underline;
+            color: #7DD3FC;
+        }
+        .adsb-checkbox-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 3px 6px;
+        }
+        .adsb-chk-label {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 9px;
+            color: #E2E8F0;
+            cursor: pointer;
+            user-select: none;
+        }
+        .adsb-chk-label input[type="checkbox"] {
+            margin: 0;
+            cursor: pointer;
+            accent-color: #38BDF8;
+            width: 12px;
+            height: 12px;
+        }
+        .adsb-switch-label {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            cursor: pointer;
+            user-select: none;
+        }
+        .adsb-switch-label input[type="checkbox"] {
+            margin: 0;
+            cursor: pointer;
+            accent-color: #10B981;
+            width: 12px;
+            height: 12px;
+        }
+        .adsb-switch-text {
+            font-size: 8.5px;
+            font-weight: 600;
+            color: #34D399;
         }
         .adsb-plane-container {
             position: relative;
@@ -2842,6 +3115,8 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             line-height: 1.2;
             display: inline-flex;
             align-items: center;
+            margin-right: 4px;
+            gap: 2px;
         }
         .feed-text {
             color: #CBD5E1;
@@ -2916,6 +3191,33 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
 </head>
 <body>
     <div id="map"></div>
+    <div id="map-3d" style="display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%;"></div>
+
+    <!-- 3D Map Perspective Controls Overlay -->
+    <div id="map3dControls" class="map-overlay-panel" style="display: none; position: absolute; top: 12px; right: 12px; z-index: 10000; background: rgba(18, 21, 26, 0.92); border: 1px solid #30363d; border-radius: 8px; padding: 10px 14px; box-shadow: 0 8px 24px rgba(0,0,0,0.6); backdrop-filter: blur(8px); min-width: 220px; flex-direction: column;">
+        <div id="map3dControlsHeader" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; cursor: grab; user-select: none;" title="Drag to move panel">
+            <span style="font-weight: 700; font-size: 12px; color: #58a6ff; display: flex; align-items: center; gap: 6px; pointer-events: none;">
+                <span style="opacity: 0.6; font-size: 10px;">⠿</span> <span>🏔️</span> 3D Terrain Perspective
+            </span>
+            <button onclick="close3DMode()" style="background: none; border: none; color: #8b949e; cursor: pointer; font-size: 14px; padding: 2px 6px;">✕</button>
+        </div>
+        <div style="font-size: 10.5px; color: #8b949e; line-height: 1.4; margin-bottom: 8px;">
+            Hold <b>Middle-click</b> to tilt camera & orbit in 3D. <b>Right-click</b> for Node/Map Menu.
+        </div>
+        <div style="display: flex; gap: 6px; margin-bottom: 8px;">
+            <button id="btn-3d-pitch-58" onclick="set3DPitch(58)" class="btn-3d-preset active" style="flex: 1; padding: 4px 6px; font-size: 10px; font-weight: 600; border-radius: 4px; border: 1px solid #00D2FF; background: #0C4A6E; color: #38BDF8; cursor: pointer;">📐 58° Pitch</button>
+            <button id="btn-3d-pitch-0" onclick="set3DPitch(0)" class="btn-3d-preset" style="flex: 1; padding: 4px 6px; font-size: 10px; font-weight: 600; border-radius: 4px; border: 1px solid #30363d; background: #161b22; color: #8b949e; cursor: pointer;">🧭 Top-down</button>
+        </div>
+        <div style="display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: #c9d1d9;">
+            <span>Terrain Relief:</span>
+            <select id="select-3d-exaggeration" onchange="set3DExaggeration(this.value)" style="background: #161b22; border: 1px solid #30363d; color: #58a6ff; font-size: 10px; border-radius: 4px; padding: 2px 6px;">
+                <option value="1.0">1.0x (Real)</option>
+                <option value="2.0">2.0x (Standard)</option>
+                <option value="2.5" selected>2.5x (UKMesh)</option>
+                <option value="3.5">3.5x (Dramatic)</option>
+            </select>
+        </div>
+    </div>
 
     <!-- Floating Live Packet Feed HUD Overlay -->
     <div id="livePacketHud" class="live-overlay live-packet-hud" data-position="bl" style="display: none;">
@@ -2954,6 +3256,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 <li><span class="legend-dot" style="background:#3B82F6"></span> <span class="legend-name">Repeater</span></li>
                 <li><span class="legend-dot" style="background:#06B6D4"></span> <span class="legend-name">Companion</span></li>
                 <li><span class="legend-dot" style="background:#A855F7"></span> <span class="legend-name">Room</span></li>
+                <li><span class="legend-dot" style="background:#F97316"></span> <span class="legend-name">MQTT Ingest</span> <span class="legend-desc">— (In MQTT View)</span></li>
             </ul>
             <div class="legend-section-title" style="margin-top:10px;">HOP VERIFICATION</div>
             <ul class="legend-list">
@@ -2984,6 +3287,46 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             </div>
             <button id="adsb-reset-btn" class="adsb-reset-btn" onclick="if (window.pyBridge && window.pyBridge.on_reset_adsb_target) window.pyBridge.on_reset_adsb_target()" style="display: none;">↺ Reset to Local Node</button>
         </div>
+
+        <!-- Aircraft Type Display Filter Checkboxes -->
+        <div class="adsb-filter-card">
+            <div class="adsb-sub-header">
+                <span class="adsb-sub-title">FILTER TYPES</span>
+                <span class="adsb-sub-actions">
+                    <a href="javascript:void(0)" onclick="setAllAdsbFilters(true)" class="adsb-link-btn">All</a>
+                    <span style="color:#4B5563;">•</span>
+                    <a href="javascript:void(0)" onclick="setAllAdsbFilters(false)" class="adsb-link-btn">None</a>
+                </span>
+            </div>
+            <div class="adsb-checkbox-grid">
+                <label class="adsb-chk-label"><input type="checkbox" id="adsb-flt-airliner" checked onchange="updateAdsbFilters()"> ✈️ Airliner</label>
+                <label class="adsb-chk-label"><input type="checkbox" id="adsb-flt-light" checked onchange="updateAdsbFilters()"> 🛩️ Light</label>
+                <label class="adsb-chk-label"><input type="checkbox" id="adsb-flt-military" checked onchange="updateAdsbFilters()"> ⚔️ Military</label>
+                <label class="adsb-chk-label"><input type="checkbox" id="adsb-flt-helicopter" checked onchange="updateAdsbFilters()"> 🚁 Helicopter</label>
+                <label class="adsb-chk-label"><input type="checkbox" id="adsb-flt-glider" checked onchange="updateAdsbFilters()"> 🪂 Glider</label>
+                <label class="adsb-chk-label"><input type="checkbox" id="adsb-flt-general" checked onchange="updateAdsbFilters()"> ✈️ General</label>
+            </div>
+        </div>
+
+        <!-- Proximity Alert & Auto-Popup (<10 miles) -->
+        <div class="adsb-filter-card adsb-alert-card">
+            <div class="adsb-sub-header">
+                <span class="adsb-sub-title">🔔 PROXIMITY ALERT (&lt;10 MI)</span>
+                <label class="adsb-switch-label" title="Enable automatic popup and desktop notification for nearby watched aircraft">
+                    <input type="checkbox" id="adsb-alert-enabled" checked onchange="updateAdsbAlertConfig()">
+                    <span class="adsb-switch-text">Active</span>
+                </label>
+            </div>
+            <div class="adsb-checkbox-grid">
+                <label class="adsb-chk-label"><input type="checkbox" id="adsb-alert-military" checked onchange="updateAdsbAlertConfig()"> ⚔️ Military</label>
+                <label class="adsb-chk-label"><input type="checkbox" id="adsb-alert-helicopter" onchange="updateAdsbAlertConfig()"> 🚁 Helicopter</label>
+                <label class="adsb-chk-label"><input type="checkbox" id="adsb-alert-light" onchange="updateAdsbAlertConfig()"> 🛩️ Light</label>
+                <label class="adsb-chk-label"><input type="checkbox" id="adsb-alert-airliner" onchange="updateAdsbAlertConfig()"> ✈️ Airliner</label>
+                <label class="adsb-chk-label"><input type="checkbox" id="adsb-alert-glider" onchange="updateAdsbAlertConfig()"> 🪂 Glider</label>
+                <label class="adsb-chk-label"><input type="checkbox" id="adsb-alert-general" onchange="updateAdsbAlertConfig()"> ✈️ General</label>
+            </div>
+        </div>
+
         <div id="adsb-legend-container"></div>
     </div>
     <!-- Floating Satellite Tracker Panel -->
@@ -3212,7 +3555,8 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             <div class="act-leg-item"><span><span class="act-dot" style="background: #EF4444; box-shadow: 0 0 5px #EF4444;"></span><span id="act-lbl-vhigh">> 75% (Peak)</span></span><span id="act-count-vhigh" style="color: #949BA4; font-size: 8.5px;">--</span></div>
             <div class="act-leg-item"><span><span class="act-dot" style="background: #FB923C;"></span><span id="act-lbl-high">50 - 75% (High)</span></span><span id="act-count-high" style="color: #949BA4; font-size: 8.5px;">--</span></div>
             <div class="act-leg-item"><span><span class="act-dot" style="background: #FACC15;"></span><span id="act-lbl-med">25 - 50% (Med)</span></span><span id="act-count-med" style="color: #949BA4; font-size: 8.5px;">--</span></div>
-            <div class="act-leg-item"><span><span class="act-dot" style="background: #10B981;"></span><span id="act-lbl-low">< 25% (Low)</span></span><span id="act-count-low" style="color: #949BA4; font-size: 8.5px;">--</span></div>
+            <div class="act-leg-item"><span><span class="act-dot" style="background: #10B981;"></span><span id="act-lbl-low">10 - 25% (Low)</span></span><span id="act-count-low" style="color: #949BA4; font-size: 8.5px;">--</span></div>
+            <div class="act-leg-item"><span><span class="act-dot" style="background: #00D2FF; box-shadow: 0 0 4px #00D2FF;"></span><span id="act-lbl-min">< 10% (Base)</span></span><span id="act-count-min" style="color: #949BA4; font-size: 8.5px;">--</span></div>
         </div>
     </div>
     <!-- Floating New Nodes Discovery Panel -->
@@ -3232,6 +3576,20 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             <span style="color: #949BA4;">Total Plotted: <span id="nn-total-count" style="color: #F2F3F5; font-weight: 700;">0</span></span>
         </div>
         <button class="new-nodes-action-btn" onclick="markAllNodesKnown()" title="Mark all currently discovered nodes as known and start new discovery from now">✓ Mark All Known (Start From Now)</button>
+    </div>
+    <!-- Floating MQTT Ingest Nodes Panel -->
+    <div id="mqtt-nodes-panel" class="mqtt-nodes-panel map-overlay-panel" style="display: none;">
+        <div class="map-overlay-header mqtt-nodes-header" id="mqtt-nodes-drag-handle">
+            <div class="mqtt-nodes-title"><span class="map-drag-handle-grip">⠿</span>🌐 MQTT DISCOVERED NODES</div>
+            <button class="mqtt-nodes-close-btn" onclick="closeMqttNodes()" title="Close MQTT Nodes View">×</button>
+        </div>
+        <div class="mqtt-nodes-stats-card">
+            <span style="color: #949BA4;">MQTT Ingest: <span id="mqtt-discovered-count" style="font-family: monospace; color: #FB923C; font-weight: 700;">0 nodes</span></span>
+            <span style="color: #949BA4;">Total Plotted: <span id="mqtt-total-count" style="color: #F2F3F5; font-weight: 700;">0</span></span>
+        </div>
+        <div class="mqtt-nodes-desc">
+            Highlighting nodes discovered via MQTT broker feeds in solid orange. RF-only nodes are dimmed.
+        </div>
     </div>
     <!-- Floating Thunderstorm & Radar Panel -->
     <div id="thunderstorm-panel" class="thunderstorm-panel map-overlay-panel" style="display: none;">
@@ -3617,6 +3975,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
         var activityHeatmapActive = false;
         var activityTimeframeHours = 1;
         var activityHeatmapData = {};
+        var activityHeatmapLayerGroup = L.layerGroup().addTo(map);
 
         // Preview Path Layer (for on-hover flood path visualization)
         var previewPathLayer = null;
@@ -3772,6 +4131,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     applyNodeMarkerStyling(m, m._nodeData);
                 }
             }
+            if (window._is3DActive && typeof syncAllNodesTo3D === 'function') {
+                syncAllNodesTo3D();
+            }
         }
 
         function renderScopeOverlays() {
@@ -3872,6 +4234,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     });
                 }
             }
+            if (window._is3DActive && typeof syncScopesTo3D === 'function') {
+                syncScopesTo3D();
+            }
         }
 
         function setScopeOverlaysVisible(visible, scopeData) {
@@ -3886,6 +4251,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             renderScopeOverlays();
             renderScopeFilterPills();
             refreshMarkersForScope();
+            if (window._is3DActive && typeof syncScopesTo3D === 'function') {
+                syncScopesTo3D();
+            }
         }
 
         map.on('zoomend', function() {
@@ -4044,6 +4412,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     applyNodeMarkerStyling(m, m._nodeData);
                 }
             }
+            if (window._is3DActive && typeof syncAllNodesTo3D === 'function') {
+                syncAllNodesTo3D();
+            }
         }
 
         function applyNodeMarkerStyling(marker, node) {
@@ -4064,6 +4435,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
 
             var isLocal = !!node.is_local;
             var isRoom = !!node.is_room_server;
+            var isPhantom = !!node.is_phantom;
             if (isRoom) {
                 marker.setZIndexOffset(12000);
                 if (el) el.style.zIndex = '12000';
@@ -4156,7 +4528,132 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 return;
             }
 
-            // 3. Path Modes
+            // 3. MQTT Discovered Nodes View (Orange Highlight Mode)
+            if (window._mqttNodesActive) {
+                var src = (node.source || '').toLowerCase().trim();
+                var isMqtt = (src === 'mqtt' || !!node.is_mqtt);
+                if (isMqtt && !isLocal && !isPhantom) {
+                    dot.style.opacity = '1.0';
+                    dot.style.setProperty('background', '#F97316', 'important');
+                    dot.style.setProperty('background-color', '#F97316', 'important');
+                    dot.style.setProperty('border', '1.5px solid #FFFFFF', 'important');
+                    dot.style.setProperty('border-color', '#FFFFFF', 'important');
+                    dot.style.setProperty('box-shadow', '0 0 16px rgba(249, 115, 22, 0.95), 0 0 6px #FFFFFF', 'important');
+                    dot.style.transform = (isRoom ? 'rotate(45deg) ' : '') + 'scale(1.4)';
+                    el.style.zIndex = '11000';
+                } else {
+                    dot.style.opacity = '0.18';
+                    dot.style.setProperty('background', '#4E5058', 'important');
+                    dot.style.setProperty('background-color', '#4E5058', 'important');
+                    dot.style.removeProperty('border');
+                    dot.style.removeProperty('border-color');
+                    dot.style.removeProperty('border-width');
+                    dot.style.removeProperty('border-style');
+                    dot.style.setProperty('box-shadow', 'none', 'important');
+                    dot.style.transform = (isRoom ? 'rotate(45deg) ' : '') + 'scale(0.85)';
+                    el.style.zIndex = '';
+                }
+                return;
+            }
+
+            // 4. Node Activity Heatmap (Dedicated traffic analysis mode - takes priority over Path Modes and Scopes)
+            if (activityHeatmapActive && !isLocal) {
+                if (node.is_repeater || node.is_room_server) {
+                    var cleanId = (node.node_id || '').toLowerCase().replace(/^[!@]+/, '');
+                    var cleanAlias = (node.alias || '').toLowerCase().replace(/^[!@]+/, '');
+                    var actMap = activityHeatmapData || {};
+                    var count = (actMap[cleanId] !== undefined) ? actMap[cleanId] : (actMap[cleanAlias] || 0);
+
+                    if (count <= 0) {
+                        dot.style.opacity = '0.20';
+                        dot.style.setProperty('background-color', '#4B5563', 'important');
+                        dot.style.removeProperty('border');
+                        dot.style.removeProperty('border-color');
+                        dot.style.removeProperty('border-width');
+                        dot.style.removeProperty('border-style');
+                        dot.style.setProperty('border', 'none', 'important');
+                        dot.style.setProperty('box-shadow', 'none', 'important');
+                        if (window._actScaling) {
+                            dot.style.transform = (isRoom ? 'rotate(45deg) ' : '') + 'scale(0.70)';
+                        } else if (isRoom) {
+                            dot.style.transform = 'rotate(45deg)';
+                        }
+                        el.style.zIndex = '';
+                    } else {
+                        dot.style.opacity = '1.0';
+                        var actColor, actBorder;
+                        var maxT = window._actMaxTraffic || 1;
+                        var ratio = maxT > 0 ? (count / maxT) : 0;
+
+                        if (window._actRelative) {
+                            if (ratio >= 0.75) {
+                                actColor = '#EF4444'; // Red (Peak)
+                                actBorder = '#DC2626';
+                            } else if (ratio >= 0.50) {
+                                actColor = '#FB923C'; // Orange (High)
+                                actBorder = '#EA580C';
+                            } else if (ratio >= 0.25) {
+                                actColor = '#FACC15'; // Yellow (Medium)
+                                actBorder = '#CA8A04';
+                            } else if (ratio >= 0.10) {
+                                actColor = '#10B981'; // Green (Low-Medium)
+                                actBorder = '#059669';
+                            } else {
+                                actColor = '#00D2FF'; // Blue (Base / Low traffic matching 3D map)
+                                actBorder = '#0284C7';
+                            }
+                        } else {
+                            if (count > 10) {
+                                actColor = '#EF4444'; // Red (Peak)
+                                actBorder = '#DC2626';
+                            } else if (count > 5) {
+                                actColor = '#FB923C'; // Orange (High)
+                                actBorder = '#EA580C';
+                            } else if (count > 2) {
+                                actColor = '#FACC15'; // Yellow (Medium)
+                                actBorder = '#CA8A04';
+                            } else if (count > 1) {
+                                actColor = '#10B981'; // Green (Low-Medium)
+                                actBorder = '#059669';
+                            } else {
+                                actColor = '#00D2FF'; // Blue (1 pkt Low / Base)
+                                actBorder = '#0284C7';
+                            }
+                        }
+                        dot.style.setProperty('background-color', actColor, 'important');
+                        dot.style.removeProperty('border');
+                        dot.style.removeProperty('border-color');
+                        dot.style.removeProperty('border-width');
+                        dot.style.removeProperty('border-style');
+                        dot.style.setProperty('border', 'none', 'important');
+                        dot.style.setProperty('box-shadow', '0 0 10px ' + actColor + ', 0 0 22px ' + actColor + ', 0 0 38px ' + actColor + 'aa', 'important');
+
+                        if (window._actScaling) {
+                            var effectiveRatio = window._actRelative ? ratio : Math.min(1.0, count / 15.0);
+                            var scaleFactor = 1.05 + (Math.pow(effectiveRatio, 0.55) * 1.75); // scales up to 2.80x
+                            dot.style.transform = (isRoom ? 'rotate(45deg) ' : '') + 'scale(' + scaleFactor.toFixed(2) + ')';
+                            el.style.zIndex = Math.floor(1000 + effectiveRatio * 5000).toString();
+                        } else if (isRoom) {
+                            dot.style.transform = 'rotate(45deg)';
+                        }
+                    }
+                } else {
+                    // Regular client nodes in heatmap mode: dim to subtle background
+                    dot.style.opacity = '0.18';
+                    dot.style.setProperty('background-color', '#4B5563', 'important');
+                    dot.style.removeProperty('border');
+                    dot.style.removeProperty('border-color');
+                    dot.style.removeProperty('border-width');
+                    dot.style.removeProperty('border-style');
+                    dot.style.setProperty('border', 'none', 'important');
+                    dot.style.setProperty('box-shadow', 'none', 'important');
+                    dot.style.transform = 'scale(0.70)';
+                    el.style.zIndex = '';
+                }
+                return;
+            }
+
+            // 5. Path Modes
             if (pathModesActive && !isLocal) {
                 var pLen = (node.out_path_len !== undefined && node.out_path_len !== null) ? Number(node.out_path_len) : -1;
                 var pMode = (node.out_path_hash_mode !== undefined && node.out_path_hash_mode !== null) ? Number(node.out_path_hash_mode) : -1;
@@ -4192,7 +4689,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     dot.style.setProperty('border-color', '#4B5563', 'important');
                     dot.style.setProperty('box-shadow', 'none', 'important');
                 }
-            // 3. Scopes
+            // 6. Scopes
             } else if (window._scopeOverlaysActive && !isLocal && node.is_repeater) {
                 var scMeta = (window._scopeNodeMap && (window._scopeNodeMap[node.node_id] || (node.alias && window._scopeNodeMap[node.alias]))) ? (window._scopeNodeMap[node.node_id] || window._scopeNodeMap[node.alias]) : null;
                 if (scMeta) {
@@ -4224,77 +4721,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     dot.style.removeProperty('box-shadow');
                     dot.style.opacity = window._scopeHighlight ? '0.20' : ((window._activeScopeFilter !== 'all') ? '0.15' : '0.4');
                 }
-            // 4. Node Activity Heatmap
-            } else if (activityHeatmapActive && !isLocal && (node.is_repeater || node.is_room_server)) {
-                var cleanId = (node.node_id || '').toLowerCase().replace(/^[!@]+/, '');
-                var cleanAlias = (node.alias || '').toLowerCase().replace(/^[!@]+/, '');
-                var actMap = activityHeatmapData || {};
-                var count = (actMap[cleanId] !== undefined) ? actMap[cleanId] : (actMap[cleanAlias] || 0);
-
-                if (count <= 0) {
-                    dot.style.opacity = '0.30';
-                    dot.style.setProperty('background-color', '#4B5563', 'important');
-                    dot.style.setProperty('border-color', '#374151', 'important');
-                    dot.style.setProperty('box-shadow', 'none', 'important');
-                    if (window._actScaling) {
-                        dot.style.transform = 'scale(0.70)';
-                    }
-                    el.style.zIndex = '';
-                } else {
-                    dot.style.opacity = '1.0';
-                    var actColor, actBorder, actShadow;
-                    var maxT = window._actMaxTraffic || 1;
-                    var ratio = maxT > 0 ? (count / maxT) : 0;
-
-                    if (window._actRelative) {
-                        if (ratio >= 0.75) {
-                            actColor = '#EF4444'; // Red (Peak)
-                            actBorder = '#DC2626';
-                            actShadow = '0 0 18px rgba(239, 68, 68, 0.95), 0 0 6px #FFFFFF';
-                        } else if (ratio >= 0.50) {
-                            actColor = '#FB923C'; // Orange (High)
-                            actBorder = '#EA580C';
-                            actShadow = '0 0 14px rgba(251, 146, 60, 0.90), 0 0 4px #FFFFFF';
-                        } else if (ratio >= 0.25) {
-                            actColor = '#FACC15'; // Yellow (Medium)
-                            actBorder = '#CA8A04';
-                            actShadow = '0 0 12px rgba(250, 204, 21, 0.85)';
-                        } else {
-                            actColor = '#10B981'; // Green (Low)
-                            actBorder = '#059669';
-                            actShadow = '0 0 10px rgba(16, 185, 129, 0.8)';
-                        }
-                    } else {
-                        if (count > 10) {
-                            actColor = '#EF4444';
-                            actBorder = '#DC2626';
-                            actShadow = '0 0 18px rgba(239, 68, 68, 0.95), 0 0 6px #FFFFFF';
-                        } else if (count > 5) {
-                            actColor = '#FB923C';
-                            actBorder = '#EA580C';
-                            actShadow = '0 0 14px rgba(251, 146, 60, 0.90), 0 0 4px #FFFFFF';
-                        } else if (count > 2) {
-                            actColor = '#FACC15';
-                            actBorder = '#CA8A04';
-                            actShadow = '0 0 12px rgba(250, 204, 21, 0.85)';
-                        } else {
-                            actColor = '#10B981';
-                            actBorder = '#059669';
-                            actShadow = '0 0 10px rgba(16, 185, 129, 0.8)';
-                        }
-                    }
-                    dot.style.setProperty('background-color', actColor, 'important');
-                    dot.style.setProperty('border-color', actBorder, 'important');
-                    dot.style.setProperty('box-shadow', actShadow, 'important');
-
-                    if (window._actScaling) {
-                        var effectiveRatio = window._actRelative ? ratio : Math.min(1.0, count / 15.0);
-                        var scaleFactor = 1.05 + (Math.pow(effectiveRatio, 0.55) * 1.75); // scales up to 2.80x
-                        dot.style.transform = 'scale(' + scaleFactor.toFixed(2) + ')';
-                        el.style.zIndex = Math.floor(1000 + effectiveRatio * 5000).toString();
-                    }
-                }
             } else {
+                dot.style.opacity = (!isLocal && freshnessFading) ? calculateFreshnessOpacity(node.last_seen) : '1.0';
+                dot.style.removeProperty('background');
                 dot.style.removeProperty('background-color');
                 dot.style.removeProperty('border');
                 dot.style.removeProperty('border-color');
@@ -4342,6 +4771,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 var m = markers[id];
                 if (m && m._nodeData) applyNodeMarkerStyling(m, m._nodeData);
             }
+            if (window._is3DActive && typeof syncAllNodesTo3D === 'function') {
+                syncAllNodesTo3D();
+            }
         }
         window.togglePathMultihop = togglePathMultihop;
 
@@ -4357,6 +4789,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 if (m && m._nodeData) {
                     applyNodeMarkerStyling(m, m._nodeData);
                 }
+            }
+            if (window._is3DActive && typeof syncAllNodesTo3D === 'function') {
+                syncAllNodesTo3D();
             }
         }
 
@@ -4508,8 +4943,12 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 currentTropoLayer = null;
             }
             tropoActive = false;
+            window._lastTropoGeojson = null;
             var panel = document.getElementById('tropo-legend-panel');
             if (panel) panel.style.display = 'none';
+            if (window._is3DActive && typeof syncTropoTo3D === 'function') {
+                syncTropoTo3D();
+            }
         }
         window.clearTropoLayer = clearTropoLayer;
 
@@ -4610,12 +5049,24 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     };
                 }
 
+                for (var ti = 0; ti < features.length; ti++) {
+                    var st = getContourStyle(features[ti]);
+                    features[ti].properties.fillColor = st.fillColor;
+                    features[ti].properties.strokeColor = st.color;
+                    features[ti].properties.fillOpacity = st.fillOpacity;
+                }
+
                 currentTropoLayer = L.geoJSON(geojson, {
                     style: getContourStyle,
                     pane: 'tropoPane'
                 }).addTo(map);
 
                 tropoActive = true;
+                window._lastTropoGeojson = geojson;
+                if (window._is3DActive && typeof syncTropoTo3D === 'function') {
+                    syncTropoTo3D();
+                }
+
                 var panel = document.getElementById('tropo-legend-panel');
                 var timeLbl = document.getElementById('tropo-time-label');
                 if (timeLbl && payload.label) {
@@ -4830,6 +5281,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                         '<option value="gb-nwk" ' + (currentScopeVal === 'gb-nwk' ? 'selected' : '') + '>#gb-nwk (North West)</option>' +
                         '<option value="cax" ' + (currentScopeVal === 'cax' ? 'selected' : '') + '>#cax (Carlisle)</option>' +
                         '<option value="gb-nth" ' + (currentScopeVal === 'gb-nth' ? 'selected' : '') + '>#gb-nth (Northern England)</option>' +
+                        '<option value="eng-ne" ' + (currentScopeVal === 'eng-ne' ? 'selected' : '') + '>#eng-ne (North East England)</option>' +
                         '<option value="sco" ' + (currentScopeVal === 'sco' ? 'selected' : '') + '>#sco (Scotland)</option>' +
                         '<option value="iom" ' + (currentScopeVal === 'iom' ? 'selected' : '') + '>#iom (Isle of Man)</option>' +
                         '<option value="ioi" ' + (currentScopeVal === 'ioi' ? 'selected' : '') + '>#ioi (Island of Ireland)</option>' +
@@ -4891,34 +5343,58 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 phantomBtnHtml = '<button class="popup-btn" style="margin-top: 5px; ' + pStyle + '" data-nid="' + encodeURIComponent(node.node_id) + '" data-alias="' + encodeURIComponent(node.alias || '') + '" data-phantom="' + (isPhantom ? '1' : '0') + '" onclick="onTogglePhantomMarker(this)">' + pLabel + '</button>';
             }
 
-        function copyNodeIdClipboard(encodedText, btn) {
-            var text = decodeURIComponent(encodedText);
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(text).then(function() {
-                    if (btn) {
-                        var orig = btn.innerText;
-                        btn.innerText = '✓ Copied';
-                        setTimeout(function() { btn.innerText = orig; }, 1500);
-                    }
-                }).catch(function() {
-                    if (window.pyBridge && window.pyBridge.on_copy_clipboard) {
-                        window.pyBridge.on_copy_clipboard(text);
-                    }
-                    if (btn) {
-                        var orig = btn.innerText;
-                        btn.innerText = '✓ Copied';
-                        setTimeout(function() { btn.innerText = orig; }, 1500);
-                    }
-                });
-            } else {
+        function copyNodeIdClipboard(rawText, btn) {
+            var text = (rawText || '').trim();
+            if (!text && btn) {
+                text = (btn.getAttribute('data-node-id') || (btn.dataset ? btn.dataset.nodeId : '') || '').trim();
+            }
+            if (text && text.indexOf('%') !== -1) {
+                try { text = decodeURIComponent(text); } catch(e) {}
+            }
+            if (!text) return;
+
+            // 1. Native Qt clipboard via Python bridge
+            try {
                 if (window.pyBridge && window.pyBridge.on_copy_clipboard) {
                     window.pyBridge.on_copy_clipboard(text);
                 }
-                if (btn) {
-                    var orig = btn.innerText;
-                    btn.innerText = '✓ Copied';
-                    setTimeout(function() { btn.innerText = orig; }, 1500);
-                }
+            } catch(e) {
+                console.warn('[Clipboard] pyBridge copy exception:', e);
+            }
+
+            // 2. Synchronous execCommand copy via off-screen textarea
+            try {
+                var ta = document.createElement("textarea");
+                ta.value = text;
+                ta.style.position = "fixed";
+                ta.style.left = "-9999px";
+                ta.style.top = "-9999px";
+                ta.style.opacity = "0";
+                document.body.appendChild(ta);
+                ta.focus();
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+            } catch(e) {}
+
+            // 3. Standard Async Clipboard API
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                try {
+                    navigator.clipboard.writeText(text).catch(function() {});
+                } catch(e) {}
+            }
+
+            // 4. Visual button feedback
+            if (btn) {
+                var orig = btn.innerText;
+                btn.innerText = '✓ Copied';
+                btn.style.color = '#10B981';
+                btn.style.borderColor = '#10B981';
+                setTimeout(function() {
+                    btn.innerText = orig;
+                    btn.style.color = '';
+                    btn.style.borderColor = '';
+                }, 1500);
             }
         }
         window.copyNodeIdClipboard = copyNodeIdClipboard;
@@ -4929,6 +5405,11 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 '<button class="node-popup-copy-btn" data-node-id="' + escapeHtml(node.node_id || '') + '" onclick="copyNodeIdClipboard(this.dataset.nodeId, this)" title="Copy Node ID">⎘ Copy</button>' +
                 '</div>';
 
+            var isMqtt = (node.source === 'mqtt' || !!node.is_mqtt);
+            var sourceHtml = isMqtt ?
+                '<div class="popup-stat" style="color: #FB923C; font-weight: 600;">Source: 🌐 MQTT Ingest</div>' :
+                '<div class="popup-stat" style="color: #60A5FA;">Source: 📻 Direct LoRa RF</div>';
+
             return '<div class="custom-popup">' +
                 '<div class="popup-title">' + starHtml + iconPrefix + safeAlias + '</div>' +
                 idHtml +
@@ -4936,6 +5417,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 '<div class="popup-stat">Routing: ' + pathStr + '</div>' +
                 snrHtml + rssiHtml +
                 '<div class="popup-stat">Coords: ' + Number(node.lat).toFixed(4) + ', ' + Number(node.lon).toFixed(4) + '</div>' +
+                sourceHtml +
                 scopeInfoHtml +
                 dockedOrbitalsHtml +
                 '<button class="popup-btn" data-node-id="' + encodeURIComponent(node.node_id) + '" onclick="onNodeClicked(decodeURIComponent(this.dataset.nodeId))">' + actionBtnLabel + '</button>' +
@@ -4963,6 +5445,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     var isRep = !!node.is_repeater;
                     var isRoom = !!node.is_room_server;
                     var isFav = !!node.is_favorite;
+                    var isMqtt = (node.source === 'mqtt' || !!node.is_mqtt);
 
                     var dotClass = 'node-dot ';
                     if (isPhantom) {
@@ -5030,12 +5513,18 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                         }
                     }
 
+                    var mqttBadge = '';
+                    if (isMqtt && !isLocal) {
+                        mqttBadge = '<div style="font-size: 10px; color: #FB923C; font-weight: bold; margin-top: 2px;">🌐 Discovered via MQTT</div>';
+                    }
+
                     var tipContent = '<div style="text-align: center; line-height: 1.35;">' +
                         '<div>' + phantomPrefix + starPrefix + '<b>' + safeAlias + '</b></div>' +
                         '<div style="font-size: 10px; color: #9CA3AF; margin-top: 2px;">Last heard: ' + lastHeardStr + '</div>' +
                         '<div style="font-size: 10px; margin-top: 2px;">' + pathStr + '</div>' +
                         actInfo +
                         newBadge +
+                        mqttBadge +
                         '</div>';
 
                     seen[node.node_id] = true;
@@ -5149,6 +5638,12 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             if (window._newNodesActive) {
                 updateNewNodesStats();
             }
+            if (window._mqttNodesActive && window.updateMqttNodesStats) {
+                updateMqttNodesStats();
+            }
+            if (window.syncAllNodesTo3D && map3d) {
+                window.syncAllNodesTo3D();
+            }
         }
 
         function setCompanionOrbitalsVisible(active, dockedData) {
@@ -5157,6 +5652,12 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 window._dockedCompanionsData = dockedData;
             }
             renderCompanionOrbitals();
+            if (window._is3DActive && typeof syncOrbitalsTo3D === 'function') {
+                syncOrbitalsTo3D();
+            }
+            if (window._is3DActive && typeof syncAllNodesTo3D === 'function') {
+                syncAllNodesTo3D();
+            }
         }
 
         function toggleOrbitalPause(safeRepId, ev) {
@@ -5715,6 +6216,10 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             }
             _recentPathSignatures[pathSig] = now;
 
+            if (window._is3DActive && typeof tracePacketPath3D === 'function') {
+                tracePacketPath3D(meta, coords);
+            }
+
             var pType = (meta.payload_type || meta.route_type || 'FLOOD').toUpperCase();
             var beamColor = TYPE_COLORS[pType] || (meta.color && meta.color !== 'orange' && meta.color !== 'green' ? meta.color : (meta.is_incoming ? '#10B981' : '#3B82F6'));
 
@@ -5882,6 +6387,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             if (meta.channel) {
                 text = '[' + meta.channel + '] ' + text;
             }
+            if (/^[0-9a-fA-F]{2,4}$/.test(text.trim())) {
+                text = 'Node [' + text.trim().toUpperCase() + ']';
+            }
             if (text.length > 34) {
                 text = text.substring(0, 34) + '…';
             }
@@ -5913,6 +6421,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             item.onclick = function() {
                 if (coords && coords.length >= 2) {
                     drawPacketPath(coords, meta);
+                    if (window.tracePacketPath3D) {
+                        window.tracePacketPath3D(meta, coords);
+                    }
                 }
             };
 
@@ -5980,6 +6491,10 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     } catch(e) {}
                 }
                 visualisedHighlightMarkers = [];
+            }
+            if (visualised3DArcs) {
+                visualised3DArcs = [];
+                if (map3d) map3d.triggerRepaint();
             }
             map.closePopup();
         }
@@ -6258,8 +6773,8 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 var dx = e.clientX - startX;
                 var dy = e.clientY - startY;
                 var mapEl = document.getElementById('map');
-                var containerW = (mapEl ? mapEl.clientWidth : window.innerWidth);
-                var containerH = (mapEl ? mapEl.clientHeight : window.innerHeight);
+                var containerW = (mapEl && mapEl.offsetWidth > 0 ? mapEl.clientWidth : window.innerWidth);
+                var containerH = (mapEl && mapEl.offsetHeight > 0 ? mapEl.clientHeight : window.innerHeight);
 
                 var maxW = Math.max(0, containerW - panel.offsetWidth);
                 var maxH = Math.max(0, containerH - panel.offsetHeight);
@@ -6391,9 +6906,15 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             // New Nodes Discovery
             makeOverlayDraggable('new-nodes-panel', 'new-nodes-drag-handle', 'new_nodes');
 
+            // MQTT Discovered Nodes
+            makeOverlayDraggable('mqtt-nodes-panel', 'mqtt-nodes-drag-handle', 'mqtt_nodes');
+
             // Live Packet Feed HUD & Map Legend (CoreScope Live Overlays)
             makeOverlayDraggable('livePacketHud', 'liveHudDragHandle', 'live_packet_hud');
             makeOverlayDraggable('liveLegend', 'liveLegendDragHandle', 'live_legend');
+
+            // 3D Perspective Controls Floating Window
+            makeOverlayDraggable('map3dControls', 'map3dControlsHeader', 'map_3d_controls');
         }
         setTimeout(initAllDraggableOverlays, 100);
 
@@ -6579,6 +7100,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 segments = segmentsOrCoords;
             }
             window._activeVisualisedSegments = segments;
+            if (window._is3DActive && typeof syncVisualisedPathTo3D === 'function') {
+                syncVisualisedPathTo3D(segments, meta);
+            }
 
             // Draw each transmission line segment (Magenta for known hops, Red for paths through unknown repeaters)
             for (var s = 0; s < segments.length; s++) {
@@ -6925,6 +7449,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     adsbRangeCircle = null;
                 }
             }
+            if (window._is3DActive && typeof syncAdsbTo3D === 'function') {
+                syncAdsbTo3D();
+            }
         }
         window.setAdsbVisible = setAdsbVisible;
 
@@ -6954,6 +7481,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             currentAircraftData = {};
             _aircraftContainerPoints = {};
             adsbLastTargetCoord = null;
+            if (window._is3DActive && typeof syncAdsbTo3D === 'function') {
+                syncAdsbTo3D();
+            }
         };
 
         function updateActivityStats() {
@@ -6975,7 +7505,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             if (peakNodeEl) peakNodeEl.innerText = peakN;
             if (peakPacketsEl) peakPacketsEl.innerText = maxT + ' pkts';
 
-            var cVHigh = 0, cHigh = 0, cMed = 0, cLow = 0;
+            var cVHigh = 0, cHigh = 0, cMed = 0, cLow = 0, cMin = 0;
             for (var k in actMap) {
                 var cnt = actMap[k];
                 if (typeof cnt !== 'number' || cnt <= 0) continue;
@@ -6984,46 +7514,65 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     if (ratio >= 0.75) cVHigh++;
                     else if (ratio >= 0.50) cHigh++;
                     else if (ratio >= 0.25) cMed++;
-                    else cLow++;
+                    else if (ratio >= 0.10) cLow++;
+                    else cMin++;
                 } else {
                     if (cnt > 10) cVHigh++;
                     else if (cnt > 5) cHigh++;
                     else if (cnt > 2) cMed++;
-                    else cLow++;
+                    else if (cnt > 1) cLow++;
+                    else cMin++;
                 }
             }
             var elVHigh = document.getElementById('act-count-vhigh');
             var elHigh = document.getElementById('act-count-high');
             var elMed = document.getElementById('act-count-med');
             var elLow = document.getElementById('act-count-low');
+            var elMin = document.getElementById('act-count-min');
             if (elVHigh) elVHigh.innerText = cVHigh;
             if (elHigh) elHigh.innerText = cHigh;
             if (elMed) elMed.innerText = cMed;
             if (elLow) elLow.innerText = cLow;
+            if (elMin) elMin.innerText = cMin;
 
             var lblVHigh = document.getElementById('act-lbl-vhigh');
             var lblHigh = document.getElementById('act-lbl-high');
             var lblMed = document.getElementById('act-lbl-med');
             var lblLow = document.getElementById('act-lbl-low');
+            var lblMin = document.getElementById('act-lbl-min');
             if (window._actRelative) {
                 if (lblVHigh) lblVHigh.innerText = '> 75% (Peak)';
                 if (lblHigh) lblHigh.innerText = '50 - 75% (High)';
                 if (lblMed) lblMed.innerText = '25 - 50% (Med)';
-                if (lblLow) lblLow.innerText = '< 25% (Low)';
+                if (lblLow) lblLow.innerText = '10 - 25% (Low)';
+                if (lblMin) lblMin.innerText = '< 10% (Base)';
             } else {
                 if (lblVHigh) lblVHigh.innerText = '> 10 pkts (Peak)';
                 if (lblHigh) lblHigh.innerText = '6 - 10 pkts (High)';
                 if (lblMed) lblMed.innerText = '3 - 5 pkts (Med)';
-                if (lblLow) lblLow.innerText = '1 - 2 pkts (Low)';
+                if (lblLow) lblLow.innerText = '2 pkts (Low)';
+                if (lblMin) lblMin.innerText = '1 pkt (Base)';
+            }
+        }
+
+        function render2DActivityHeatmap() {
+            var oldCanvas = document.getElementById('activityHeatmapCanvas');
+            if (oldCanvas) oldCanvas.remove();
+            if (activityHeatmapLayerGroup) {
+                activityHeatmapLayerGroup.clearLayers();
             }
         }
 
         function toggleActivityRelative(checked) {
             window._actRelative = !!checked;
             updateActivityStats();
+            render2DActivityHeatmap();
             for (var id in markers) {
                 var m = markers[id];
                 if (m && m._nodeData) applyNodeMarkerStyling(m, m._nodeData);
+            }
+            if (window._is3DActive && typeof syncAllNodesTo3D === 'function') {
+                syncAllNodesTo3D();
             }
         }
         window.toggleActivityRelative = toggleActivityRelative;
@@ -7033,6 +7582,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             for (var id in markers) {
                 var m = markers[id];
                 if (m && m._nodeData) applyNodeMarkerStyling(m, m._nodeData);
+            }
+            if (window._is3DActive && typeof syncAllNodesTo3D === 'function') {
+                syncAllNodesTo3D();
             }
         }
         window.toggleActivityScaling = toggleActivityScaling;
@@ -7056,12 +7608,19 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             if (targetBtn) targetBtn.classList.add('active');
 
             updateActivityStats();
+            render2DActivityHeatmap();
 
             for (var id in markers) {
                 var m = markers[id];
                 if (m && m._nodeData) {
                     applyNodeMarkerStyling(m, m._nodeData);
                 }
+            }
+            if (window._is3DActive && typeof syncHeatmapTo3D === 'function') {
+                syncHeatmapTo3D();
+            }
+            if (window._is3DActive && typeof syncAllNodesTo3D === 'function') {
+                syncAllNodesTo3D();
             }
         }
         window.setActivityHeatmap = setActivityHeatmap;
@@ -7153,6 +7712,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     applyNodeMarkerStyling(m, m._nodeData);
                 }
             }
+            if (window._is3DActive && typeof syncAllNodesTo3D === 'function') {
+                syncAllNodesTo3D();
+            }
         }
         window.setNewNodes = setNewNodes;
 
@@ -7173,6 +7735,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 if (m && m._nodeData) {
                     applyNodeMarkerStyling(m, m._nodeData);
                 }
+            }
+            if (window._is3DActive && typeof syncAllNodesTo3D === 'function') {
+                syncAllNodesTo3D();
             }
 
             if (pyBridge && pyBridge.on_new_nodes_timeframe_changed) {
@@ -7195,6 +7760,2838 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             }
         }
         window.closeNewNodes = closeNewNodes;
+
+        window._mqttNodesActive = false;
+
+        function setMqttNodes(enabled) {
+            window._mqttNodesActive = !!enabled;
+            var panel = document.getElementById('mqtt-nodes-panel');
+            if (panel) {
+                panel.style.display = window._mqttNodesActive ? 'flex' : 'none';
+                if (window._mqttNodesActive) {
+                    bringOverlayToFront(panel);
+                }
+            }
+            updateMqttNodesStats();
+            for (var id in markers) {
+                var m = markers[id];
+                if (m && m._nodeData) {
+                    try {
+                        applyNodeMarkerStyling(m, m._nodeData);
+                    } catch(e) {
+                        console.error("Error styling marker " + id + " for MQTT mode:", e);
+                    }
+                }
+            }
+            if (window.syncAllNodesTo3D && map3d) {
+                window.syncAllNodesTo3D();
+            }
+        }
+        window.setMqttNodes = setMqttNodes;
+
+        function closeMqttNodes() {
+            setMqttNodes(false);
+            if (window.pyBridge && window.pyBridge.on_mqtt_nodes_toggled) {
+                window.pyBridge.on_mqtt_nodes_toggled(false);
+            }
+        }
+        window.closeMqttNodes = closeMqttNodes;
+
+        function updateMqttNodesStats() {
+            var mqttCount = 0;
+            var totalCount = 0;
+            for (var id in markers) {
+                var m = markers[id];
+                if (m && m._nodeData) {
+                    totalCount++;
+                    var nd = m._nodeData;
+                    var src = (nd.source || '').toLowerCase().trim();
+                    if ((src === 'mqtt' || !!nd.is_mqtt) && !nd.is_local && !nd.is_phantom) {
+                        mqttCount++;
+                    }
+                }
+            }
+            var elCount = document.getElementById('mqtt-discovered-count');
+            var elTotal = document.getElementById('mqtt-total-count');
+            if (elCount) elCount.innerText = mqttCount + (mqttCount === 1 ? ' node' : ' nodes');
+            if (elTotal) elTotal.innerText = totalCount;
+        }
+        window.updateMqttNodesStats = updateMqttNodesStats;
+
+        window._is3DActive = false;
+        var map3d = null;
+        var map3dInitialized = false;
+        var map3dMarkers = {};
+        var map3dArcsCount = 0;
+
+        function set3DMode(enabled) {
+            window._is3DActive = !!enabled;
+            var el3D = document.getElementById('map-3d');
+            var el2D = document.getElementById('map');
+            var panel = document.getElementById('map3dControls');
+
+            if (window._is3DActive) {
+                if (el2D) el2D.style.display = 'none';
+                if (el3D) el3D.style.display = 'block';
+                if (panel) {
+                    panel.style.display = 'flex';
+                    try {
+                        var savedPos = sessionStorage.getItem('overlay_pos_map_3d_controls');
+                        if (savedPos) {
+                            var p = JSON.parse(savedPos);
+                            if (p && typeof p.left === 'number' && typeof p.top === 'number') {
+                                panel.style.left = p.left + 'px';
+                                panel.style.top = p.top + 'px';
+                                panel.style.right = 'auto';
+                                panel.style.bottom = 'auto';
+                            }
+                        }
+                    } catch(e) {}
+                }
+
+                if (!map3dInitialized) {
+                    initMap3D();
+                } else if (map3d) {
+                    map3d.resize();
+                    var c = map.getCenter();
+                    var z = map.getZoom();
+                    map3d.jumpTo({
+                        center: [c.lng, c.lat],
+                        zoom: Math.max(3, z - 0.5),
+                        pitch: 58,
+                        bearing: 0
+                    });
+                    syncAllLayersTo3D();
+                }
+            } else {
+                active3DBeams = [];
+                active3DPulses = [];
+                if (panel) panel.style.display = 'none';
+                if (el3D) el3D.style.display = 'none';
+                if (el2D) {
+                    el2D.style.display = 'block';
+                    if (map3d) {
+                        try {
+                            var c3d = map3d.getCenter();
+                            var z3d = map3d.getZoom();
+                            map.setView([c3d.lat, c3d.lng], Math.round(z3d + 0.5));
+                        } catch(e) {}
+                    }
+                    map.invalidateSize();
+                }
+            }
+        }
+        window.set3DMode = set3DMode;
+
+        function close3DMode() {
+            set3DMode(false);
+            if (window.pyBridge && window.pyBridge.on_map_3d_toggled) {
+                window.pyBridge.on_map_3d_toggled(false);
+            }
+        }
+        window.close3DMode = close3DMode;
+
+        function set3DPitch(pitchVal) {
+            if (!map3d) return;
+            map3d.easeTo({ pitch: pitchVal, duration: 600 });
+            var b58 = document.getElementById('btn-3d-pitch-58');
+            var b0 = document.getElementById('btn-3d-pitch-0');
+            if (b58 && b0) {
+                if (pitchVal > 20) {
+                    b58.style.borderColor = '#00D2FF';
+                    b58.style.background = '#0C4A6E';
+                    b58.style.color = '#38BDF8';
+                    b0.style.borderColor = '#30363d';
+                    b0.style.background = '#161b22';
+                    b0.style.color = '#8b949e';
+                } else {
+                    b0.style.borderColor = '#00D2FF';
+                    b0.style.background = '#0C4A6E';
+                    b0.style.color = '#38BDF8';
+                    b58.style.borderColor = '#30363d';
+                    b58.style.background = '#161b22';
+                    b58.style.color = '#8b949e';
+                }
+            }
+        }
+        window.set3DPitch = set3DPitch;
+
+        function set3DExaggeration(val) {
+            if (!map3d) return;
+            try {
+                map3d.setTerrain({ source: 'terrain-dem', exaggeration: parseFloat(val) || 2.5 });
+            } catch(e) {
+                console.error('[3D Map] Failed setting exaggeration:', e);
+            }
+        }
+        window.set3DExaggeration = set3DExaggeration;
+
+        var corescope3DProgram = null;
+        var active3DArcs = [];
+        var active3DBeams = [];
+        var active3DPulses = [];
+        var active3DPlanes = [];
+        var visualised3DArcs = [];
+        var map3dAdsbMarkers = {};
+        var map3dSatMarkers = {};
+        var map3dOrbitalMarkers = {};
+
+        var corescope3DLayer = {
+            id: 'corescope-3d-arcs',
+            type: 'custom',
+            renderingMode: '3d',
+            onAdd: function(map, gl) {
+                var vShaderSource = 'attribute vec3 a_pos;' +
+                    'attribute vec4 a_color;' +
+                    'attribute float a_size;' +
+                    'uniform mat4 u_matrix;' +
+                    'varying vec4 v_color;' +
+                    'void main() {' +
+                    '    v_color = a_color;' +
+                    '    gl_Position = u_matrix * vec4(a_pos, 1.0);' +
+                    '    gl_PointSize = a_size;' +
+                    '}';
+                var fShaderSource = 'precision mediump float;' +
+                    'varying vec4 v_color;' +
+                    'uniform int u_render_mode;' +
+                    'void main() {' +
+                    '    if (u_render_mode == 0) {' +
+                    '        gl_FragColor = v_color;' +
+                    '    } else if (u_render_mode == 1) {' +
+                    '        vec2 coord = gl_PointCoord - vec2(0.5);' +
+                    '        float d = length(coord);' +
+                    '        if (d > 0.5) discard;' +
+                    '        float alpha = smoothstep(0.5, 0.05, d) * v_color.a;' +
+                    '        gl_FragColor = vec4(v_color.rgb, alpha);' +
+                    '    } else if (u_render_mode == 2) {' +
+                    '        vec2 coord = gl_PointCoord - vec2(0.5);' +
+                    '        float d = length(coord);' +
+                    '        if (d > 0.5) discard;' +
+                    '        float alpha = smoothstep(0.5, 0.05, d) * v_color.a;' +
+                    '        vec3 col = mix(v_color.rgb, vec3(1.0), 0.18 * (1.0 - smoothstep(0.0, 0.25, d)));' +
+                    '        gl_FragColor = vec4(col, alpha);' +
+                    '    } else if (u_render_mode == 3) {' +
+                    '        vec2 coord = gl_PointCoord - vec2(0.5);' +
+                    '        float d = length(coord);' +
+                    '        if (d > 0.5 || d < 0.20) discard;' +
+                    '        float ring = smoothstep(0.12, 0.0, abs(d - 0.42));' +
+                    '        gl_FragColor = vec4(v_color.rgb, ring * v_color.a);' +
+                    '    } else {' +
+                    '        gl_FragColor = v_color;' +
+                    '    }' +
+                    '}';
+                function compileShader(type, src) {
+                    var s = gl.createShader(type);
+                    gl.shaderSource(s, src);
+                    gl.compileShader(s);
+                    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+                        console.error('[3D Layer] Shader compile error:', gl.getShaderInfoLog(s));
+                    }
+                    return s;
+                }
+                var vs = compileShader(gl.VERTEX_SHADER, vShaderSource);
+                var fs = compileShader(gl.FRAGMENT_SHADER, fShaderSource);
+                var prog = gl.createProgram();
+                gl.attachShader(prog, vs);
+                gl.attachShader(prog, fs);
+                gl.linkProgram(prog);
+                corescope3DProgram = {
+                    program: prog,
+                    aPos: gl.getAttribLocation(prog, 'a_pos'),
+                    aColor: gl.getAttribLocation(prog, 'a_color'),
+                    aSize: gl.getAttribLocation(prog, 'a_size'),
+                    uMatrix: gl.getUniformLocation(prog, 'u_matrix'),
+                    uRenderMode: gl.getUniformLocation(prog, 'u_render_mode'),
+                    buffer: gl.createBuffer()
+                };
+            },
+            render: function(gl, matrix) {
+                if (!corescope3DProgram || !map3d) return;
+                var p = corescope3DProgram;
+                var now = performance.now();
+
+                gl.useProgram(p.program);
+                gl.uniformMatrix4fv(p.uMatrix, false, matrix);
+                gl.bindBuffer(gl.ARRAY_BUFFER, p.buffer);
+
+                gl.enableVertexAttribArray(p.aPos);
+                gl.enableVertexAttribArray(p.aColor);
+                gl.enableVertexAttribArray(p.aSize);
+
+                gl.enable(gl.BLEND);
+                gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+                gl.depthMask(false);
+
+                var curZoom = map3d.getZoom ? map3d.getZoom() : 8;
+                var camOpt = map3d.getFreeCameraOptions ? map3d.getFreeCameraOptions() : null;
+                var camPos = camOpt && camOpt.position ? camOpt.position : null;
+
+                // Helper: camera-facing 3D ribbon quad strip
+                function build3DRibbon(pts, widthPx, color, alpha, zoom, camPos, fadeTail) {
+                    if (!pts || pts.length < 2) return [];
+                    var mercPerPx = 1.0 / (512.0 * Math.pow(2, zoom));
+                    var pitch = (map3d.getPitch ? map3d.getPitch() : 50) * Math.PI / 180.0;
+                    var pitchCorr = 1.0 / Math.max(0.35, Math.cos(pitch));
+                    var halfW = (widthPx * 0.5 * pitchCorr) * mercPerPx;
+
+                    var verts = [];
+                    var nPts = pts.length;
+                    for (var i = 0; i < nPts; i++) {
+                        var p = pts[i];
+                        var tx = 0, ty = 0;
+                        if (i === 0) {
+                            tx = pts[1][0] - p[0];
+                            ty = pts[1][1] - p[1];
+                        } else if (i === nPts - 1) {
+                            tx = p[0] - pts[nPts - 2][0];
+                            ty = p[1] - pts[nPts - 2][1];
+                        } else {
+                            tx = pts[i + 1][0] - pts[i - 1][0];
+                            ty = pts[i + 1][1] - pts[i - 1][1];
+                        }
+                        var tLen = Math.sqrt(tx * tx + ty * ty);
+                        var nx = 0, ny = 1;
+                        if (tLen > 1e-9) {
+                            nx = -ty / tLen;
+                            ny = tx / tLen;
+                        }
+
+                        var ptAlpha = alpha;
+                        var ptHalfW = halfW;
+                        if (fadeTail && nPts > 1) {
+                            var tProg = i / (nPts - 1); // 0.0 at oldest breadcrumb, 1.0 at aircraft tail
+                            var tFade = Math.pow(tProg, 1.3); // Smooth curve dissipating into distance
+                            ptAlpha = alpha * tFade;
+                            ptHalfW = halfW * (0.20 + 0.80 * tProg);
+                        }
+
+                        verts.push(
+                            p[0] - nx * ptHalfW, p[1] - ny * ptHalfW, p[2],
+                            color[0], color[1], color[2], ptAlpha,
+                            1.0
+                        );
+                        verts.push(
+                            p[0] + nx * ptHalfW, p[1] + ny * ptHalfW, p[2],
+                            color[0], color[1], color[2], ptAlpha,
+                            1.0
+                        );
+                    }
+                    return verts;
+                }
+
+                // Helper: camera-facing dashed 3D ribbon triangles
+                function build3DDashes(pts, widthPx, color, alpha, zoom, camPos, dashSegs, gapSegs) {
+                    if (!pts || pts.length < 2) return [];
+                    dashSegs = dashSegs || 3;
+                    gapSegs = gapSegs || 2;
+                    var period = dashSegs + gapSegs;
+
+                    var mercPerPx = 1.0 / (512.0 * Math.pow(2, zoom));
+                    var pitch = (map3d.getPitch ? map3d.getPitch() : 50) * Math.PI / 180.0;
+                    var pitchCorr = 1.0 / Math.max(0.35, Math.cos(pitch));
+                    var halfW = (widthPx * 0.5 * pitchCorr) * mercPerPx;
+
+                    var nPts = pts.length;
+                    var leftPts = [];
+                    var rightPts = [];
+                    for (var i = 0; i < nPts; i++) {
+                        var p = pts[i];
+                        var tx = 0, ty = 0;
+                        if (i === 0) {
+                            tx = pts[1][0] - p[0];
+                            ty = pts[1][1] - p[1];
+                        } else if (i === nPts - 1) {
+                            tx = p[0] - pts[nPts - 2][0];
+                            ty = p[1] - pts[nPts - 2][1];
+                        } else {
+                            tx = pts[i + 1][0] - pts[i - 1][0];
+                            ty = pts[i + 1][1] - pts[i - 1][1];
+                        }
+                        var tLen = Math.sqrt(tx * tx + ty * ty);
+                        var nx = 0, ny = 1;
+                        if (tLen > 1e-9) {
+                            nx = -ty / tLen;
+                            ny = tx / tLen;
+                        }
+
+                        leftPts.push([p[0] - nx * halfW, p[1] - ny * halfW, p[2]]);
+                        rightPts.push([p[0] + nx * halfW, p[1] + ny * halfW, p[2]]);
+                    }
+
+                    var triVerts = [];
+                    for (var k = 0; k < nPts - 1; k++) {
+                        if ((k % period) < dashSegs) {
+                            var l0 = leftPts[k], r0 = rightPts[k];
+                            var l1 = leftPts[k + 1], r1 = rightPts[k + 1];
+                            triVerts.push(l0[0], l0[1], l0[2], color[0], color[1], color[2], alpha, 1.0);
+                            triVerts.push(r0[0], r0[1], r0[2], color[0], color[1], color[2], alpha, 1.0);
+                            triVerts.push(l1[0], l1[1], l1[2], color[0], color[1], color[2], alpha, 1.0);
+
+                            triVerts.push(r0[0], r0[1], r0[2], color[0], color[1], color[2], alpha, 1.0);
+                            triVerts.push(r1[0], r1[1], r1[2], color[0], color[1], color[2], alpha, 1.0);
+                            triVerts.push(l1[0], l1[1], l1[2], color[0], color[1], color[2], alpha, 1.0);
+                        }
+                    }
+                    return triVerts;
+                }
+
+                // 1. Lingering completed parabolic arcs
+                var hasActiveFading = false;
+                gl.uniform1i(p.uRenderMode, 0);
+
+                for (var i = active3DArcs.length - 1; i >= 0; i--) {
+                    var arc = active3DArcs[i];
+                    var age = now - arc.createdAt;
+                    if (age >= arc.ttl) {
+                        active3DArcs.splice(i, 1);
+                        continue;
+                    }
+                    hasActiveFading = true;
+                    var alpha = Math.max(0, 1.0 - (age / arc.ttl)) * 0.92;
+                    var pts = arc.points;
+                    if (!pts || pts.length < 2) continue;
+
+                    var ribVerts = build3DRibbon(pts, 2.5, arc.color, alpha, curZoom, camPos);
+                    if (ribVerts.length > 0) {
+                        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(ribVerts), gl.DYNAMIC_DRAW);
+                        gl.vertexAttribPointer(p.aPos, 3, gl.FLOAT, false, 32, 0);
+                        gl.vertexAttribPointer(p.aColor, 4, gl.FLOAT, false, 32, 12);
+                        gl.vertexAttribPointer(p.aSize, 1, gl.FLOAT, false, 32, 28);
+                        gl.drawArrays(gl.TRIANGLE_STRIP, 0, ribVerts.length / 8);
+                    }
+                }
+
+                // 1b. Persistent route visualisation 3D arcs (Route Visualisation)
+                if (visualised3DArcs && visualised3DArcs.length > 0) {
+                    for (var vi = 0; vi < visualised3DArcs.length; vi++) {
+                        var varc = visualised3DArcs[vi];
+                        var vpts = varc.points;
+                        if (!vpts || vpts.length < 2) continue;
+                        var vStyle = varc.style || 'solid';
+
+                        if (vStyle === 'solid') {
+                            gl.uniform1i(p.uRenderMode, 0);
+
+                            // Luminous neon glow ribbon along solid visualized arc (continuous ribbon)
+                            var vGlowRibbon = build3DRibbon(vpts, 7.0, varc.color, 0.35, curZoom, camPos);
+                            if (vGlowRibbon.length > 0) {
+                                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vGlowRibbon), gl.DYNAMIC_DRAW);
+                                gl.vertexAttribPointer(p.aPos, 3, gl.FLOAT, false, 32, 0);
+                                gl.vertexAttribPointer(p.aColor, 4, gl.FLOAT, false, 32, 12);
+                                gl.vertexAttribPointer(p.aSize, 1, gl.FLOAT, false, 32, 28);
+                                gl.drawArrays(gl.TRIANGLE_STRIP, 0, vGlowRibbon.length / 8);
+                            }
+
+                            // Razor-sharp solid core transmission ribbon (prominent & vivid saturated color)
+                            var vCoreRibbon = build3DRibbon(vpts, 2.6, varc.color, 0.95, curZoom, camPos);
+                            if (vCoreRibbon.length > 0) {
+                                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vCoreRibbon), gl.DYNAMIC_DRAW);
+                                gl.vertexAttribPointer(p.aPos, 3, gl.FLOAT, false, 32, 0);
+                                gl.vertexAttribPointer(p.aColor, 4, gl.FLOAT, false, 32, 12);
+                                gl.vertexAttribPointer(p.aSize, 1, gl.FLOAT, false, 32, 28);
+                                gl.drawArrays(gl.TRIANGLE_STRIP, 0, vCoreRibbon.length / 8);
+                            }
+                        } else if (vStyle === 'dashed') {
+                            gl.uniform1i(p.uRenderMode, 0);
+
+                            // Glow dashed ribbon
+                            var vDashGlow = build3DDashes(vpts, 7.0, varc.color, 0.35, curZoom, camPos, 3, 2);
+                            if (vDashGlow.length > 0) {
+                                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vDashGlow), gl.DYNAMIC_DRAW);
+                                gl.vertexAttribPointer(p.aPos, 3, gl.FLOAT, false, 32, 0);
+                                gl.vertexAttribPointer(p.aColor, 4, gl.FLOAT, false, 32, 12);
+                                gl.vertexAttribPointer(p.aSize, 1, gl.FLOAT, false, 32, 28);
+                                gl.drawArrays(gl.TRIANGLES, 0, vDashGlow.length / 8);
+                            }
+
+                            // Core dashed ribbon
+                            var vDashCore = build3DDashes(vpts, 2.6, varc.color, 0.95, curZoom, camPos, 3, 2);
+                            if (vDashCore.length > 0) {
+                                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vDashCore), gl.DYNAMIC_DRAW);
+                                gl.vertexAttribPointer(p.aPos, 3, gl.FLOAT, false, 32, 0);
+                                gl.vertexAttribPointer(p.aColor, 4, gl.FLOAT, false, 32, 12);
+                                gl.vertexAttribPointer(p.aSize, 1, gl.FLOAT, false, 32, 28);
+                                gl.drawArrays(gl.TRIANGLES, 0, vDashCore.length / 8);
+                            }
+                        } else if (vStyle === 'dotted') {
+                            // Dotted: neat, fine circular points spaced evenly along the arc
+                            gl.uniform1i(p.uRenderMode, 1);
+                            var vDotData = [];
+                            var dotStep = Math.max(1, Math.round(vpts.length / 48));
+                            for (var vtk = 0; vtk < vpts.length; vtk += dotStep) {
+                                vDotData.push(vpts[vtk][0], vpts[vtk][1], vpts[vtk][2], varc.color[0], varc.color[1], varc.color[2], 0.95, 3.5 * (window.devicePixelRatio || 1));
+                            }
+                            if (vDotData.length > 0) {
+                                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vDotData), gl.DYNAMIC_DRAW);
+                                gl.vertexAttribPointer(p.aPos, 3, gl.FLOAT, false, 32, 0);
+                                gl.vertexAttribPointer(p.aColor, 4, gl.FLOAT, false, 32, 12);
+                                gl.vertexAttribPointer(p.aSize, 1, gl.FLOAT, false, 32, 28);
+                                gl.drawArrays(gl.POINTS, 0, vDotData.length / 8);
+                            }
+                        }
+                    }
+                }
+
+                // 2. Currently traveling CoreScope particle beams & white-core bead head
+                // Disable depth testing so packet lines & pulses ALWAYS render as top-most layer above all nodes & terrain
+                gl.disable(gl.DEPTH_TEST);
+                for (var b = active3DBeams.length - 1; b >= 0; b--) {
+                    var beam = active3DBeams[b];
+                    var elapsed = now - beam.startTime;
+                    var progress = Math.min(1.0, elapsed / beam.duration);
+
+                    var totalPts = beam.curve.length;
+                    var curIdx = Math.floor(progress * (totalPts - 1));
+                    var subPts = beam.curve.slice(0, Math.max(2, curIdx + 1));
+                    var bStyle = beam.style || 'solid';
+
+                    if (bStyle === 'solid') {
+                        gl.uniform1i(p.uRenderMode, 0);
+
+                        // Subtle glowing neon trail ribbon behind traveling packet (NO dots)
+                        // Subtle glowing neon trail ribbon behind traveling packet (NO dots)
+                        var bGlowRibbon = build3DRibbon(subPts, 5.0, beam.color, 0.30, curZoom, camPos);
+                        if (bGlowRibbon.length > 0) {
+                            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(bGlowRibbon), gl.DYNAMIC_DRAW);
+                            gl.vertexAttribPointer(p.aPos, 3, gl.FLOAT, false, 32, 0);
+                            gl.vertexAttribPointer(p.aColor, 4, gl.FLOAT, false, 32, 12);
+                            gl.vertexAttribPointer(p.aSize, 1, gl.FLOAT, false, 32, 28);
+                            gl.drawArrays(gl.TRIANGLE_STRIP, 0, bGlowRibbon.length / 8);
+                        }
+
+                        // Sharp saturated beam core transmission ribbon
+                        var bCoreRibbon = build3DRibbon(subPts, 2.2, beam.color, 0.95, curZoom, camPos);
+                        if (bCoreRibbon.length > 0) {
+                            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(bCoreRibbon), gl.DYNAMIC_DRAW);
+                            gl.vertexAttribPointer(p.aPos, 3, gl.FLOAT, false, 32, 0);
+                            gl.vertexAttribPointer(p.aColor, 4, gl.FLOAT, false, 32, 12);
+                            gl.vertexAttribPointer(p.aSize, 1, gl.FLOAT, false, 32, 28);
+                            gl.drawArrays(gl.TRIANGLE_STRIP, 0, bCoreRibbon.length / 8);
+                        }
+                    } else if (bStyle === 'dashed') {
+                        gl.uniform1i(p.uRenderMode, 0);
+                        var bDashCore = build3DDashes(subPts, 2.2, beam.color, 0.95, curZoom, camPos, 3, 2);
+                        if (bDashCore.length > 0) {
+                            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(bDashCore), gl.DYNAMIC_DRAW);
+                            gl.vertexAttribPointer(p.aPos, 3, gl.FLOAT, false, 32, 0);
+                            gl.vertexAttribPointer(p.aColor, 4, gl.FLOAT, false, 32, 12);
+                            gl.vertexAttribPointer(p.aSize, 1, gl.FLOAT, false, 32, 28);
+                            gl.drawArrays(gl.TRIANGLES, 0, bDashCore.length / 8);
+                        }
+                    } else if (bStyle === 'dotted') {
+                        gl.uniform1i(p.uRenderMode, 1);
+                        var bDotData = [];
+                        var bDotStep = Math.max(1, Math.round(subPts.length / 32));
+                        for (var btk = 0; btk < subPts.length; btk += bDotStep) {
+                            bDotData.push(subPts[btk][0], subPts[btk][1], subPts[btk][2], beam.color[0], beam.color[1], beam.color[2], 0.95, 3.5 * (window.devicePixelRatio || 1));
+                        }
+                        if (bDotData.length > 0) {
+                            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(bDotData), gl.DYNAMIC_DRAW);
+                            gl.vertexAttribPointer(p.aPos, 3, gl.FLOAT, false, 32, 0);
+                            gl.vertexAttribPointer(p.aColor, 4, gl.FLOAT, false, 32, 12);
+                            gl.vertexAttribPointer(p.aSize, 1, gl.FLOAT, false, 32, 28);
+                            gl.drawArrays(gl.POINTS, 0, bDotData.length / 8);
+                        }
+                    }
+
+                    // Traveling CoreScope saturated neon bead head
+                    var headPt = beam.curve[curIdx];
+                    if (headPt) {
+                        gl.uniform1i(p.uRenderMode, 2);
+                        var beadData = [
+                            headPt[0], headPt[1], headPt[2],
+                            beam.color[0], beam.color[1], beam.color[2], 1.0,
+                            9.0 * (window.devicePixelRatio || 1)
+                        ];
+                        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(beadData), gl.DYNAMIC_DRAW);
+                        gl.vertexAttribPointer(p.aPos, 3, gl.FLOAT, false, 32, 0);
+                        gl.vertexAttribPointer(p.aColor, 4, gl.FLOAT, false, 32, 12);
+                        gl.vertexAttribPointer(p.aSize, 1, gl.FLOAT, false, 32, 28);
+                        gl.drawArrays(gl.POINTS, 0, 1);
+                    }
+
+                    if (progress >= 1.0) {
+                        active3DBeams.splice(b, 1);
+                        if (beam.onComplete) beam.onComplete();
+                    }
+                }
+
+                // 3. Ground ripple pulses at hops (CoreScope hollow expanding radar rings flat on map terrain)
+                // Disable depth test during pulse rendering so foreground terrain never cuts off the bottom half into an arch
+                gl.disable(gl.DEPTH_TEST);
+                gl.uniform1i(p.uRenderMode, 0);
+                for (var pl = active3DPulses.length - 1; pl >= 0; pl--) {
+                    var pulse = active3DPulses[pl];
+                    var pElapsed = now - pulse.startTime;
+                    var pProg = pElapsed / pulse.duration;
+                    if (pProg >= 1.0) {
+                        active3DPulses.splice(pl, 1);
+                        continue;
+                    }
+                    var pAlpha = Math.max(0, 1.0 - pProg) * 0.95;
+                    var mercPerPx = 1.0 / (512.0 * Math.pow(2, curZoom));
+                    var rOut = (12.0 + pProg * 48.0) * mercPerPx;
+                    var rIn = Math.max(0, rOut - (4.0 + (1.0 - pProg) * 2.5) * mercPerPx);
+                    var cx = pulse.pos[0], cy = pulse.pos[1], cz = pulse.pos[2];
+                    var col = pulse.color;
+
+                    var ringVerts = [];
+                    var segments = 36;
+                    for (var seg = 0; seg <= segments; seg++) {
+                        var theta = (seg / segments) * 2.0 * Math.PI;
+                        var cosT = Math.cos(theta);
+                        var sinT = Math.sin(theta);
+                        ringVerts.push(
+                            cx + rIn * cosT, cy + rIn * sinT, cz,
+                            col[0], col[1], col[2], pAlpha * 0.20,
+                            1.0
+                        );
+                        ringVerts.push(
+                            cx + rOut * cosT, cy + rOut * sinT, cz,
+                            col[0], col[1], col[2], pAlpha * 0.95,
+                            1.0
+                        );
+                    }
+                    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(ringVerts), gl.DYNAMIC_DRAW);
+                    gl.vertexAttribPointer(p.aPos, 3, gl.FLOAT, false, 32, 0);
+                    gl.vertexAttribPointer(p.aColor, 4, gl.FLOAT, false, 32, 12);
+                    gl.vertexAttribPointer(p.aSize, 1, gl.FLOAT, false, 32, 28);
+                    gl.drawArrays(gl.TRIANGLE_STRIP, 0, ringVerts.length / 8);
+                }
+                gl.enable(gl.DEPTH_TEST);
+
+                // 3b. ADS-B 3D Cylindrical Airspace Altitude Divider Rings (Fine, delicate grey dotted rings)
+                if (window._lastAdsbCylinderMeta && typeof getCircle3DPoints === 'function') {
+                    var cylMeta = window._lastAdsbCylinderMeta;
+                    var cHeights = cylMeta.heights || [];
+                    var dotData = [];
+                    var dpr = (window.devicePixelRatio || 1);
+
+                    for (var chi = 0; chi < cHeights.length; chi++) {
+                        var hVal = cHeights[chi];
+                        var ringPts = getCircle3DPoints(cylMeta.lon, cylMeta.lat, cylMeta.radiusM, hVal, 192);
+                        for (var rpi = 0; rpi < ringPts.length; rpi++) {
+                            var rpt = ringPts[rpi];
+                            // Delicate soft neutral slate grey dot
+                            dotData.push(rpt[0], rpt[1], rpt[2], 0.70, 0.76, 0.86, 0.50, 2.2 * dpr);
+                        }
+                    }
+
+                    if (dotData.length > 0) {
+                        gl.disable(gl.DEPTH_TEST);
+                        gl.uniform1i(p.uRenderMode, 1); // Anti-aliased circular points
+                        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(dotData), gl.DYNAMIC_DRAW);
+                        gl.vertexAttribPointer(p.aPos, 3, gl.FLOAT, false, 32, 0);
+                        gl.vertexAttribPointer(p.aColor, 4, gl.FLOAT, false, 32, 12);
+                        gl.vertexAttribPointer(p.aSize, 1, gl.FLOAT, false, 32, 28);
+                        gl.drawArrays(gl.POINTS, 0, dotData.length / 8);
+                        gl.enable(gl.DEPTH_TEST);
+                    }
+                }
+
+                // 4. ADS-B 3D Aircraft Vertical Drop Lines, Ground Footprint Shadows, & Screen Projection
+                if (typeof active3DPlanes !== 'undefined' && active3DPlanes && active3DPlanes.length > 0) {
+                    var cCanvas = map3d.getCanvas();
+                    var cW = cCanvas ? cCanvas.clientWidth : 800;
+                    var cH = cCanvas ? cCanvas.clientHeight : 600;
+                    var curPitch = (map3d.getPitch ? map3d.getPitch() : 0);
+                    var curBearing = (map3d.getBearing ? map3d.getBearing() : 0);
+
+                    var stemVerts = [];
+                    var shadowVerts = [];
+
+                    for (var pi = 0; pi < active3DPlanes.length; pi++) {
+                        var planeItem = active3DPlanes[pi];
+                        var mcG = maplibregl.MercatorCoordinate.fromLngLat([planeItem.lon, planeItem.lat], planeItem.groundElev);
+                        var mcA = maplibregl.MercatorCoordinate.fromLngLat([planeItem.lon, planeItem.lat], planeItem.altM);
+
+                        // Color-code vertical stem line and ground radar footprint based on aircraft altitude
+                        var altFtVal = planeItem.altFt || 1000;
+                        var sColor = [0.49, 0.83, 0.99]; // Pale Blue (>25k ft)
+                        if (altFtVal < 2000) {
+                            sColor = [0.94, 0.27, 0.27]; // Red (<2k ft)
+                        } else if (altFtVal < 7000) {
+                            sColor = [0.85, 0.27, 0.94]; // Magenta (2k-7k ft)
+                        } else if (altFtVal < 25000) {
+                            sColor = [0.55, 0.36, 0.96]; // Purple (7k-25k ft)
+                        }
+
+                        // Vertical stem line from terrain directly to aircraft altitude
+                        stemVerts.push(mcG.x, mcG.y, mcG.z, sColor[0], sColor[1], sColor[2], 0.70, 1.0);
+                        stemVerts.push(mcA.x, mcA.y, mcA.z, sColor[0], sColor[1], sColor[2], 0.95, 1.0);
+
+                        // Ground contact shadow ring
+                        shadowVerts.push(mcG.x, mcG.y, mcG.z, sColor[0], sColor[1], sColor[2], 0.90, 12.0 * (window.devicePixelRatio || 1));
+
+                        // Project 3D coordinate to screen pixel
+                        var pW = matrix[3]*mcA.x + matrix[7]*mcA.y + matrix[11]*mcA.z + matrix[15];
+                        var planeDom = document.getElementById('adsb-plane-3d-' + planeItem.hex);
+                        if (planeDom) {
+                            if (pW > 0.0001) {
+                                var cX = matrix[0]*mcA.x + matrix[4]*mcA.y + matrix[8]*mcA.z + matrix[12];
+                                var cY = matrix[1]*mcA.x + matrix[5]*mcA.y + matrix[9]*mcA.z + matrix[13];
+                                var px = (cX / pW * 0.5 + 0.5) * cW;
+                                var py = (-cY / pW * 0.5 + 0.5) * cH;
+                                if (px >= -80 && px <= cW + 80 && py >= -80 && py <= cH + 80) {
+                                    planeDom.style.display = 'block';
+                                    planeDom.style.left = Math.round(px) + 'px';
+                                    planeDom.style.top = Math.round(py) + 'px';
+                                    var relTrack = (planeItem.track || 0) - curBearing;
+                                    var glyph = planeDom.querySelector('.adsb-plane-svg-glyph');
+                                    if (glyph) {
+                                        glyph.style.transform = 'perspective(800px) rotateX(' + curPitch.toFixed(1) + 'deg) rotateZ(' + relTrack.toFixed(1) + 'deg)';
+                                    }
+                                } else {
+                                    planeDom.style.display = 'none';
+                                }
+                            } else {
+                                planeDom.style.display = 'none';
+                            }
+                        }
+                    }
+
+                    // Render vertical stems and ground contact rings with DEPTH_TEST disabled so terrain elevation doesn't clip them
+                    gl.disable(gl.DEPTH_TEST);
+
+                    if (stemVerts.length > 0) {
+                        gl.uniform1i(p.uRenderMode, 0);
+                        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(stemVerts), gl.DYNAMIC_DRAW);
+                        gl.vertexAttribPointer(p.aPos, 3, gl.FLOAT, false, 32, 0);
+                        gl.vertexAttribPointer(p.aColor, 4, gl.FLOAT, false, 32, 12);
+                        gl.vertexAttribPointer(p.aSize, 1, gl.FLOAT, false, 32, 28);
+                        gl.lineWidth(2.0);
+                        gl.drawArrays(gl.LINES, 0, stemVerts.length / 8);
+                    }
+
+                    if (shadowVerts.length > 0) {
+                        gl.uniform1i(p.uRenderMode, 3);
+                        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(shadowVerts), gl.DYNAMIC_DRAW);
+                        gl.vertexAttribPointer(p.aPos, 3, gl.FLOAT, false, 32, 0);
+                        gl.vertexAttribPointer(p.aColor, 4, gl.FLOAT, false, 32, 12);
+                        gl.vertexAttribPointer(p.aSize, 1, gl.FLOAT, false, 32, 28);
+                        gl.drawArrays(gl.POINTS, 0, shadowVerts.length / 8);
+                    }
+
+                    // 4b. 3D Flight Contrails attached directly to floating 3D aircraft
+                    gl.uniform1i(p.uRenderMode, 0);
+                    for (var piTrail = 0; piTrail < active3DPlanes.length; piTrail++) {
+                        var planeItemT = active3DPlanes[piTrail];
+                        var hist = aircraftHistory[planeItemT.hex];
+                        if (!hist || hist.length < 2) continue;
+
+                        var trailPts = [];
+                        var lastX = null, lastY = null;
+                        for (var hi = 0; hi < hist.length; hi++) {
+                            var hPt = hist[hi];
+                            var hAltFt = hPt.alt_baro || planeItemT.altFt || 1000;
+                            var hRawAltM = Math.max(60, hAltFt * 0.3048);
+                            var hDisplayAltM = planeItemT.groundElev + Math.max(300, (hRawAltM / 10000.0) * 46000.0);
+                            var mcH = maplibregl.MercatorCoordinate.fromLngLat([hPt.lon, hPt.lat], hDisplayAltM);
+                            if (lastX !== null) {
+                                var dSq = (mcH.x - lastX)*(mcH.x - lastX) + (mcH.y - lastY)*(mcH.y - lastY);
+                                if (dSq < 4e-12) continue; // skip points closer than 2e-6
+                            }
+                            lastX = mcH.x;
+                            lastY = mcH.y;
+                            trailPts.push([mcH.x, mcH.y, mcH.z]);
+                        }
+
+                        var mcCurr = maplibregl.MercatorCoordinate.fromLngLat([planeItemT.lon, planeItemT.lat], planeItemT.altM);
+                        // Attach trail directly to the rear tail of the aircraft
+                        var trackRad = (planeItemT.track || 0) * Math.PI / 180.0;
+                        var tailOffsetM = 12.0;
+                        var cosLat = Math.max(0.1, Math.cos(planeItemT.lat * Math.PI / 180.0));
+                        var tailDLat = (tailOffsetM / 111320.0) * (-Math.cos(trackRad));
+                        var tailDLon = (tailOffsetM / (111320.0 * cosLat)) * (-Math.sin(trackRad));
+                        var mcTail = maplibregl.MercatorCoordinate.fromLngLat([planeItemT.lon + tailDLon, planeItemT.lat + tailDLat], planeItemT.altM);
+                        trailPts.push([mcTail.x, mcTail.y, mcTail.z]);
+
+                        if (trailPts.length >= 2) {
+                            // Soft vapor halo ribbon that fades out smoothly along the history
+                            var glowVerts = build3DRibbon(trailPts, 6.2, [0.10, 0.80, 0.98], 0.28, curZoom, camPos, true);
+                            if (glowVerts.length > 0) {
+                                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(glowVerts), gl.DYNAMIC_DRAW);
+                                gl.vertexAttribPointer(p.aPos, 3, gl.FLOAT, false, 32, 0);
+                                gl.vertexAttribPointer(p.aColor, 4, gl.FLOAT, false, 32, 12);
+                                gl.vertexAttribPointer(p.aSize, 1, gl.FLOAT, false, 32, 28);
+                                gl.drawArrays(gl.TRIANGLE_STRIP, 0, glowVerts.length / 8);
+                            }
+
+                            // Crisp contrail core ribbon with tail dissipation fade
+                            var trailVerts = build3DRibbon(trailPts, 3.2, [0.06, 0.75, 0.95], 0.80, curZoom, camPos, true);
+                            if (trailVerts.length > 0) {
+                                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(trailVerts), gl.DYNAMIC_DRAW);
+                                gl.vertexAttribPointer(p.aPos, 3, gl.FLOAT, false, 32, 0);
+                                gl.vertexAttribPointer(p.aColor, 4, gl.FLOAT, false, 32, 12);
+                                gl.vertexAttribPointer(p.aSize, 1, gl.FLOAT, false, 32, 28);
+                                gl.drawArrays(gl.TRIANGLE_STRIP, 0, trailVerts.length / 8);
+                            }
+                        }
+                    }
+                    gl.enable(gl.DEPTH_TEST);
+                }
+
+                gl.depthMask(true);
+                gl.disable(gl.BLEND);
+
+                // Repaint while animations, fading arcs, or active planes are present
+                if (active3DBeams.length > 0 || active3DPulses.length > 0 || hasActiveFading || (typeof active3DPlanes !== 'undefined' && active3DPlanes && active3DPlanes.length > 0)) {
+                    map3d.triggerRepaint();
+                }
+            }
+        };
+
+        function initMap3D() {
+            if (map3dInitialized) return;
+            map3dInitialized = true;
+
+            var curCenter = map.getCenter();
+            var curZoom = map.getZoom();
+
+            try {
+                map3d = new maplibregl.Map({
+                    container: 'map-3d',
+                    style: 'https://tiles.openfreemap.org/styles/dark',
+                    center: [curCenter.lng, curCenter.lat],
+                    zoom: Math.max(3, curZoom - 0.5),
+                    pitch: 58,
+                    bearing: 0,
+                    maxPitch: 85,
+                    pixelRatio: Math.min(window.devicePixelRatio || 1, 1.25),
+                    fadeDuration: 0,
+                    dragRotate: false,
+                    canvasContextAttributes: {
+                        antialias: false,
+                        powerPreference: 'high-performance'
+                    },
+                    transformRequest: function(url, resourceType) {
+                        if (url && (url.indexOf('elevation-tiles-prod/terrarium/7/62/40.png') !== -1 || url.indexOf('/7/62/40.png') !== -1)) {
+                            if (window._cleanDem76240) {
+                                return { url: window._cleanDem76240 };
+                            }
+                        }
+                        return { url: url };
+                    }
+                });
+
+                // Disable built-in right-click rotation; mouse middle-click (button 1) rotates and pitches map smoothly at 60fps
+                var isMiddleDragging = false;
+                var lastMouseX = 0;
+                var lastMouseY = 0;
+                var curTargetBearing = 0;
+                var curTargetPitch = 58;
+                var rafRotateId = null;
+
+                var container3D = document.getElementById('map-3d');
+                if (container3D) {
+                    container3D.addEventListener('mousedown', function(e) {
+                        if (e.button === 1) { // Middle click
+                            e.preventDefault();
+                            e.stopPropagation();
+                            isMiddleDragging = true;
+                            lastMouseX = e.clientX;
+                            lastMouseY = e.clientY;
+                            if (map3d) {
+                                curTargetBearing = map3d.getBearing();
+                                curTargetPitch = map3d.getPitch();
+                            }
+                            document.body.style.cursor = 'grab';
+                        }
+                    });
+                }
+
+                window.addEventListener('mousemove', function(e) {
+                    if (!isMiddleDragging || !map3d) return;
+                    e.preventDefault();
+                    var dx = e.clientX - lastMouseX;
+                    var dy = e.clientY - lastMouseY;
+                    lastMouseX = e.clientX;
+                    lastMouseY = e.clientY;
+
+                    curTargetBearing = (curTargetBearing + dx * 0.45) % 360;
+                    curTargetPitch = Math.max(0, Math.min(85, curTargetPitch - dy * 0.40));
+
+                    if (!rafRotateId) {
+                        rafRotateId = requestAnimationFrame(function() {
+                            rafRotateId = null;
+                            if (map3d && isMiddleDragging) {
+                                map3d.jumpTo({ bearing: curTargetBearing, pitch: curTargetPitch });
+                            }
+                        });
+                    }
+                });
+
+                window.addEventListener('mouseup', function(e) {
+                    if (e.button === 1 && isMiddleDragging) {
+                        isMiddleDragging = false;
+                        if (rafRotateId) {
+                            cancelAnimationFrame(rafRotateId);
+                            rafRotateId = null;
+                        }
+                        document.body.style.cursor = '';
+                    }
+                });
+
+                // Ensure 3D Floating Window Options (#map3dControls) is draggable
+                if (typeof makeOverlayDraggable === 'function') {
+                    makeOverlayDraggable('map3dControls', 'map3dControlsHeader', 'map_3d_controls');
+                }
+
+                // Zoom listeners to re-evaluate orbital companion visibility & LOD on zoom completion
+                map3d.on('zoomend', function() {
+                    if (window._companionOrbitalsActive && typeof syncOrbitalsTo3D === 'function') {
+                        syncOrbitalsTo3D();
+                    }
+                });
+
+                map3d.addControl(new maplibregl.NavigationControl({
+                    visualizePitch: true,
+                    showCompass: true,
+                    showZoom: true
+                }), 'bottom-right');
+
+                map3d.on('load', function() {
+                    console.log('[3D Map] MapLibre OpenFreeMap dark style loaded successfully');
+
+                    // 1. Add AWS Terrarium DEM (full global pyramid zoom 0-15, complete low-zoom coverage, zero CORS tile errors)
+                    try {
+                        map3d.addSource('terrain-dem', {
+                            type: 'raster-dem',
+                            tiles: [
+                                'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'
+                            ],
+                            encoding: 'terrarium',
+                            tileSize: 256,
+                            maxzoom: 12
+                        });
+                        map3d.setTerrain({
+                            source: 'terrain-dem',
+                            exaggeration: 1.5
+                        });
+                        map3d.setSky({
+                            'sky-color': '#0d1117',
+                            'sky-horizon-blend': 0.5,
+                            'horizon-color': '#161b22',
+                            'horizon-fog-blend': 0.5,
+                            'fog-color': '#0d1117',
+                            'fog-ground-blend': 0.5
+                        });
+                        map3d.addLayer({
+                            id: 'hillshade-layer',
+                            type: 'hillshade',
+                            source: 'terrain-dem',
+                            minzoom: 4,
+                            paint: {
+                                'hillshade-exaggeration': 0.85,
+                                'hillshade-shadow-color': '#000000',
+                                'hillshade-highlight-color': '#ffffff',
+                                'hillshade-accent-color': '#1f2937'
+                            }
+                        });
+                    } catch(te) {
+                        console.error('[3D Map] Error configuring terrain DEM:', te);
+                    }
+
+                    // 2. Initialize layer sources & custom WebGL layers
+                    try {
+                        // Scopes
+                        map3d.addSource('scopes-3d', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+                        map3d.addLayer({
+                            id: 'scopes-3d-fill',
+                            type: 'fill',
+                            source: 'scopes-3d',
+                            paint: {
+                                'fill-color': ['get', 'color'],
+                                'fill-opacity': ['get', 'fillOpacity']
+                            }
+                        });
+                        map3d.addLayer({
+                            id: 'scopes-3d-line',
+                            type: 'line',
+                            source: 'scopes-3d',
+                            paint: {
+                                'line-color': ['get', 'color'],
+                                'line-width': ['get', 'weight']
+                            }
+                        });
+
+                        // Heatmap
+                        map3d.addSource('heatmap-3d', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+                        map3d.addLayer({
+                            id: 'heatmap-3d-layer',
+                            type: 'heatmap',
+                            source: 'heatmap-3d',
+                            paint: {
+                                'heatmap-weight': ['get', 'weight'],
+                                'heatmap-intensity': 1.6,
+                                'heatmap-radius': 28,
+                                'heatmap-opacity': 0.70
+                            }
+                        });
+
+                        // Lightning
+                        map3d.addSource('lightning-3d', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+                        map3d.addLayer({
+                            id: 'lightning-3d-layer',
+                            type: 'circle',
+                            source: 'lightning-3d',
+                            paint: {
+                                'circle-color': ['get', 'color'],
+                                'circle-radius': 5,
+                                'circle-stroke-width': 1,
+                                'circle-stroke-color': '#ffffff'
+                            }
+                        });
+
+                        // ADS-B Trails
+                        map3d.addSource('adsb-3d-trails', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+                        map3d.addLayer({
+                            id: 'adsb-3d-trails-layer',
+                            type: 'line',
+                            source: 'adsb-3d-trails',
+                            paint: {
+                                'line-color': '#06B6D4',
+                                'line-width': 2.0,
+                                'line-opacity': 0.8
+                            }
+                        });
+
+                        // ADS-B 3D Vertical Multi-Tier Hologram Cylinder HUD
+                        map3d.addSource('adsb-3d-cylinder', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+                        map3d.addLayer({
+                            id: 'adsb-3d-cylinder-layer',
+                            type: 'fill-extrusion',
+                            source: 'adsb-3d-cylinder',
+                            paint: {
+                                'fill-extrusion-color': ['get', 'color'],
+                                'fill-extrusion-height': ['get', 'height'],
+                                'fill-extrusion-base': ['get', 'base_height'],
+                                'fill-extrusion-opacity': 0.22
+                            }
+                        });
+
+                        // ADS-B 3D Radial Range Rings (10, 25, 50 NM)
+                        map3d.addSource('adsb-3d-rings', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+                        map3d.addLayer({
+                            id: 'adsb-3d-rings-layer',
+                            type: 'line',
+                            source: 'adsb-3d-rings',
+                            paint: {
+                                'line-color': ['get', 'color'],
+                                'line-width': ['get', 'width'],
+                                'line-opacity': 0.65,
+                                'line-dasharray': [3, 2]
+                            }
+                        });
+
+                        // Satellites 3D Plumb Lines & Nadir Dots
+                        map3d.addSource('satellites-3d-plumb', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+                        map3d.addLayer({
+                            id: 'satellites-3d-plumb-lines',
+                            type: 'line',
+                            source: 'satellites-3d-plumb',
+                            filter: ['==', '$type', 'LineString'],
+                            paint: {
+                                'line-color': ['case', ['get', 'selected'], '#38BDF8', '#0EA5E9'],
+                                'line-width': ['case', ['get', 'selected'], 2.5, 1.4],
+                                'line-opacity': 0.85,
+                                'line-dasharray': [3, 2]
+                            }
+                        });
+                        map3d.addLayer({
+                            id: 'satellites-3d-nadir-dots',
+                            type: 'circle',
+                            source: 'satellites-3d-plumb',
+                            filter: ['==', '$type', 'Point'],
+                            paint: {
+                                'circle-color': ['case', ['get', 'selected'], '#38BDF8', '#06B6D4'],
+                                'circle-radius': ['case', ['get', 'selected'], 6, 3.5],
+                                'circle-stroke-width': 1.2,
+                                'circle-stroke-color': '#FFFFFF'
+                            }
+                        });
+
+                        // Satellites 3D Footprint Ring
+                        map3d.addSource('satellites-3d-footprints', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+                        map3d.addLayer({
+                            id: 'satellites-3d-footprints-line',
+                            type: 'line',
+                            source: 'satellites-3d-footprints',
+                            paint: {
+                                'line-color': '#0EA5E9',
+                                'line-width': 1.8,
+                                'line-opacity': 0.65,
+                                'line-dasharray': [4, 3]
+                            }
+                        });
+
+                        // Tropo
+                        map3d.addSource('tropo-3d', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+                        map3d.addLayer({
+                            id: 'tropo-3d-fill',
+                            type: 'fill',
+                            source: 'tropo-3d',
+                            paint: {
+                                'fill-color': ['get', 'fillColor'],
+                                'fill-opacity': ['get', 'fillOpacity']
+                            }
+                        });
+                        map3d.addLayer({
+                            id: 'tropo-3d-line',
+                            type: 'line',
+                            source: 'tropo-3d',
+                            paint: {
+                                'line-color': ['get', 'strokeColor'],
+                                'line-width': 1.0
+                            }
+                        });
+
+                        // Aurora
+                        map3d.addSource('aurora-3d', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+                        map3d.addLayer({
+                            id: 'aurora-3d-fill',
+                            type: 'fill',
+                            source: 'aurora-3d',
+                            paint: {
+                                'fill-color': ['get', 'fill'],
+                                'fill-opacity': 0.45
+                            }
+                        });
+
+                        // Register Room Server Diamond canvas image icon with soft magenta glow
+                        function createRoomDiamondIcon() {
+                            try {
+                                var dCanvas = document.createElement('canvas');
+                                dCanvas.width = 40;
+                                dCanvas.height = 40;
+                                var dctx = dCanvas.getContext('2d');
+                                dctx.translate(20, 20);
+                                dctx.rotate(45 * Math.PI / 180);
+                                dctx.shadowColor = '#D946EF';
+                                dctx.shadowBlur = 8;
+                                dctx.fillStyle = '#D946EF';
+                                dctx.fillRect(-10, -10, 20, 20);
+                                dctx.shadowBlur = 0;
+                                dctx.fillStyle = '#FFFFFF';
+                                dctx.fillRect(-4, -4, 8, 8);
+                                var img = new Image();
+                                img.onload = function() {
+                                    if (map3d && (!map3d.hasImage || !map3d.hasImage('room-server-diamond'))) {
+                                        map3d.addImage('room-server-diamond', img);
+                                    }
+                                };
+                                img.src = dCanvas.toDataURL();
+                            } catch(e) {
+                                console.warn('[3D Map] Failed creating room server diamond icon:', e);
+                            }
+                        }
+                        createRoomDiamondIcon();
+                        map3d.on('styleimagemissing', function(e) {
+                            if (e && e.id === 'room-server-diamond') createRoomDiamondIcon();
+                        });
+
+                        // High-Performance GPU Nodes Layer Source & Layers (Single WebGL Draw Call)
+                        map3d.addSource('nodes-3d', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+
+                        // Dedicated generous hit-target layer for effortless clicking and context menus (24px radius)
+                        map3d.addLayer({
+                            id: 'nodes-3d-hit-target',
+                            type: 'circle',
+                            source: 'nodes-3d',
+                            paint: {
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 6, 14.0, 12, 20.0, 16, 28.0],
+                                'circle-opacity': 0.001
+                            }
+                        });
+
+                        // 0. Soft Luminous Glowing Halo for all nodes (authentic GPU aura)
+                        map3d.addLayer({
+                            id: 'nodes-3d-halo',
+                            type: 'circle',
+                            source: 'nodes-3d',
+                            paint: {
+                                'circle-color': ['get', 'color'],
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 6, 4.5, 12, 8.0, 16, 13.0],
+                                'circle-blur': 0.85,
+                                'circle-opacity': 0.65
+                            }
+                        });
+
+                        // 1. Companion & Client nodes (delicate glowing pinpoint without harsh stroke)
+                        map3d.addLayer({
+                            id: 'nodes-3d-clients',
+                            type: 'circle',
+                            source: 'nodes-3d',
+                            filter: ['all', ['!=', ['get', 'is_repeater'], true], ['!=', ['get', 'is_room_server'], true]],
+                            paint: {
+                                'circle-color': ['get', 'color'],
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 6, 2.0, 12, 3.4, 16, 5.2],
+                                'circle-stroke-width': 0,
+                                'circle-opacity': ['coalesce', ['get', 'opacity'], 0.95]
+                            }
+                        });
+
+                        // 2. Repeaters (clean pinpoint dot; stroke only for active orbital beacon ring)
+                        map3d.addLayer({
+                            id: 'nodes-3d-repeaters',
+                            type: 'circle',
+                            source: 'nodes-3d',
+                            filter: ['all', ['==', ['get', 'is_repeater'], true], ['!=', ['get', 'is_room_server'], true]],
+                            paint: {
+                                'circle-color': ['get', 'color'],
+                                'circle-radius': ['interpolate', ['linear'], ['zoom'], 6, 2.8, 12, 4.5, 16, 7.2],
+                                'circle-stroke-width': ['case', ['get', 'is_orbital_beacon'], 2.0, 0],
+                                'circle-stroke-color': ['case', ['get', 'is_favorite'], '#AA55FF', '#FFD335'],
+                                'circle-opacity': ['coalesce', ['get', 'opacity'], 1.0]
+                            }
+                        });
+
+                        // 2b. Room Servers (prominent glowing diamond shape larger than repeaters)
+                        if (map3d.hasImage && map3d.hasImage('room-server-diamond')) {
+                            map3d.addLayer({
+                                id: 'nodes-3d-room-servers',
+                                type: 'symbol',
+                                source: 'nodes-3d',
+                                filter: ['==', ['get', 'is_room_server'], true],
+                                layout: {
+                                    'icon-image': 'room-server-diamond',
+                                    'icon-size': ['interpolate', ['linear'], ['zoom'], 6, 0.45, 12, 0.70, 16, 1.0],
+                                    'icon-allow-overlap': true,
+                                    'icon-ignore-placement': true
+                                }
+                            });
+                        } else {
+                            map3d.addLayer({
+                                id: 'nodes-3d-room-servers',
+                                type: 'circle',
+                                source: 'nodes-3d',
+                                filter: ['==', ['get', 'is_room_server'], true],
+                                paint: {
+                                    'circle-color': '#D946EF',
+                                    'circle-radius': ['interpolate', ['linear'], ['zoom'], 6, 3.5, 12, 6.0, 16, 9.0],
+                                    'circle-stroke-width': 1.5,
+                                    'circle-stroke-color': '#FFFFFF'
+                                }
+                            });
+                        }
+
+                        // 3. Repeater Aliases at higher zoom
+                        map3d.addLayer({
+                            id: 'nodes-3d-labels',
+                            type: 'symbol',
+                            source: 'nodes-3d',
+                            minzoom: 10.5,
+                            filter: ['==', ['get', 'is_repeater'], true],
+                            layout: {
+                                'text-field': ['get', 'alias'],
+                                'text-size': 10,
+                                'text-offset': [0, 1.2],
+                                'text-anchor': 'top',
+                                'text-optional': true
+                            },
+                            paint: {
+                                'text-color': '#E5E7EB',
+                                'text-halo-color': '#0d1117',
+                                'text-halo-width': 1.5
+                            }
+                        });
+
+                        // CoreScope 3D Arcs Custom WebGL Layer (Top-most layer above all nodes & terrain)
+                        map3d.addLayer(corescope3DLayer);
+
+                        function get3DNodeAtPoint(point, radiusPx) {
+                            radiusPx = radiusPx || 18;
+                            var bbox = [[point.x - radiusPx, point.y - radiusPx], [point.x + radiusPx, point.y + radiusPx]];
+                            var feats = map3d.queryRenderedFeatures(bbox, {
+                                layers: ['nodes-3d-hit-target', 'nodes-3d-repeaters', 'nodes-3d-room-servers', 'nodes-3d-clients', 'nodes-3d-halo']
+                            });
+                            if (feats && feats.length > 0) {
+                                var p = feats[0].properties;
+                                var nodeData = p;
+                                if (p && p.node_json) {
+                                    try { nodeData = JSON.parse(p.node_json); } catch(err) {}
+                                }
+                                return { feature: feats[0], properties: p, nodeData: nodeData };
+                            }
+                            return null;
+                        }
+
+                        function on3DNodeClick(e) {
+                            var hit = null;
+                            if (e.point) {
+                                hit = get3DNodeAtPoint(e.point, 20);
+                            } else if (e.features && e.features[0]) {
+                                var p = e.features[0].properties;
+                                var nd = p;
+                                if (p && p.node_json) {
+                                    try { nd = JSON.parse(p.node_json); } catch(ex){}
+                                }
+                                hit = { nodeData: nd, properties: p };
+                            }
+                            if (!hit || !hit.nodeData) return;
+                            var nodeData = hit.nodeData;
+                            if (window._map3dNodePopup) {
+                                try { window._map3dNodePopup.remove(); } catch(ex){}
+                            }
+                            var coords = (nodeData.lon != null && nodeData.lat != null) ?
+                                [Number(nodeData.lon), Number(nodeData.lat)] : e.lngLat;
+                            window._map3dNodePopup = new maplibregl.Popup({ offset: 12, className: 'custom-popup' })
+                                .setLngLat(coords)
+                                .setHTML(buildNodePopupContent(nodeData))
+                                .addTo(map3d);
+                        }
+
+                        map3d.on('click', on3DNodeClick);
+                        map3d.on('click', 'nodes-3d-hit-target', on3DNodeClick);
+                        map3d.on('click', 'nodes-3d-clients', on3DNodeClick);
+                        map3d.on('click', 'nodes-3d-repeaters', on3DNodeClick);
+                        map3d.on('click', 'nodes-3d-room-servers', on3DNodeClick);
+                        map3d.on('click', 'nodes-3d-halo', on3DNodeClick);
+
+                        function handle3DContextMenu(e) {
+                            if (e.originalEvent) {
+                                e.originalEvent.preventDefault();
+                                e.originalEvent.stopPropagation();
+                            }
+                            var hit = get3DNodeAtPoint(e.point, 22);
+                            if (hit && hit.nodeData) {
+                                var nd = hit.nodeData;
+                                if (window.pyBridge && window.pyBridge.on_node_context_menu) {
+                                    window.pyBridge.on_node_context_menu(
+                                        nd.node_id,
+                                        nd.alias || nd.node_id || '',
+                                        !!(nd.is_repeater || hit.properties.is_repeater),
+                                        !!(nd.is_phantom || hit.properties.is_phantom),
+                                        e.lngLat.lat,
+                                        e.lngLat.lng,
+                                        Math.round(e.point.x),
+                                        Math.round(e.point.y)
+                                    );
+                                }
+                                return;
+                            }
+                            if (window.pyBridge && window.pyBridge.on_map_context_menu) {
+                                window.pyBridge.on_map_context_menu(e.lngLat.lat, e.lngLat.lng, Math.round(e.point.x), Math.round(e.point.y));
+                            }
+                        }
+
+                        map3d.on('contextmenu', handle3DContextMenu);
+                        map3d.on('contextmenu', 'nodes-3d-hit-target', handle3DContextMenu);
+                        map3d.on('contextmenu', 'nodes-3d-clients', handle3DContextMenu);
+                        map3d.on('contextmenu', 'nodes-3d-room-servers', handle3DContextMenu);
+                        map3d.on('contextmenu', 'nodes-3d-repeaters', handle3DContextMenu);
+
+                        map3d.on('mousemove', function(e) {
+                            var hit = get3DNodeAtPoint(e.point, 18);
+                            map3d.getCanvas().style.cursor = hit ? 'pointer' : '';
+                        });
+                    } catch(le) {
+                        console.error('[3D Map] Error initializing 3D layers:', le);
+                    }
+
+                    syncAllLayersTo3D();
+                });
+            } catch(e) {
+                console.error('[3D Map] Failed initializing MapLibre GL:', e);
+            }
+        }
+
+        var _3dNodesDataMap = {};
+        var _3dNodesRaf = null;
+
+        function getNode3DVisualProperties(node) {
+            if (!node) return { color: '#06B6D4', opacity: 0.95, radius_scale: 1.0, is_orbital_beacon: false };
+            var isLocal = !!node.is_local;
+            var isPhantom = !!node.is_phantom;
+            var isRoom = !!node.is_room_server;
+            var isRep = !!node.is_repeater;
+            var isFav = !!node.is_favorite;
+
+            if (isLocal) {
+                return { color: '#10B981', opacity: 1.0, radius_scale: 1.25, is_orbital_beacon: false };
+            }
+
+            // 1. Search Node ID
+            if (window._searchNodeIdActive) {
+                var q = (window._searchNodeQuery || '').trim().toLowerCase().replace(/^[!@]+/, '');
+                var nid = (node.node_id || '').toLowerCase().replace(/^[!@]+/, '');
+                var als = (node.alias || '').toLowerCase().replace(/^[!@]+/, '');
+                var matched = q ? (nid.indexOf(q) !== -1 || als.indexOf(q) !== -1) : true;
+                if (matched) {
+                    return { color: '#23A55A', opacity: 1.0, radius_scale: 1.4, is_orbital_beacon: false };
+                } else {
+                    return { color: '#4E5058', opacity: 0.18, radius_scale: 0.85, is_orbital_beacon: false };
+                }
+            }
+
+            // 2. New Nodes Discovery
+            if (window._newNodesActive) {
+                var tfHours = window._newNodesTimeframeHours || 72;
+                var maxAgeMs = tfHours * 3600 * 1000;
+                var firstSeenStr = node.first_seen || '';
+                var isNew = false;
+                if (firstSeenStr) {
+                    var parsed = Date.parse(firstSeenStr);
+                    if (!isNaN(parsed) && parsed > 1704153600000 && (Date.now() - parsed) <= maxAgeMs) {
+                        isNew = true;
+                    }
+                }
+                if (isNew) {
+                    return { color: '#FFD700', opacity: 1.0, radius_scale: 1.4, is_orbital_beacon: false };
+                } else {
+                    return { color: '#4E5058', opacity: 0.18, radius_scale: 0.85, is_orbital_beacon: false };
+                }
+            }
+
+            // 3. MQTT Discovered Nodes
+            if (window._mqttNodesActive) {
+                var src = (node.source || '').toLowerCase().trim();
+                var isMqtt = (src === 'mqtt' || !!node.is_mqtt);
+                if (isMqtt && !isPhantom) {
+                    return { color: '#F97316', opacity: 1.0, radius_scale: 1.4, is_orbital_beacon: false };
+                } else {
+                    return { color: '#4E5058', opacity: 0.18, radius_scale: 0.85, is_orbital_beacon: false };
+                }
+            }
+
+            // 4. Node Activity Heatmap (Dedicated traffic analysis mode - takes priority over Path Modes and Scopes)
+            if (activityHeatmapActive) {
+                if (isRep || isRoom) {
+                    var cleanId = (node.node_id || '').toLowerCase().replace(/^[!@]+/, '');
+                    var cleanAlias = (node.alias || '').toLowerCase().replace(/^[!@]+/, '');
+                    var actMap = activityHeatmapData || {};
+                    var count = (actMap[cleanId] !== undefined) ? actMap[cleanId] : (actMap[cleanAlias] || 0);
+                    if (count <= 0) {
+                        return { color: '#4B5563', opacity: 0.20, radius_scale: 0.70, is_orbital_beacon: false };
+                    } else {
+                        var maxT = window._actMaxTraffic || 1;
+                        var ratio = maxT > 0 ? (count / maxT) : 0;
+                        var actColor = '#00D2FF';
+                        if (window._actRelative) {
+                            if (ratio >= 0.75) actColor = '#EF4444';
+                            else if (ratio >= 0.50) actColor = '#FB923C';
+                            else if (ratio >= 0.25) actColor = '#FACC15';
+                            else if (ratio >= 0.10) actColor = '#10B981';
+                            else actColor = '#00D2FF';
+                        } else {
+                            if (count > 10) actColor = '#EF4444';
+                            else if (count > 5) actColor = '#FB923C';
+                            else if (count > 2) actColor = '#FACC15';
+                            else if (count > 1) actColor = '#10B981';
+                            else actColor = '#00D2FF';
+                        }
+                        return { color: actColor, opacity: 1.0, radius_scale: 1.15 + (ratio * 0.50), is_orbital_beacon: false };
+                    }
+                } else {
+                    return { color: '#4B5563', opacity: 0.18, radius_scale: 0.70, is_orbital_beacon: false };
+                }
+            }
+
+            // 5. Path Modes
+            if (pathModesActive) {
+                var pLen = (node.out_path_len !== undefined && node.out_path_len !== null) ? Number(node.out_path_len) : -1;
+                var pMode = (node.out_path_hash_mode !== undefined && node.out_path_hash_mode !== null) ? Number(node.out_path_hash_mode) : -1;
+                if (window._pathMultihopOnly && (pMode <= 0 && pLen <= 0)) {
+                    return { color: '#4E5058', opacity: 0.20, radius_scale: 0.80, is_orbital_beacon: false };
+                }
+                if (pMode >= 0) {
+                    if (pMode === 0) return { color: '#EF4444', opacity: 1.0, radius_scale: 1.20, is_orbital_beacon: false };
+                    if (pMode === 1) return { color: '#00D2FF', opacity: 1.0, radius_scale: 1.20, is_orbital_beacon: false };
+                    return { color: '#00FF7F', opacity: 1.0, radius_scale: 1.20, is_orbital_beacon: false };
+                } else if (pLen > 0) {
+                    return { color: '#EF4444', opacity: 1.0, radius_scale: 1.20, is_orbital_beacon: false };
+                } else {
+                    return { color: '#6B7280', opacity: 0.70, radius_scale: 0.90, is_orbital_beacon: false };
+                }
+            }
+
+            // 6. Scopes
+            if (window._scopeOverlaysActive && isRep) {
+                var scMeta = (window._scopeNodeMap && (window._scopeNodeMap[node.node_id] || (node.alias && window._scopeNodeMap[node.alias]))) ? (window._scopeNodeMap[node.node_id] || window._scopeNodeMap[node.alias]) : null;
+                if (scMeta) {
+                    var isFiltered = (window._activeScopeFilter !== 'all' && window._activeScopeFilter !== scMeta.scope_name);
+                    if (isFiltered) {
+                        return { color: scMeta.color || '#00E5FF', opacity: 0.15, radius_scale: 0.80, is_orbital_beacon: false };
+                    } else {
+                        return { color: scMeta.color || '#00E5FF', opacity: 1.0, radius_scale: (window._scopeHighlight ? 1.35 : 1.15), is_orbital_beacon: false };
+                    }
+                } else {
+                    return { color: '#4E5058', opacity: (window._scopeHighlight ? 0.20 : 0.35), radius_scale: 0.80, is_orbital_beacon: false };
+                }
+            }
+
+            // 7. Companion Orbitals
+            var hasDocked = false;
+            if (window._companionOrbitalsActive && isRep && window._dockedCompanionsData) {
+                var dList = window._dockedCompanionsData[node.node_id] || window._dockedCompanionsData[node.alias];
+                if (!dList && node.alias) {
+                    dList = window._dockedCompanionsData['@' + node.alias] || window._dockedCompanionsData[node.alias.replace(/^@/, '')];
+                }
+                if (dList && dList.length > 0) hasDocked = true;
+            }
+            if (hasDocked) {
+                return {
+                    color: isFav ? '#AA55FF' : '#FFD335',
+                    opacity: 1.0,
+                    radius_scale: 1.30,
+                    is_orbital_beacon: true
+                };
+            }
+
+            // 8. Base colors
+            if (isPhantom) return { color: '#64748B', opacity: 0.85, radius_scale: 0.90, is_orbital_beacon: false };
+            if (isRoom) return { color: '#D946EF', opacity: 1.0, radius_scale: 1.35, is_orbital_beacon: false };
+            if (isFav) return { color: '#AA55FF', opacity: 1.0, radius_scale: 1.15, is_orbital_beacon: false };
+            if (isRep) return { color: '#3B82F6', opacity: 1.0, radius_scale: 1.10, is_orbital_beacon: false };
+            return { color: '#06B6D4', opacity: 0.95, radius_scale: 1.0, is_orbital_beacon: false };
+        }
+        window.getNode3DVisualProperties = getNode3DVisualProperties;
+
+        function getNodeHexColor(node) {
+            if (!node) return '#06B6D4';
+            if (node.is_phantom) return '#64748B';
+            if (node.is_local) return '#10B981';
+            if (node.is_room_server) return '#EC4899';
+            if (node.is_favorite) return '#AA55FF';
+            if (node.is_repeater) return '#3B82F6';
+            if (window._newNodesActive) {
+                var tfHours = window._newNodesTimeframeHours || 72;
+                var maxAgeMs = tfHours * 3600 * 1000;
+                var firstSeenStr = node.first_seen || '';
+                if (firstSeenStr) {
+                    var parsedFs = Date.parse(firstSeenStr);
+                    if (!isNaN(parsedFs) && parsedFs > 1704153600000 && (Date.now() - parsedFs) <= maxAgeMs) {
+                        return '#FBBF24';
+                    }
+                }
+            }
+            var src = (node.source || '').toLowerCase().trim();
+            if (src === 'mqtt' || !!node.is_mqtt) return '#FB923C';
+            return '#06B6D4';
+        }
+
+        function flushNodesTo3D() {
+            if (!map3d || !map3d.getSource('nodes-3d')) return;
+            var features = [];
+            for (var nid in _3dNodesDataMap) {
+                var node = _3dNodesDataMap[nid];
+                if (!node || node.lat == null || node.lon == null) continue;
+                var vProps = getNode3DVisualProperties(node);
+                features.push({
+                    type: 'Feature',
+                    properties: {
+                        node_id: node.node_id,
+                        alias: node.alias || node.node_id,
+                        is_repeater: !!node.is_repeater,
+                        is_favorite: !!node.is_favorite,
+                        is_room_server: !!node.is_room_server,
+                        is_phantom: !!node.is_phantom,
+                        is_local: !!node.is_local,
+                        is_orbital_beacon: !!vProps.is_orbital_beacon,
+                        color: vProps.color,
+                        opacity: vProps.opacity,
+                        radius_scale: vProps.radius_scale,
+                        node_json: JSON.stringify(node)
+                    },
+                    geometry: {
+                        type: 'Point',
+                        coordinates: [Number(node.lon), Number(node.lat)]
+                    }
+                });
+            }
+            map3d.getSource('nodes-3d').setData({
+                type: 'FeatureCollection',
+                features: features
+            });
+        }
+
+        function syncAllNodesTo3D() {
+            if (!map3d) return;
+            _3dNodesDataMap = {};
+            for (var nid in markers) {
+                var m = markers[nid];
+                if (m && m._nodeData) {
+                    _3dNodesDataMap[nid] = m._nodeData;
+                }
+            }
+            flushNodesTo3D();
+        }
+        window.syncAllNodesTo3D = syncAllNodesTo3D;
+
+        function addOrUpdate3DNode(node) {
+            if (!map3d || !node || node.lat == null || node.lon == null) return;
+            _3dNodesDataMap[node.node_id] = node;
+            if (!_3dNodesRaf) {
+                _3dNodesRaf = requestAnimationFrame(function() {
+                    _3dNodesRaf = null;
+                    flushNodesTo3D();
+                });
+            }
+        }
+        window.addOrUpdate3DNode = addOrUpdate3DNode;
+
+        function style3DDot(dot, node) {
+            var isPhantom = !!node.is_phantom;
+            var isLocal = !!node.is_local;
+            var isRoom = !!node.is_room_server;
+            var isFav = !!node.is_favorite;
+            var isRep = !!node.is_repeater;
+            var src = (node.source || '').toLowerCase().trim();
+            var isMqtt = (src === 'mqtt' || !!node.is_mqtt);
+
+            var dotClass = 'node-dot ';
+            if (isPhantom) dotClass += 'node-dot-phantom';
+            else if (isLocal) dotClass += 'node-dot-local';
+            else if (isRoom) dotClass += 'node-dot-room';
+            else if (isFav) dotClass += 'node-dot-favorite' + (isRep ? ' node-dot-repeater' : '');
+            else if (isRep) dotClass += 'node-dot-repeater';
+            else dotClass += 'node-dot-companion';
+
+            if (window._companionOrbitalsActive && isRep) {
+                dotClass += ' orbital-ring-repeater';
+                if (isFav) dotClass += ' orbital-ring-repeater-fav';
+            }
+
+            if (window._newNodesActive) {
+                var tfHours = window._newNodesTimeframeHours || 72;
+                var maxAgeMs = tfHours * 3600 * 1000;
+                var firstSeenStr = node.first_seen || '';
+                var isNew = false;
+                var baselineCutoff = 1704153600000;
+                if (firstSeenStr) {
+                    try {
+                        var parsed = Date.parse(firstSeenStr);
+                        if (!isNaN(parsed) && parsed > baselineCutoff) {
+                            var ageMs = Date.now() - parsed;
+                            if (ageMs >= 0 && ageMs <= maxAgeMs) {
+                                isNew = true;
+                            }
+                        }
+                    } catch(e) {}
+                }
+                if (isNew) {
+                    dot.style.opacity = '1.0';
+                    dot.style.setProperty('background', '#FFD700', 'important');
+                    dot.style.setProperty('background-color', '#FFD700', 'important');
+                    dot.style.setProperty('border', '2px solid #FFFFFF', 'important');
+                    dot.style.setProperty('box-shadow', '0 0 16px rgba(255, 215, 0, 0.95), 0 0 6px #FFFFFF', 'important');
+                    dot.style.transform = 'scale(1.4)';
+                } else {
+                    dot.style.opacity = '0.18';
+                    dot.style.setProperty('background', '#4E5058', 'important');
+                    dot.style.setProperty('background-color', '#4E5058', 'important');
+                    dot.style.removeProperty('border');
+                    dot.style.setProperty('box-shadow', 'none', 'important');
+                    dot.style.transform = 'scale(0.85)';
+                }
+                dot.className = dotClass;
+                return;
+            }
+
+            if (window._mqttNodesActive) {
+                if (isMqtt && !isLocal && !isPhantom) {
+                    dotClass += ' node-3d-mqtt';
+                    dot.style.setProperty('background', '#F97316', 'important');
+                    dot.style.setProperty('background-color', '#F97316', 'important');
+                    dot.style.setProperty('border', '1.5px solid #FFFFFF', 'important');
+                    dot.style.setProperty('box-shadow', '0 0 16px rgba(249, 115, 22, 0.95), 0 0 6px #FFFFFF', 'important');
+                    dot.style.opacity = '1.0';
+                } else {
+                    dot.style.opacity = '0.18';
+                    dot.style.setProperty('background', '#4E5058', 'important');
+                    dot.style.setProperty('background-color', '#4E5058', 'important');
+                }
+            } else {
+                dot.style.removeProperty('background');
+                dot.style.removeProperty('background-color');
+                dot.style.removeProperty('border');
+                dot.style.removeProperty('box-shadow');
+                dot.style.opacity = '1.0';
+            }
+            dot.className = dotClass;
+        }
+
+        function generate3DArcPoints(lng1, lat1, lng2, lat2, steps) {
+            steps = steps || 64;
+            var dLng = (lng2 - lng1) * Math.cos((lat1 + lat2) * Math.PI / 360);
+            var dLat = lat2 - lat1;
+            var distKm = Math.sqrt(dLng * dLng + dLat * dLat) * 111.0;
+
+            var terrainExag = 2.5;
+            if (map3d && map3d.getTerrain) {
+                var terr = map3d.getTerrain();
+                if (terr && typeof terr.exaggeration === 'number') {
+                    terrainExag = terr.exaggeration;
+                }
+            }
+
+            var elev1 = 0, elev2 = 0;
+            if (map3d && map3d.queryTerrainElevation) {
+                try {
+                    elev1 = Math.max(0, map3d.queryTerrainElevation([lng1, lat1]) || 0);
+                    elev2 = Math.max(0, map3d.queryTerrainElevation([lng2, lat2]) || 0);
+                } catch(e) {}
+            }
+            var renderedElev1 = elev1 * terrainExag;
+            var renderedElev2 = elev2 * terrainExag;
+
+            // Sample intermediate points to find maximum rendered terrain elevation along the trajectory
+            var maxInterElev = Math.max(renderedElev1, renderedElev2);
+            var sampleSteps = Math.min(24, steps);
+            for (var s = 1; s < sampleSteps; s++) {
+                var st = s / sampleSteps;
+                var slng = lng1 + (lng2 - lng1) * st;
+                var slat = lat1 + (lat2 - lat1) * st;
+                if (map3d && map3d.queryTerrainElevation) {
+                    try {
+                        var sElev = Math.max(0, map3d.queryTerrainElevation([slng, slat]) || 0) * terrainExag;
+                        if (sElev > maxInterElev) maxInterElev = sElev;
+                    } catch(e) {}
+                }
+            }
+
+            // Apex altitude must clear the highest mountain peak between endpoints + tropospheric curve
+            var apexClearance = Math.min(3500, Math.max(120, distKm * 40));
+            var peakApexAlt = maxInterElev + apexClearance;
+
+            var points = [];
+            for (var i = 0; i <= steps; i++) {
+                var t = i / steps;
+                var curLng = lng1 + (lng2 - lng1) * t;
+                var curLat = lat1 + (lat2 - lat1) * t;
+                var localGround = 0;
+                if (map3d && map3d.queryTerrainElevation) {
+                    try {
+                        localGround = Math.max(0, map3d.queryTerrainElevation([curLng, curLat]) || 0) * terrainExag;
+                    } catch(e) {}
+                }
+
+                // Smooth linear baseline between endpoints
+                var linearBase = renderedElev1 * (1.0 - t) + renderedElev2 * t;
+                // Parabolic arc dome
+                var parabola = 4.0 * t * (1.0 - t);
+                // Total altitude guaranteed to clear both the parabolic curve AND local mountain ridges by at least 70m
+                var arcAlt = linearBase + (peakApexAlt - Math.min(renderedElev1, renderedElev2)) * parabola;
+                var totalAlt = Math.max(localGround + 70, arcAlt);
+
+                var mc = maplibregl.MercatorCoordinate.fromLngLat([curLng, curLat], totalAlt);
+                points.push([mc.x, mc.y, mc.z]);
+            }
+            return points;
+        }
+        window.generate3DArcPoints = generate3DArcPoints;
+
+        function generate3DArcCoordinates(start, end, steps) {
+            // Backward-compatible signature accepting [lng, lat]
+            var lng1 = start[0], lat1 = start[1];
+            var lng2 = end[0], lat2 = end[1];
+            return generate3DArcPoints(lng1, lat1, lng2, lat2, steps);
+        }
+        window.generate3DArcCoordinates = generate3DArcCoordinates;
+
+        function trigger3DPulse(lng, lat, colorRgb) {
+            if (!map3d) return;
+            if (map3d.getLayer && map3d.getLayer('corescope-3d-arcs')) {
+                try { map3d.moveLayer('corescope-3d-arcs'); } catch(e) {}
+            }
+            var terrainExag = 2.5;
+            if (map3d && map3d.getTerrain) {
+                var terr = map3d.getTerrain();
+                if (terr && typeof terr.exaggeration === 'number') {
+                    terrainExag = terr.exaggeration;
+                }
+            }
+            var elev = 0;
+            if (map3d.queryTerrainElevation) {
+                try { elev = Math.max(0, map3d.queryTerrainElevation([lng, lat]) || 0); } catch(e) {}
+            }
+            var mc = maplibregl.MercatorCoordinate.fromLngLat([lng, lat], elev * terrainExag + 10);
+            active3DPulses.push({
+                pos: [mc.x, mc.y, mc.z],
+                lng: lng,
+                lat: lat,
+                elev: elev * terrainExag + 10,
+                color: colorRgb || [0.2, 0.8, 1.0],
+                startTime: performance.now(),
+                duration: 950
+            });
+            if (map3d) map3d.triggerRepaint();
+        }
+
+        function tracePacketPath3D(meta, coords) {
+            // Flexible argument order support: (meta, coords) or (coords, meta)
+            if (Array.isArray(meta) && (!coords || !Array.isArray(coords))) {
+                var tmp = meta;
+                meta = coords || {};
+                coords = tmp;
+            }
+            if (!map3d || !coords || coords.length < 2) return;
+            meta = meta || {};
+            if (map3d.getLayer && map3d.getLayer('corescope-3d-arcs')) {
+                try { map3d.moveLayer('corescope-3d-arcs'); } catch(e) {}
+            }
+
+            var pType = (meta.payload_type || meta.route_type || 'FLOOD').toUpperCase();
+            var isMqtt = meta && (meta.source === 'mqtt' || (meta.packet_id && meta.packet_id.indexOf('mqtt-') === 0));
+
+            // Legend color mapping:
+            // green is advert, blue is group text message, gold is direct, purple is data request, red is route trace
+            var colorHex = '#3B82F6'; // Default Blue (Group text message)
+            if (isMqtt) {
+                colorHex = '#F97316'; // Ingested MQTT
+            } else if (pType === 'ADVERT') {
+                colorHex = '#22C55E'; // Green (Advert)
+            } else if (pType === 'GRP_TXT' || pType === 'FLOOD') {
+                colorHex = '#3B82F6'; // Blue (Group text)
+            } else if (pType === 'TXT_MSG' || pType === 'DIRECT') {
+                colorHex = '#F59E0B'; // Gold (Direct text)
+            } else if (pType === 'REQ' || pType === 'GRP_DATA' || pType === 'ANON_REQ') {
+                colorHex = '#A855F7'; // Purple (Data request)
+            } else if (pType === 'TRACE' || pType === 'PATH') {
+                colorHex = '#EF4444'; // Red (Route trace)
+            } else if (TYPE_COLORS[pType]) {
+                colorHex = TYPE_COLORS[pType];
+            } else if (meta.color) {
+                colorHex = meta.color;
+            }
+
+            // Default packet-level style fallback:
+            // solid is verified rf hop, dashes is ambiguous hop (collision), dotted is inferred step (no gps / mqtt)
+            var lineStyle = 'solid';
+            if (meta.is_ambiguous) {
+                lineStyle = 'dashed';
+            } else if (meta.is_inferred || meta.is_no_gps || meta.is_unknown || meta.is_phantom || isMqtt) {
+                lineStyle = 'dotted';
+            }
+
+            var rgb = hexToRgb(colorHex);
+            var normColor = [rgb[0] / 255.0, rgb[1] / 255.0, rgb[2] / 255.0];
+
+            // Tactical origin radar pulse on terrain
+            trigger3DPulse(coords[0][1], coords[0][0], normColor);
+
+            // Sequential CoreScope hop animation across 3D terrain:
+            // Shows trail ONLY between the last node and the next node.
+            // When a node receives a message, it pulses with hollow radar ring.
+            function runHop3D(hopIdx) {
+                if (hopIdx >= coords.length - 1) {
+                    return;
+                }
+
+                var p1 = coords[hopIdx];
+                var p2 = coords[hopIdx + 1];
+                var curvePts = generate3DArcPoints(p1[1], p1[0], p2[1], p2[0], 64);
+
+                // Resolve style per hop segment if hop_metas is available:
+                var hMeta = (meta.hop_metas && meta.hop_metas[hopIdx]) ? meta.hop_metas[hopIdx] : meta;
+                var hopStyle = 'solid';
+                if (hMeta.is_ambiguous) {
+                    hopStyle = 'dashed';
+                } else if (hMeta.is_inferred || hMeta.is_no_gps || hMeta.is_unknown || hMeta.is_phantom) {
+                    hopStyle = 'dotted';
+                } else if (isMqtt && coords.length <= 2) {
+                    hopStyle = 'dotted';
+                } else {
+                    hopStyle = lineStyle;
+                }
+
+                active3DBeams.push({
+                    curve: curvePts,
+                    color: normColor,
+                    style: hopStyle,
+                    startTime: performance.now(),
+                    duration: 520,
+                    hopIdx: hopIdx,
+                    onComplete: function() {
+                        // Receiving node triggers radar pulse effect upon receiving packet
+                        trigger3DPulse(p2[1], p2[0], normColor);
+                        // Progress to next hop (trail only between last and next node, no lingering past trails)
+                        runHop3D(hopIdx + 1);
+                    }
+                });
+                if (map3d) map3d.triggerRepaint();
+            }
+
+            runHop3D(0);
+        }
+        window.tracePacketPath3D = tracePacketPath3D;
+
+        // --- 3D Map View Layer Synchronizers ---
+        function syncScopesTo3D() {
+            if (!map3d || !map3d.getSource('scopes-3d')) return;
+            if (!window._scopeOverlaysActive || !window._scopeData) {
+                map3d.getSource('scopes-3d').setData({ type: 'FeatureCollection', features: [] });
+                return;
+            }
+
+            var features = [];
+            for (var sKey in window._scopeData) {
+                var sInfo = window._scopeData[sKey];
+                var sColor = sInfo.color || '#00E5FF';
+                var sNodes = sInfo.nodes || [];
+
+                var isSelected = (window._activeScopeFilter === 'all' || window._activeScopeFilter === sKey);
+                if (!isSelected && window._activeScopeFilter !== 'all') continue;
+
+                var pts = [];
+                for (var i = 0; i < sNodes.length; i++) {
+                    if (sNodes[i].latitude && sNodes[i].longitude) {
+                        pts.push([sNodes[i].latitude, sNodes[i].longitude]);
+                    }
+                }
+                if (pts.length === 0) continue;
+
+                var fillOp = isSelected ? (window._scopeHighlight ? 0.35 : 0.15) : 0.04;
+                var weight = isSelected ? (window._scopeHighlight ? 3.5 : 2.0) : 1.0;
+
+                if (pts.length === 1) {
+                    var cLat = pts[0][0], cLon = pts[0][1];
+                    var ring = [];
+                    var dDegLat = 20.0 / 111.0;
+                    var dDegLon = 20.0 / (111.0 * Math.cos(cLat * Math.PI / 180.0));
+                    for (var a = 0; a <= 36; a++) {
+                        var rad = (a * 10) * Math.PI / 180.0;
+                        ring.push([cLon + dDegLon * Math.cos(rad), cLat + dDegLat * Math.sin(rad)]);
+                    }
+                    features.push({
+                        type: 'Feature',
+                        properties: { scope: sKey, color: sColor, fillOpacity: fillOp, weight: weight },
+                        geometry: { type: 'Polygon', coordinates: [ring] }
+                    });
+                } else if (pts.length === 2) {
+                    var lat1 = pts[0][0], lon1 = pts[0][1];
+                    var lat2 = pts[1][0], lon2 = pts[1][1];
+                    var dLat = (lat2 - lat1), dLon = (lon2 - lon1);
+                    var len = Math.sqrt(dLat*dLat + dLon*dLon) || 1;
+                    var nLat = -dLon / len * 0.12;
+                    var nLon = dLat / len * 0.12;
+                    var ring = [
+                        [lon1 + nLon, lat1 + nLat],
+                        [lon2 + nLon, lat2 + nLat],
+                        [lon2 - nLon, lat2 - nLat],
+                        [lon1 - nLon, lat1 - nLat],
+                        [lon1 + nLon, lat1 + nLat]
+                    ];
+                    features.push({
+                        type: 'Feature',
+                        properties: { scope: sKey, color: sColor, fillOpacity: fillOp, weight: weight },
+                        geometry: { type: 'Polygon', coordinates: [ring] }
+                    });
+                } else {
+                    var hullPts = computeConvexHull(pts);
+                    if (hullPts.length >= 3) {
+                        var exp = expandPolygonOutward(hullPts, 0.08);
+                        var ring = exp.map(function(p) { return [p[1], p[0]]; });
+                        ring.push(ring[0]);
+                        features.push({
+                            type: 'Feature',
+                            properties: { scope: sKey, color: sColor, fillOpacity: fillOp, weight: weight },
+                            geometry: { type: 'Polygon', coordinates: [ring] }
+                        });
+                    }
+                }
+            }
+
+            map3d.getSource('scopes-3d').setData({
+                type: 'FeatureCollection',
+                features: features
+            });
+        }
+        window.syncScopesTo3D = syncScopesTo3D;
+
+        function syncHeatmapTo3D() {
+            if (!map3d || !map3d.getSource('heatmap-3d')) return;
+            if (!activityHeatmapActive) {
+                map3d.getSource('heatmap-3d').setData({ type: 'FeatureCollection', features: [] });
+                return;
+            }
+            var features = [];
+            var maxVal = window._actMaxTraffic || 1;
+            var actMap = activityHeatmapData || {};
+            for (var nid in markers) {
+                var m = markers[nid];
+                if (!m || !m._nodeData || m._nodeData.lat == null || m._nodeData.lon == null) continue;
+                var nd = m._nodeData;
+                var cleanId = (nd.node_id || '').toLowerCase().replace(/^[!@]+/, '');
+                var cleanAlias = (nd.alias || '').toLowerCase().replace(/^[!@]+/, '');
+                var act = (actMap[cleanId] !== undefined) ? actMap[cleanId] : (actMap[cleanAlias] || 0);
+                if (act <= 0) continue;
+                var normWeight = Math.min(1.0, Math.max(0.15, act / maxVal));
+                features.push({
+                    type: 'Feature',
+                    properties: { weight: normWeight },
+                    geometry: {
+                        type: 'Point',
+                        coordinates: [nd.lon, nd.lat]
+                    }
+                });
+            }
+            map3d.getSource('heatmap-3d').setData({
+                type: 'FeatureCollection',
+                features: features
+            });
+        }
+        window.syncHeatmapTo3D = syncHeatmapTo3D;
+
+        function syncThunderstormTo3D() {
+            if (!map3d) return;
+            // 1. Radar raster layer
+            try {
+                if (!thunderstormActive || !window._radarMeta) {
+                    if (map3d.getLayer('rainviewer-3d-layer')) map3d.removeLayer('rainviewer-3d-layer');
+                    if (map3d.getSource('rainviewer-3d')) map3d.removeSource('rainviewer-3d');
+                } else {
+                    var frames = window._radarMeta.frames || [];
+                    var framePath = window._radarMeta.path || '';
+                    if (frames.length > 0 && window._radarFrameIdx >= 0 && window._radarFrameIdx < frames.length) {
+                        framePath = frames[window._radarFrameIdx].path;
+                    }
+                    if (framePath) {
+                        var tileUrl = window._radarMeta.host + framePath + '/256/{z}/{x}/{y}/2/1_1.png';
+                        if (map3d.getSource('rainviewer-3d')) {
+                            if (map3d.getLayer('rainviewer-3d-layer')) map3d.removeLayer('rainviewer-3d-layer');
+                            map3d.removeSource('rainviewer-3d');
+                        }
+                        map3d.addSource('rainviewer-3d', {
+                            type: 'raster',
+                            tiles: [tileUrl],
+                            tileSize: 256,
+                            maxzoom: 7
+                        });
+                        map3d.addLayer({
+                            id: 'rainviewer-3d-layer',
+                            type: 'raster',
+                            source: 'rainviewer-3d',
+                            paint: { 'raster-opacity': 0.65 }
+                        });
+                    }
+                }
+            } catch(e) {
+                console.error('[3D Map] syncThunderstormTo3D radar error:', e);
+            }
+
+            // 2. Lightning strikes
+            try {
+                if (!map3d.getSource('lightning-3d')) return;
+                if (!thunderstormActive || !lightningStrikesList || lightningStrikesList.length === 0) {
+                    map3d.getSource('lightning-3d').setData({ type: 'FeatureCollection', features: [] });
+                    return;
+                }
+                var now = Date.now();
+                var lFeatures = [];
+                for (var i = 0; i < lightningStrikesList.length; i++) {
+                    var s = lightningStrikesList[i];
+                    var ageSec = (now - s.time) / 1000.0;
+                    if (ageSec > 1200) continue;
+                    var lColor = ageSec < 120 ? '#FDE047' : (ageSec < 600 ? '#FB923C' : '#EF4444');
+                    lFeatures.push({
+                        type: 'Feature',
+                        properties: { color: lColor, age: ageSec },
+                        geometry: {
+                            type: 'Point',
+                            coordinates: [s.lon, s.lat]
+                        }
+                    });
+                }
+                map3d.getSource('lightning-3d').setData({
+                    type: 'FeatureCollection',
+                    features: lFeatures
+                });
+            } catch(e) {
+                console.error('[3D Map] syncThunderstormTo3D lightning error:', e);
+            }
+        }
+        window.syncThunderstormTo3D = syncThunderstormTo3D;
+
+        function makeCirclePolygon3D(cLon, cLat, radiusMeters, steps) {
+            steps = steps || 48;
+            var ring = [];
+            var dLat = radiusMeters / 111320.0;
+            var dLon = radiusMeters / (111320.0 * Math.cos(cLat * Math.PI / 180.0));
+            for (var i = 0; i <= steps; i++) {
+                var rad = (i * 2.0 * Math.PI) / steps;
+                ring.push([cLon + dLon * Math.sin(rad), cLat + dLat * Math.cos(rad)]);
+            }
+            return [ring];
+        }
+
+        function makeHollowCirclePolygon3D(cLon, cLat, radiusMeters, wallThicknessMeters, steps) {
+            steps = steps || 64;
+            wallThicknessMeters = wallThicknessMeters || Math.max(800, radiusMeters * 0.015);
+            var innerRadius = Math.max(10, radiusMeters - wallThicknessMeters);
+            var outerRing = [];
+            var innerRing = [];
+            var dLatOut = radiusMeters / 111320.0;
+            var dLonOut = radiusMeters / (111320.0 * Math.cos(cLat * Math.PI / 180.0));
+            var dLatIn = innerRadius / 111320.0;
+            var dLonIn = innerRadius / (111320.0 * Math.cos(cLat * Math.PI / 180.0));
+            for (var i = 0; i <= steps; i++) {
+                var rad = (i * 2.0 * Math.PI) / steps;
+                var sinR = Math.sin(rad);
+                var cosR = Math.cos(rad);
+                outerRing.push([cLon + dLonOut * sinR, cLat + dLatOut * cosR]);
+                innerRing.push([cLon + dLonIn * sinR, cLat + dLatIn * cosR]);
+            }
+            // GeoJSON Polygon with hole: outer ring followed by inner ring in reverse winding
+            return [outerRing, innerRing.reverse()];
+        }
+
+        function getCircle3DPoints(cLon, cLat, radiusMeters, altM, steps) {
+            steps = steps || 64;
+            var pts = [];
+            var dLat = radiusMeters / 111320.0;
+            var dLon = radiusMeters / (111320.0 * Math.cos(cLat * Math.PI / 180.0));
+            for (var i = 0; i <= steps; i++) {
+                var rad = (i * 2.0 * Math.PI) / steps;
+                var lon = cLon + dLon * Math.sin(rad);
+                var lat = cLat + dLat * Math.cos(rad);
+                var mc = maplibregl.MercatorCoordinate.fromLngLat([lon, lat], altM);
+                pts.push([mc.x, mc.y, mc.z]);
+            }
+            return pts;
+        }
+
+        function syncAdsbTo3D() {
+            if (!map3d) return;
+            var floatLayer = document.getElementById('adsb-3d-floating-layer');
+            if (!adsbActive) {
+                if (map3d.getSource('adsb-3d-trails')) {
+                    map3d.getSource('adsb-3d-trails').setData({ type: 'FeatureCollection', features: [] });
+                }
+                if (map3d.getSource('adsb-3d-cylinder')) {
+                    map3d.getSource('adsb-3d-cylinder').setData({ type: 'FeatureCollection', features: [] });
+                }
+                if (map3d.getSource('adsb-3d-rings')) {
+                    map3d.getSource('adsb-3d-rings').setData({ type: 'FeatureCollection', features: [] });
+                }
+                for (var hx in map3dAdsbMarkers) {
+                    map3dAdsbMarkers[hx].remove();
+                }
+                map3dAdsbMarkers = {};
+                if (floatLayer) floatLayer.innerHTML = '';
+                active3DPlanes = [];
+                window._lastAdsbCylinderMeta = null;
+                if (window._map3dAdsbPopup) {
+                    window._map3dAdsbPopup.remove();
+                    window._map3dAdsbPopup = null;
+                }
+                if (window._map3dAdsbCenterMarker) {
+                    window._map3dAdsbCenterMarker.remove();
+                    window._map3dAdsbCenterMarker = null;
+                }
+                return;
+            }
+
+            // 1. Flight Trails in 3D (Rendered directly in WebGL airspace via corescope3DLayer attached to aircraft)
+            if (map3d.getSource('adsb-3d-trails')) {
+                map3d.getSource('adsb-3d-trails').setData({
+                    type: 'FeatureCollection',
+                    features: []
+                });
+            }
+
+            // 2. Multi-tier Vertical 3D Airspace Cylinder & Range Rings
+            var target = window._lastAdsbTarget;
+            var terrainExag = 2.5;
+            if (map3d && map3d.getTerrain) {
+                var terr = map3d.getTerrain();
+                if (terr && typeof terr.exaggeration === 'number') {
+                    terrainExag = terr.exaggeration;
+                }
+            }
+
+            if (target && typeof target.lat === 'number' && typeof target.lon === 'number') {
+                var maxNm = target.radius_nm || 50;
+                var cylRadiusM = maxNm * 1852.0;
+                var cylHollowPoly = makeHollowCirclePolygon3D(target.lon, target.lat, cylRadiusM, 1500, 64);
+
+                var targetGround = 0;
+                if (map3d.queryTerrainElevation) {
+                    try { targetGround = Math.max(0, map3d.queryTerrainElevation([target.lon, target.lat]) || 0) * terrainExag; } catch(e) {}
+                }
+
+                var tierH0 = targetGround;
+                var tierH1 = targetGround + 3000;   // 2k ft divider
+                var tierH2 = targetGround + 10500;  // 7k ft divider
+                var tierH3 = targetGround + 36000;  // 25k ft divider
+                var tierH4 = targetGround + 62000;  // 25k+ ft top rim
+
+                // Remove colored extruded cylinder walls totally, keep metadata for delicate grey dotted altitude wireframe rings
+                window._lastAdsbCylinderMeta = {
+                    lon: target.lon,
+                    lat: target.lat,
+                    radiusM: cylRadiusM,
+                    heights: [tierH0, tierH1, tierH2, tierH3],
+                    tiers: [
+                        { tier: '<2k ft', color: '#EF4444' },
+                        { tier: '2k-7k ft', color: '#D946EF' },
+                        { tier: '10k-25k ft', color: '#8B5CF6' },
+                        { tier: '>25k ft', color: '#7DD3FC' }
+                    ]
+                };
+
+                if (map3d.getSource('adsb-3d-cylinder')) {
+                    map3d.getSource('adsb-3d-cylinder').setData({
+                        type: 'FeatureCollection',
+                        features: []
+                    });
+                }
+
+                var ringsNm = [10, 25, 50];
+                var ringFeatures = [];
+                var hasMaxRing = false;
+                for (var rIdx = 0; rIdx < ringsNm.length; rIdx++) {
+                    var dNm = ringsNm[rIdx];
+                    if (dNm <= maxNm) {
+                        var isMax = Math.abs(dNm - maxNm) < 0.1;
+                        if (isMax) hasMaxRing = true;
+                        var rPoly = makeCirclePolygon3D(target.lon, target.lat, dNm * 1852.0, 64);
+                        ringFeatures.push({
+                            type: 'Feature',
+                            properties: {
+                                color: isMax ? '#94A3B8' : '#64748B',
+                                width: isMax ? 1.4 : 1.0
+                            },
+                            geometry: { type: 'LineString', coordinates: rPoly[0] }
+                        });
+                    }
+                }
+                if (!hasMaxRing) {
+                    var maxPoly = makeCirclePolygon3D(target.lon, target.lat, maxNm * 1852.0, 64);
+                    ringFeatures.push({
+                        type: 'Feature',
+                        properties: {
+                            color: '#94A3B8',
+                            width: 1.4
+                        },
+                        geometry: { type: 'LineString', coordinates: maxPoly[0] }
+                    });
+                }
+
+                if (map3d.getSource('adsb-3d-rings')) {
+                    map3d.getSource('adsb-3d-rings').setData({
+                        type: 'FeatureCollection',
+                        features: ringFeatures
+                    });
+                }
+
+                if (!window._map3dAdsbCenterMarker) {
+                    var cEl = document.createElement('div');
+                    cEl.className = 'adsb-radar-center-wrap';
+                    cEl.innerHTML = '<div class="adsb-radar-center-beacon"><div class="adsb-radar-center-pulse"></div><div class="adsb-radar-center-dot">📡</div></div>';
+                    window._map3dAdsbCenterMarker = new maplibregl.Marker({ element: cEl, anchor: 'center' })
+                        .setLngLat([target.lon, target.lat])
+                        .addTo(map3d);
+                } else {
+                    window._map3dAdsbCenterMarker.setLngLat([target.lon, target.lat]);
+                }
+            }
+
+            // 3. Aircraft Displayed in 3D Space (Vertical Drop Lines, Ground Footprints, & Altitude Screen Projections)
+            active3DPlanes = [];
+            var activeHexes = {};
+            if (!floatLayer) {
+                var c3d = document.getElementById('map-3d');
+                if (c3d) {
+                    floatLayer = document.createElement('div');
+                    floatLayer.id = 'adsb-3d-floating-layer';
+                    floatLayer.style.position = 'absolute';
+                    floatLayer.style.top = '0';
+                    floatLayer.style.left = '0';
+                    floatLayer.style.width = '100%';
+                    floatLayer.style.height = '100%';
+                    floatLayer.style.pointerEvents = 'none';
+                    floatLayer.style.overflow = 'hidden';
+                    floatLayer.style.zIndex = '5';
+                    c3d.appendChild(floatLayer);
+                }
+            }
+
+            for (var mHex in aircraftMarkers) {
+                var marker2d = aircraftMarkers[mHex];
+                var ac = (marker2d && marker2d._planeData) ? marker2d._planeData : (currentAircraftData ? currentAircraftData[mHex] : null);
+                if (!ac || ac.lat == null || ac.lon == null) continue;
+                if (typeof window.isAircraftCategoryVisible === 'function' && !window.isAircraftCategoryVisible(ac.category || 'general')) {
+                    var old3dEl = document.getElementById('adsb-plane-3d-' + mHex);
+                    if (old3dEl) old3dEl.style.display = 'none';
+                    continue;
+                }
+                activeHexes[mHex] = true;
+
+                var rawElev = 0;
+                if (map3d.queryTerrainElevation) {
+                    try { rawElev = Math.max(0, map3d.queryTerrainElevation([ac.lon, ac.lat]) || 0); } catch(e) {}
+                }
+                var groundElev = rawElev * terrainExag;
+                var altFt = ac.alt_baro || ac.alt_geom || 1000;
+                var rawAltM = Math.max(60, altFt * 0.3048);
+                // Scaling 3D altitude above terrain so aircraft float with distinct vertical separation in 3D perspective
+                var displayAltM = groundElev + Math.max(300, (rawAltM / 10000.0) * 46000.0);
+
+                var planeColor = (typeof getAircraftColor === 'function') ? getAircraftColor(ac) : '#06B6D4';
+                var track = ac.track || 0;
+                var callsign = ac.flight || ac.hex || 'AC';
+                var altFormatted = (altFt >= 10000 ? 'FL' + Math.round(altFt / 100) : altFt.toLocaleString() + 'ft');
+
+                active3DPlanes.push({
+                    hex: mHex,
+                    lon: ac.lon,
+                    lat: ac.lat,
+                    altM: displayAltM,
+                    groundElev: groundElev,
+                    altFt: altFt,
+                    callsign: callsign,
+                    track: track,
+                    color: planeColor,
+                    planeData: ac
+                });
+
+                // Update or create DOM element inside floating layer
+                var el = document.getElementById('adsb-plane-3d-' + mHex);
+                if (!el && floatLayer) {
+                    el = document.createElement('div');
+                    el.id = 'adsb-plane-3d-' + mHex;
+                    el.className = 'adsb-floating-3d-node';
+                    el.style.position = 'absolute';
+                    el.style.pointerEvents = 'auto';
+                    el.style.cursor = 'pointer';
+                    el.style.display = 'none';
+                    el.style.transformOrigin = 'center center';
+                    el.style.zIndex = '10';
+
+                    (function(curHex) {
+                        el.addEventListener('click', function(ev) {
+                            ev.stopPropagation();
+                            window.openAircraftTooltip(curHex, aircraftMarkers[curHex], true);
+                        });
+                    })(mHex);
+
+                    floatLayer.appendChild(el);
+                }
+
+                if (el) {
+                    var curPitch = (map3d && map3d.getPitch) ? map3d.getPitch() : 0;
+                    var curBearing = (map3d && map3d.getBearing) ? map3d.getBearing() : 0;
+                    var relTrack = track - curBearing;
+                    el.innerHTML = '<div style="position:relative; width:0; height:0; pointer-events:none;">' +
+                        '<div class="adsb-plane-svg-glyph" style="position:absolute; left:0; top:0; margin-left:-13px; margin-top:-13px; transform: perspective(800px) rotateX(' + curPitch.toFixed(1) + 'deg) rotateZ(' + relTrack.toFixed(1) + 'deg); transform-style:preserve-3d; display:inline-block; pointer-events:auto; filter:drop-shadow(0 0 6px ' + planeColor + ');">' +
+                        '<svg width="26" height="26" viewBox="0 0 24 24" style="display:block;">' +
+                        '<path fill="' + planeColor + '" stroke="#0F172A" stroke-width="0.8" d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/>' +
+                        '</svg></div>' +
+                        '<div style="position:absolute; left:18px; top:-12px; background:rgba(15,23,42,0.92); border:1px solid ' + planeColor + '; border-radius:3px; padding:1px 5px; font-size:9px; color:#F8FAFC; white-space:nowrap; font-weight:bold; box-shadow:0 2px 8px rgba(0,0,0,0.85); pointer-events:auto;">' +
+                        callsign.trim() + ' <span style="color:#38BDF8; font-weight:normal;">' + altFormatted + '</span>' +
+                        '</div></div>';
+                }
+            }
+
+            // Remove retired planes from floating layer
+            if (floatLayer) {
+                var children = floatLayer.querySelectorAll('.adsb-floating-3d-node');
+                for (var ci = 0; ci < children.length; ci++) {
+                    var ch = children[ci];
+                    var chHex = ch.id.replace('adsb-plane-3d-', '');
+                    if (!activeHexes[chHex]) {
+                        ch.remove();
+                    }
+                }
+            }
+
+            if (map3d) map3d.triggerRepaint();
+        }
+        window.syncAdsbTo3D = syncAdsbTo3D;
+
+        function syncTropoTo3D() {
+            if (!map3d || !map3d.getSource('tropo-3d')) return;
+            if (!window._lastTropoGeojson) {
+                map3d.getSource('tropo-3d').setData({ type: 'FeatureCollection', features: [] });
+                return;
+            }
+            map3d.getSource('tropo-3d').setData(window._lastTropoGeojson);
+        }
+        window.syncTropoTo3D = syncTropoTo3D;
+
+        function syncSpaceWeatherTo3D() {
+            if (!map3d || !map3d.getSource('aurora-3d')) return;
+            if (!auroraActive || !window._lastAuroraGeojson) {
+                map3d.getSource('aurora-3d').setData({ type: 'FeatureCollection', features: [] });
+                return;
+            }
+            map3d.getSource('aurora-3d').setData(window._lastAuroraGeojson);
+            if (map3d.getLayer('aurora-3d-fill')) {
+                map3d.setPaintProperty('aurora-3d-fill', 'fill-opacity', currentAuroraOpacity * 0.65);
+            }
+        }
+        window.syncSpaceWeatherTo3D = syncSpaceWeatherTo3D;
+
+        function syncLosTo3D() {
+            if (!map3d) return;
+            try {
+                if (map3d.getLayer('viewshed-3d-fill')) map3d.removeLayer('viewshed-3d-fill');
+                if (map3d.getSource('viewshed-3d')) map3d.removeSource('viewshed-3d');
+                if (map3d.getLayer('viewshed-img-3d-layer')) map3d.removeLayer('viewshed-img-3d-layer');
+                if (map3d.getSource('viewshed-img-3d')) map3d.removeSource('viewshed-img-3d');
+
+                if (!window._lastViewshedPayload) return;
+                var payload = window._lastViewshedPayload;
+
+                if (payload.image_data_url && payload.bounds) {
+                    var b = payload.bounds;
+                    var s = b[0][0], w = b[0][1], n = b[1][0], e = b[1][1];
+                    map3d.addSource('viewshed-img-3d', {
+                        type: 'image',
+                        url: payload.image_data_url,
+                        coordinates: [
+                            [w, n],
+                            [e, n],
+                            [e, s],
+                            [w, s]
+                        ]
+                    });
+                    map3d.addLayer({
+                        id: 'viewshed-img-3d-layer',
+                        type: 'raster',
+                        source: 'viewshed-img-3d',
+                        paint: { 'raster-opacity': 0.78 }
+                    });
+                } else if (payload.geojson) {
+                    map3d.addSource('viewshed-3d', { type: 'geojson', data: payload.geojson });
+                    map3d.addLayer({
+                        id: 'viewshed-3d-fill',
+                        type: 'fill',
+                        source: 'viewshed-3d',
+                        paint: { 'fill-color': '#10B981', 'fill-opacity': 0.45 }
+                    });
+                }
+            } catch(e) {
+                console.error('[3D Map] syncLosTo3D error:', e);
+            }
+        }
+        window.syncLosTo3D = syncLosTo3D;
+
+        function syncOrbitalsTo3D() {
+            if (!map3d) return;
+            if (!window._companionOrbitalsActive || !window._dockedCompanionsData) {
+                for (var oid in map3dOrbitalMarkers) {
+                    map3dOrbitalMarkers[oid].remove();
+                }
+                map3dOrbitalMarkers = {};
+                for (var mid in map3dMarkers) {
+                    var mObj = map3dMarkers[mid];
+                    var mEl = mObj ? mObj.getElement() : null;
+                    var mDot = mEl ? mEl.querySelector('.node-dot') : null;
+                    if (mDot) {
+                        mDot.classList.remove('orbital-ring-repeater');
+                        mDot.classList.remove('orbital-ring-repeater-fav');
+                    }
+                }
+                return;
+            }
+
+            var dockedMap = window._dockedCompanionsData;
+            var currentZoom = map3d.getZoom ? map3d.getZoom() : 10;
+            var showSatellites = (currentZoom >= 9.5); // threshold formerly currentZoom >= 13.5
+            var activeOrbIds = {};
+
+            for (var id in markers) {
+                var marker = markers[id];
+                var node = marker ? marker._nodeData : null;
+                if (!node || !node.is_repeater || node.lat == null || node.lon == null) continue;
+
+                var dockedList = dockedMap[node.node_id] || dockedMap[node.alias];
+                if (!dockedList && node.alias) {
+                    dockedList = dockedMap['@' + node.alias] || dockedMap[node.alias.replace(/^@/, '')];
+                }
+                if (!dockedList || dockedList.length === 0) continue;
+
+                var uniqueDocked = [];
+                var seenIds = {};
+                for (var d = 0; d < dockedList.length; d++) {
+                    var dNode = dockedList[d];
+                    if (!dNode || !dNode.node_id || seenIds[dNode.node_id]) continue;
+                    seenIds[dNode.node_id] = true;
+                    uniqueDocked.push(dNode);
+                }
+                if (uniqueDocked.length === 0) continue;
+
+                var safeRepId = escapeJsString(node.node_id).replace(/[^a-zA-Z0-9_-]/g, '_');
+                activeOrbIds[safeRepId] = true;
+
+                // Update 3D node marker dot ring styling
+                if (map3dMarkers[node.node_id]) {
+                    var repEl = map3dMarkers[node.node_id].getElement();
+                    var repDot = repEl ? repEl.querySelector('.node-dot') : null;
+                    if (repDot) {
+                        repDot.classList.add('orbital-ring-repeater');
+                        if (node.is_favorite) repDot.classList.add('orbital-ring-repeater-fav');
+                    }
+                }
+
+                if (!showSatellites) {
+                    if (map3dOrbitalMarkers[safeRepId]) {
+                        map3dOrbitalMarkers[safeRepId].remove();
+                        delete map3dOrbitalMarkers[safeRepId];
+                    }
+                    continue;
+                }
+
+                if (map3dOrbitalMarkers[safeRepId]) {
+                    map3dOrbitalMarkers[safeRepId].setLngLat([node.lon, node.lat]);
+                    continue;
+                }
+
+                var repAliasStr = escapeHtml(node.alias || node.node_id || 'Repeater');
+                var isFav = !!node.is_favorite;
+                var repColor = isFav ? 'var(--favorite-color, #AA55FF)' : 'var(--orbital-repeater-color, #FFD335)';
+                var repLabel = (isFav ? '★ ' : '') + repAliasStr;
+
+                var N = uniqueDocked.length;
+                var hasOverflow = N > 5;
+                var visibleCount = hasOverflow ? 5 : N;
+                var totalPositions = hasOverflow ? 6 : visibleCount;
+                var isPaused = !!(window._pausedOrbitals && window._pausedOrbitals[safeRepId]);
+
+                var repHash = 0;
+                var idStr = String(node.node_id || node.alias || 'rep');
+                for (var h = 0; h < idStr.length; h++) {
+                    repHash = (repHash * 31 + idStr.charCodeAt(h)) & 0xFFFFFF;
+                }
+                var startAngleOffset = ((repHash % 360) * Math.PI) / 180;
+
+                var svgDefs = ['<defs>'];
+                var svgTrails = [];
+                var svgNodes = [];
+
+                for (var oi = 0; oi < totalPositions; oi++) {
+                    var angle = -Math.PI / 2 + startAngleOffset + (oi * 2 * Math.PI / totalPositions);
+                    var x = (60 + 46 * Math.cos(angle)).toFixed(1);
+                    var y = (60 + 46 * Math.sin(angle)).toFixed(1);
+
+                    if (oi < visibleCount) {
+                        var sat = uniqueDocked[oi];
+                        var rawAlias = sat.alias || sat.node_id || 'Companion';
+                        var safeAlias = escapeHtml(rawAlias);
+                        var lastHeardStr = (typeof formatLastHeard === 'function') ? formatLastHeard(sat.last_heard) : 'Recently';
+                        var chanStr = sat.channel ? escapeHtml(sat.channel) : 'Public';
+                        var repNameStr = escapeHtml(node.alias || node.node_id || 'Repeater');
+                        var snrStr = (sat.snr !== null && sat.snr !== undefined && sat.snr !== 0) ? ((Number(sat.snr) > 0 ? '+' : '') + Number(sat.snr).toFixed(1) + ' dB') : 'N/A';
+                        var isUnknownFirst = !!sat.is_unknown_first_hop;
+                        var satColor = isUnknownFirst ? '#EF4444' : '#00FFFF';
+                        var satBorder = isUnknownFirst ? '#991B1B' : '#047857';
+
+                        var trailAngle = angle - 0.58;
+                        var xTail = (60 + 46 * Math.cos(trailAngle)).toFixed(1);
+                        var yTail = (60 + 46 * Math.sin(trailAngle)).toFixed(1);
+                        var gradId = 'trail_grad_3d_' + safeRepId + '_' + oi;
+
+                        svgDefs.push(
+                            '<linearGradient id="' + gradId + '" x1="' + xTail + '" y1="' + yTail + '" x2="' + x + '" y2="' + y + '" gradientUnits="userSpaceOnUse">' +
+                            '<stop offset="0%" stop-color="' + satColor + '" stop-opacity="0" />' +
+                            '<stop offset="30%" stop-color="' + satColor + '" stop-opacity="0.25" />' +
+                            '<stop offset="70%" stop-color="' + satColor + '" stop-opacity="0.65" />' +
+                            '<stop offset="100%" stop-color="' + satColor + '" stop-opacity="0.95" />' +
+                            '</linearGradient>'
+                        );
+
+                        svgTrails.push(
+                            '<path d="M ' + xTail + ' ' + yTail + ' A 46 46 0 0 1 ' + x + ' ' + y + '" ' +
+                            'fill="none" stroke="url(#' + gradId + ')" stroke-width="3.8" stroke-linecap="round" pointer-events="none" ' +
+                            'style="filter: drop-shadow(0 0 4px ' + satColor + ');" />'
+                        );
+
+                        svgNodes.push(
+                            '<g class="orbital-sat-node" style="pointer-events:all; cursor:pointer;" ' +
+                            'data-alias="' + safeAlias + '" ' +
+                            'data-time="' + lastHeardStr + '" ' +
+                            'data-channel="' + chanStr + '" ' +
+                            'data-repeater="' + repNameStr + '" ' +
+                            'data-snr="' + snrStr + '" ' +
+                            'data-node-id="' + encodeURIComponent(sat.node_id) + '" ' +
+                            'data-unknown-first="' + (isUnknownFirst ? 'true' : 'false') + '" ' +
+                            'data-first-hop="' + escapeHtml(sat.first_hop_alias || '') + '" ' +
+                            'data-color="' + satColor + '" ' +
+                            'onmouseenter="orbitalSatHover(this, event)" ' +
+                            'onmouseleave="orbitalSatLeave(this)" ' +
+                            'onclick="onOrbitalSatClicked(this, event)">' +
+                            '<circle cx="' + x + '" cy="' + y + '" r="12" fill="transparent" />' +
+                            '<circle class="sat-dot" cx="' + x + '" cy="' + y + '" r="4.25" fill="' + satColor + '" stroke="' + satBorder + '" stroke-width="1.1" style="filter:drop-shadow(0 0 6px ' + satColor + '); transition:r 0.15s ease, fill 0.15s ease;" />' +
+                            '</g>'
+                        );
+                    } else if (oi === 5 && hasOverflow) {
+                        var overflowCount = N - 5;
+                        var extraNames = uniqueDocked.slice(5).map(function(s) { return escapeHtml(s.alias || s.node_id); });
+                        var joinedNames = extraNames.join('|||');
+                        var repNameStr = escapeHtml(node.alias || node.node_id || 'Repeater');
+
+                        svgNodes.push(
+                            '<g class="orbital-overflow-badge orbital-sat-node" style="pointer-events:all; cursor:pointer;" ' +
+                            'data-count="' + overflowCount + '" ' +
+                            'data-names="' + joinedNames + '" ' +
+                            'data-repeater="' + repNameStr + '" ' +
+                            'onmouseenter="orbitalOverflowHover(this, event)" ' +
+                            'onmouseleave="orbitalOverflowLeave(this)">' +
+                            '<rect x="' + (Number(x) - 13).toFixed(1) + '" y="' + (Number(y) - 8).toFixed(1) + '" width="26" height="16" rx="8" fill="#111827" stroke="' + repColor + '" stroke-width="1.2" />' +
+                            '<text x="' + x + '" y="' + (Number(y) + 3.5).toFixed(1) + '" text-anchor="middle" fill="' + repColor + '" font-size="9" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-weight="bold">+' + overflowCount + '</text>' +
+                            '</g>'
+                        );
+                    }
+                }
+                svgDefs.push('</defs>');
+
+                var svgParts = [
+                    '<svg width="120" height="120" viewBox="0 0 120 120" style="overflow:visible; pointer-events:none;">',
+                    svgDefs.join(''),
+                    '<circle cx="60" cy="60" r="46" fill="none" stroke="rgba(255, 255, 255, 0.40)" stroke-width="1.2" stroke-dasharray="3, 4" pointer-events="none" />',
+                    '<text x="60" y="80" text-anchor="middle" fill="' + repColor + '" font-size="9" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-weight="bold" style="text-shadow: 0 1px 3px rgba(0,0,0,0.95); pointer-events:none;">' + repLabel + '</text>',
+                    '<g class="orbital-sat-group">',
+                    svgTrails.join(''),
+                    svgNodes.join(''),
+                    '</g>',
+                    '</svg>'
+                ];
+
+                var wrap = document.createElement('div');
+                wrap.className = 'orbital-host-container';
+                wrap.style.width = '120px';
+                wrap.style.height = '120px';
+                wrap.style.pointerEvents = 'none';
+                wrap.innerHTML = '<div id="orbital_host_3d_' + safeRepId + '" class="orbital-host-inner' + (isPaused ? ' orbital-paused' : '') + '">' + svgParts.join('') + '</div>';
+
+                var m3Orb = new maplibregl.Marker({
+                    element: wrap,
+                    anchor: 'center',
+                    pitchAlignment: 'map',
+                    rotationAlignment: 'map'
+                })
+                    .setLngLat([node.lon, node.lat])
+                    .addTo(map3d);
+                map3dOrbitalMarkers[safeRepId] = m3Orb;
+            }
+
+            for (var oldSafeId in map3dOrbitalMarkers) {
+                if (!activeOrbIds[oldSafeId]) {
+                    map3dOrbitalMarkers[oldSafeId].remove();
+                    delete map3dOrbitalMarkers[oldSafeId];
+                }
+            }
+        }
+        window.syncOrbitalsTo3D = syncOrbitalsTo3D;
+
+        function syncSatellitesTo3D() {
+            if (!map3d) return;
+            if (!satellitesActive || typeof satellite === 'undefined' || !satellitesParsed || satellitesParsed.length === 0) {
+                if (map3d.getSource('satellites-3d-plumb')) {
+                    map3d.getSource('satellites-3d-plumb').setData({ type: 'FeatureCollection', features: [] });
+                }
+                if (map3d.getSource('satellites-3d-footprints')) {
+                    map3d.getSource('satellites-3d-footprints').setData({ type: 'FeatureCollection', features: [] });
+                }
+                for (var sid in map3dSatMarkers) {
+                    map3dSatMarkers[sid].remove();
+                }
+                map3dSatMarkers = {};
+                return;
+            }
+
+            var plumbFeatures = [];
+            var footprintFeatures = [];
+            var activeSatIds = {};
+
+            for (var si = 0; si < satellitesParsed.length; si++) {
+                var sat = satellitesParsed[si];
+                if (sat.lat == null || sat.lon == null) continue;
+
+                var matchesGroup = currentSatGroup === 'all' || sat.group_name === currentSatGroup;
+                var matchesSearch = !satSearchQuery || sat.name.toLowerCase().indexOf(satSearchQuery) !== -1 || sat.norad_id.indexOf(satSearchQuery) !== -1;
+                if (!matchesGroup || !matchesSearch) continue;
+
+                var sNoradId = sat.norad_id;
+                activeSatIds[sNoradId] = true;
+                var isSelected = (selectedNoradId === sNoradId);
+
+                var groundElev = 0;
+                if (map3d.queryTerrainElevation) {
+                    try { groundElev = Math.max(0, map3d.queryTerrainElevation([sat.lon, sat.lat]) || 0); } catch(e) {}
+                }
+                var altVisualM = Math.max(15000, Math.min(100000, (sat.alt_km || 500) * 80.0));
+
+                plumbFeatures.push({
+                    type: 'Feature',
+                    properties: {
+                        id: sNoradId,
+                        selected: isSelected,
+                        type: 'line'
+                    },
+                    geometry: {
+                        type: 'LineString',
+                        coordinates: [
+                            [sat.lon, sat.lat, groundElev],
+                            [sat.lon, sat.lat, groundElev + altVisualM]
+                        ]
+                    }
+                });
+
+                plumbFeatures.push({
+                    type: 'Feature',
+                    properties: {
+                        id: sNoradId,
+                        selected: isSelected,
+                        type: 'point'
+                    },
+                    geometry: {
+                        type: 'Point',
+                        coordinates: [sat.lon, sat.lat, groundElev]
+                    }
+                });
+
+                if (isSelected && sat.alt_km > 0) {
+                    var earthR = 6371.0;
+                    var theta = Math.acos(earthR / (earthR + sat.alt_km));
+                    var footRadiusM = theta * earthR * 1000.0;
+                    var footPoly = makeCirclePolygon3D(sat.lon, sat.lat, footRadiusM, 48);
+                    footprintFeatures.push({
+                        type: 'Feature',
+                        properties: { id: sNoradId },
+                        geometry: { type: 'LineString', coordinates: footPoly[0] }
+                    });
+                }
+
+                if (map3dSatMarkers[sNoradId]) {
+                    map3dSatMarkers[sNoradId].setLngLat([sat.lon, sat.lat]);
+                    var sEl = map3dSatMarkers[sNoradId].getElement();
+                    if (sEl) {
+                        if (isSelected) sEl.classList.add('selected');
+                        else sEl.classList.remove('selected');
+                    }
+                } else {
+                    var sEl = document.createElement('div');
+                    sEl.className = 'satellite-marker-wrap' + (isSelected ? ' selected' : '');
+                    sEl.style.cursor = 'pointer';
+                    sEl.innerHTML = '<div class="sat-marker-body" style="background:rgba(15,23,42,0.92); border:1.5px solid #38BDF8; border-radius:12px; padding:2px 7px; display:flex; align-items:center; gap:4px; box-shadow:0 0 10px rgba(56,189,248,0.6); font-family:system-ui,-apple-system,sans-serif; white-space:nowrap;">' +
+                        '<span style="font-size:12px;">🛰️</span>' +
+                        '<span style="font-size:9.5px; font-weight:700; color:#38BDF8;">' + escapeHtml(sat.name) + '</span>' +
+                        (sat.in_view ? '<span style="font-size:8px; color:#10B981; font-weight:bold;">▲' + Math.round(sat.elevation_deg) + '°</span>' : '') +
+                        '</div>';
+
+                    (function(curSat) {
+                        sEl.addEventListener('click', function(ev) {
+                            ev.stopPropagation();
+                            selectSatellite(curSat.norad_id);
+                        });
+                    })(sat);
+
+                    var satM3 = new maplibregl.Marker({ element: sEl, anchor: 'bottom' })
+                        .setLngLat([sat.lon, sat.lat])
+                        .addTo(map3d);
+                    map3dSatMarkers[sNoradId] = satM3;
+                }
+            }
+
+            for (var oldSid in map3dSatMarkers) {
+                if (!activeSatIds[oldSid]) {
+                    map3dSatMarkers[oldSid].remove();
+                    delete map3dSatMarkers[oldSid];
+                }
+            }
+
+            if (map3d.getSource('satellites-3d-plumb')) {
+                map3d.getSource('satellites-3d-plumb').setData({
+                    type: 'FeatureCollection',
+                    features: plumbFeatures
+                });
+            }
+            if (map3d.getSource('satellites-3d-footprints')) {
+                map3d.getSource('satellites-3d-footprints').setData({
+                    type: 'FeatureCollection',
+                    features: footprintFeatures
+                });
+            }
+        }
+        window.syncSatellitesTo3D = syncSatellitesTo3D;
+
+        function syncVisualisedPathTo3D(segments, meta) {
+            visualised3DArcs = [];
+            if (!segments || segments.length === 0) {
+                if (map3d) map3d.triggerRepaint();
+                return;
+            }
+            meta = meta || {};
+            var pType = (meta.payload_type || meta.route_type || 'FLOOD').toUpperCase();
+            var isMqtt = meta && (meta.source === 'mqtt' || (meta.packet_id && meta.packet_id.indexOf('mqtt-') === 0));
+
+            // Default color from legend:
+            // green is advert, blue is group text message, gold is direct, purple is data request, red is route trace
+            var baseColorHex = '#3B82F6';
+            if (isMqtt) {
+                baseColorHex = '#F97316';
+            } else if (pType === 'ADVERT') {
+                baseColorHex = '#22C55E';
+            } else if (pType === 'GRP_TXT' || pType === 'FLOOD') {
+                baseColorHex = '#3B82F6';
+            } else if (pType === 'TXT_MSG' || pType === 'DIRECT') {
+                baseColorHex = '#F59E0B';
+            } else if (pType === 'REQ' || pType === 'GRP_DATA' || pType === 'ANON_REQ') {
+                baseColorHex = '#A855F7';
+            } else if (pType === 'TRACE' || pType === 'PATH') {
+                baseColorHex = '#EF4444';
+            } else if (meta.color) {
+                baseColorHex = meta.color;
+            }
+
+            for (var si = 0; si < segments.length; si++) {
+                var seg = segments[si];
+                if (!seg.coords || seg.coords.length < 2) continue;
+                var p1 = seg.coords[0];
+                var p2 = seg.coords[1];
+                // generate3DArcPoints guarantees clearance over all sampled mountain summits
+                var pts = generate3DArcPoints(p1[1], p1[0], p2[1], p2[0], 64);
+
+                var segHex = seg.color || baseColorHex;
+                if (seg.is_phantom) {
+                    segHex = '#FFD700'; // Gold phantom node
+                } else if (seg.is_unknown) {
+                    segHex = '#EF4444'; // Red unknown
+                } else if (seg.is_no_gps) {
+                    segHex = '#9CA3AF'; // Gray/no GPS
+                }
+                var segRgb = hexToRgb(segHex);
+                var segNorm = [segRgb[0] / 255.0, segRgb[1] / 255.0, segRgb[2] / 255.0];
+
+                // Line style:
+                // solid is verified rf hop, dashes is ambiguous hop (collision), dotted is inferred step (no gps / mqtt)
+                var segStyle = 'solid';
+                if (seg.is_ambiguous) {
+                    segStyle = 'dashed';
+                } else if (seg.is_inferred || seg.is_no_gps || seg.is_unknown || seg.is_phantom || (isMqtt && segments.length <= 1)) {
+                    segStyle = 'dotted';
+                }
+
+                visualised3DArcs.push({
+                    points: pts,
+                    color: segNorm,
+                    style: segStyle
+                });
+            }
+            if (map3d) map3d.triggerRepaint();
+        }
+        window.syncVisualisedPathTo3D = syncVisualisedPathTo3D;
+
+        function syncAllLayersTo3D() {
+            if (!map3d) return;
+            syncAllNodesTo3D();
+            syncScopesTo3D();
+            syncHeatmapTo3D();
+            syncThunderstormTo3D();
+            syncAdsbTo3D();
+            syncTropoTo3D();
+            syncSpaceWeatherTo3D();
+            syncLosTo3D();
+            syncOrbitalsTo3D();
+            syncSatellitesTo3D();
+            if (window._activeVisualisedSegments) {
+                syncVisualisedPathTo3D(window._activeVisualisedSegments, window._activeVisualisedMeta);
+            }
+        }
+        window.syncAllLayersTo3D = syncAllLayersTo3D;
 
         var wsServerIdx = 0;
         var blitzServers = ['wss://ws7.blitzortung.org', 'wss://ws1.blitzortung.org', 'wss://ws8.blitzortung.org'];
@@ -7226,6 +10623,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 lightningStrikesList = [];
                 disconnectBlitzortung();
             }
+            if (window._is3DActive && typeof syncThunderstormTo3D === 'function') {
+                syncThunderstormTo3D();
+            }
         }
         window.setThunderstormVisible = setThunderstormVisible;
 
@@ -7247,7 +10647,12 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 map.removeLayer(rainViewerRadarLayer);
                 rainViewerRadarLayer = null;
             }
-            if (!thunderstormActive || !window._radarMeta) return;
+            if (!thunderstormActive || !window._radarMeta) {
+                if (window._is3DActive && typeof syncThunderstormTo3D === 'function') {
+                    syncThunderstormTo3D();
+                }
+                return;
+            }
             var frames = window._radarMeta.frames || [];
             var framePath = window._radarMeta.path || '';
             var frameTime = null;
@@ -7284,6 +10689,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 } else {
                     lbl.innerText = 'Radar: Live Feed';
                 }
+            }
+            if (window._is3DActive && typeof syncThunderstormTo3D === 'function') {
+                syncThunderstormTo3D();
             }
         }
 
@@ -7377,6 +10785,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             });
             lightningStrikesGroup.addLayer(marker);
             lightningStrikesList.push({ marker: marker, ts: now, lat: strike.lat, lon: strike.lon });
+            if (window._is3DActive && typeof syncThunderstormTo3D === 'function') {
+                syncThunderstormTo3D();
+            }
 
             var badge = document.getElementById('strike-count-badge');
             if (badge) badge.innerText = lightningStrikesList.length + ' strikes';
@@ -7430,8 +10841,12 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 currentAuroraLayer = null;
             }
             auroraActive = false;
+            window._lastAuroraGeojson = null;
             var panel = document.getElementById('aurora-legend-panel');
             if (panel) panel.style.display = 'none';
+            if (window._is3DActive && typeof syncSpaceWeatherTo3D === 'function') {
+                syncSpaceWeatherTo3D();
+            }
         }
         window.clearSpaceWeatherLayer = clearSpaceWeatherLayer;
 
@@ -7445,6 +10860,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                         layer.setStyle({ fillOpacity: layer._baseFillOpacity * currentAuroraOpacity });
                     }
                 });
+            }
+            if (window._is3DActive && typeof syncSpaceWeatherTo3D === 'function') {
+                syncSpaceWeatherTo3D();
             }
             if (window.pyBridge && window.pyBridge.on_space_weather_opacity) {
                 window.pyBridge.on_space_weather_opacity(currentAuroraOpacity);
@@ -7565,6 +10983,14 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                         currentAuroraLayer = null;
                     }
 
+                    for (var fi = 0; fi < features.length; fi++) {
+                        var th = features[fi].properties.threshold || 5;
+                        var cs = colorStyles[th] || colorStyles[5];
+                        features[fi].properties.fill = cs.fill;
+                        features[fi].properties.stroke = cs.stroke;
+                        features[fi].properties.baseFillOpacity = cs.baseFillOpacity;
+                    }
+
                     var geoJsonData = { type: "FeatureCollection", features: features };
                     currentAuroraLayer = L.geoJSON(geoJsonData, {
                         pane: 'auroraPane',
@@ -7586,6 +11012,11 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                             layer._baseFillOpacity = cs.baseFillOpacity;
                         }
                     }).addTo(map);
+
+                    window._lastAuroraGeojson = geoJsonData;
+                    if (window._is3DActive && typeof syncSpaceWeatherTo3D === 'function') {
+                        syncSpaceWeatherTo3D();
+                    }
 
                 } catch(err) {
                     console.error("Failed to contour aurora grid:", err);
@@ -7621,6 +11052,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             } else {
                 stopSatellitePropagationLoop();
                 clearSatelliteMapLayers();
+            }
+            if (window._is3DActive && typeof syncSatellitesTo3D === 'function') {
+                syncSatellitesTo3D();
             }
         }
         window.setSatellitesVisible = setSatellitesVisible;
@@ -7794,6 +11228,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             }
 
             updateQuickListStatus();
+            if (window._is3DActive && typeof syncSatellitesTo3D === 'function') {
+                syncSatellitesTo3D();
+            }
         }
 
         function updateSatMarker(sat) {
@@ -8157,6 +11594,12 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 clearTimeout(_adsbHoverCloseTimer);
                 _adsbHoverCloseTimer = null;
             }
+            if (window._map3dAdsbPopup) {
+                try {
+                    window._map3dAdsbPopup.remove();
+                } catch(ex) {}
+                window._map3dAdsbPopup = null;
+            }
             var h = (hex || '').toLowerCase();
             if (pinnedTooltipHex === h || (pinnedTooltipHex && pinnedTooltipHex.toLowerCase() === h)) {
                 pinnedTooltipHex = null;
@@ -8420,6 +11863,10 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 var defs = losPane.querySelector('#los-defs');
                 if (defs) defs.remove();
             }
+            window._lastViewshedPayload = null;
+            if (window._is3DActive && typeof syncLosTo3D === 'function') {
+                syncLosTo3D();
+            }
         }
         window.clearViewshedOverlay = clearViewshedOverlay;
 
@@ -8463,6 +11910,11 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                         pane: 'p2pPane',
                         icon: pulseIcon
                     }).bindTooltip('LOS Emitter: ' + escapeHtml(payload.observer_alias || 'Observer') + ' (' + (payload.tx_height_m || 8) + 'm AGL)', { permanent: false, className: 'node-tooltip' }).addTo(map);
+                }
+
+                window._lastViewshedPayload = payload;
+                if (window._is3DActive && typeof syncLosTo3D === 'function') {
+                    syncLosTo3D();
                 }
             } catch (err) {
                 console.error('Error rendering viewshed coverage overlay:', err);
@@ -8645,6 +12097,142 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
         };
         window._aircraftPhotos = {};
         var currentAircraftData = {};
+
+        window._adsbFilters = {
+            airliner: true,
+            light: true,
+            military: true,
+            helicopter: true,
+            glider: true,
+            general: true
+        };
+
+        window._adsbAlertConfig = {
+            enabled: true,
+            radiusMi: 10.0,
+            categories: {
+                military: true,
+                helicopter: false,
+                light: false,
+                airliner: false,
+                glider: false,
+                general: false
+            }
+        };
+
+        window._adsbAlertedHexes = {};
+
+        window.isAircraftCategoryVisible = function(category) {
+            var cat = (category || 'general').toLowerCase();
+            return window._adsbFilters[cat] !== false;
+        };
+
+        window.updateAdsbFilters = function() {
+            var cats = ['airliner', 'light', 'military', 'helicopter', 'glider', 'general'];
+            for (var i = 0; i < cats.length; i++) {
+                var chk = document.getElementById('adsb-flt-' + cats[i]);
+                if (chk) {
+                    window._adsbFilters[cats[i]] = chk.checked;
+                }
+            }
+
+            var visibleCount = 0;
+            var total = 0;
+            for (var h in currentAircraftData) {
+                total++;
+                var p = currentAircraftData[h];
+                var m = aircraftMarkers[h];
+                var isVis = p ? window.isAircraftCategoryVisible(p.category) : true;
+                if (isVis) visibleCount++;
+                if (m) {
+                    if (isVis) {
+                        m.setOpacity(1);
+                        if (m._icon) m._icon.style.display = '';
+                        if (aircraftTrails[h]) aircraftTrails[h].setStyle({ opacity: 0.65 });
+                    } else {
+                        m.setOpacity(0);
+                        if (m._icon) m._icon.style.display = 'none';
+                        if (aircraftTrails[h]) aircraftTrails[h].setStyle({ opacity: 0 });
+                        if (pinnedTooltipHex === h) {
+                            m.closeTooltip();
+                            pinnedTooltipHex = null;
+                        }
+                    }
+                }
+            }
+
+            if (window._is3DActive && typeof syncAdsbTo3D === 'function') {
+                syncAdsbTo3D();
+            }
+
+            var countBadge = document.getElementById('adsb-count-badge');
+            if (countBadge) {
+                countBadge.textContent = visibleCount + (visibleCount !== total ? ' / ' + total : '');
+            }
+
+            if (window.pyBridge && window.pyBridge.on_adsb_filters_changed) {
+                window.pyBridge.on_adsb_filters_changed(JSON.stringify(window._adsbFilters));
+            }
+        };
+
+        window.setAllAdsbFilters = function(allActive) {
+            var cats = ['airliner', 'light', 'military', 'helicopter', 'glider', 'general'];
+            for (var i = 0; i < cats.length; i++) {
+                var chk = document.getElementById('adsb-flt-' + cats[i]);
+                if (chk) chk.checked = !!allActive;
+            }
+            window.updateAdsbFilters();
+        };
+
+        window.updateAdsbAlertConfig = function() {
+            var enChk = document.getElementById('adsb-alert-enabled');
+            if (enChk) window._adsbAlertConfig.enabled = enChk.checked;
+
+            var cats = ['military', 'helicopter', 'light', 'airliner', 'glider', 'general'];
+            for (var i = 0; i < cats.length; i++) {
+                var chk = document.getElementById('adsb-alert-' + cats[i]);
+                if (chk) {
+                    window._adsbAlertConfig.categories[cats[i]] = chk.checked;
+                }
+            }
+
+            if (window.pyBridge && window.pyBridge.on_adsb_alert_config_changed) {
+                window.pyBridge.on_adsb_alert_config_changed(JSON.stringify(window._adsbAlertConfig));
+            }
+        };
+
+        window.setInitialAdsbConfig = function(filterCats, alertEn, alertCats, alertRad) {
+            if (Array.isArray(filterCats)) {
+                var catSet = {};
+                for (var f = 0; f < filterCats.length; f++) catSet[filterCats[f].toLowerCase()] = true;
+                var allCats = ['airliner', 'light', 'military', 'helicopter', 'glider', 'general'];
+                for (var i = 0; i < allCats.length; i++) {
+                    var act = !!catSet[allCats[i]];
+                    window._adsbFilters[allCats[i]] = act;
+                    var chk = document.getElementById('adsb-flt-' + allCats[i]);
+                    if (chk) chk.checked = act;
+                }
+            }
+            if (typeof alertEn === 'boolean') {
+                window._adsbAlertConfig.enabled = alertEn;
+                var enChk = document.getElementById('adsb-alert-enabled');
+                if (enChk) enChk.checked = alertEn;
+            }
+            if (Array.isArray(alertCats)) {
+                var aSet = {};
+                for (var a = 0; a < alertCats.length; a++) aSet[alertCats[a].toLowerCase()] = true;
+                var allCats2 = ['military', 'helicopter', 'light', 'airliner', 'glider', 'general'];
+                for (var j = 0; j < allCats2.length; j++) {
+                    var aAct = !!aSet[allCats2[j]];
+                    window._adsbAlertConfig.categories[allCats2[j]] = aAct;
+                    var achk = document.getElementById('adsb-alert-' + allCats2[j]);
+                    if (achk) achk.checked = aAct;
+                }
+            }
+            if (typeof alertRad === 'number' && alertRad > 0) {
+                window._adsbAlertConfig.radiusMi = alertRad;
+            }
+        };
 
         function renderAdsbLegend() {
             var container = document.getElementById('adsb-legend-container');
@@ -8859,7 +12447,6 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             if (!h) return;
             var lowHex = h.toLowerCase();
             if (!marker) marker = aircraftMarkers[lowHex];
-            if (!marker) return;
             var plane = currentAircraftData[lowHex];
             if (!plane) return;
 
@@ -8868,6 +12455,29 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 window._aircraftPhotos[lowHex] = { loading: true };
                 window.pyBridge.request_aircraft_photo(lowHex.toUpperCase());
             }
+
+            var cluster = getOverlappingAircraft(plane, 26);
+            var tipHtml = buildAircraftTooltipHtml(plane, cluster);
+
+            // 3D Map Popup
+            if (window._is3DActive && map3d) {
+                if (window._map3dAdsbPopup) {
+                    window._map3dAdsbPopup.remove();
+                    window._map3dAdsbPopup = null;
+                }
+                window._map3dAdsbPopup = new maplibregl.Popup({
+                    className: 'adsb-3d-popup',
+                    closeButton: false,
+                    closeOnClick: false,
+                    offset: 20,
+                    maxWidth: '340px'
+                })
+                .setLngLat([plane.lon, plane.lat])
+                .setHTML(tipHtml)
+                .addTo(map3d);
+            }
+
+            if (!marker) return;
 
             // Unpin previous pinned marker if different
             if (pinnedTooltipHex && pinnedTooltipHex !== lowHex && aircraftMarkers[pinnedTooltipHex]) {
@@ -8887,8 +12497,6 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 prevH.setZIndexOffset(0);
             }
 
-            var cluster = getOverlappingAircraft(plane, 26);
-            var tipHtml = buildAircraftTooltipHtml(plane, cluster);
             marker.setTooltipContent(tipHtml);
             marker.setZIndexOffset(10000);
 
@@ -8942,6 +12550,15 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             var lowH = hex.toLowerCase();
             window._aircraftPhotos[h] = photoInfo;
             window._aircraftPhotos[lowH] = photoInfo;
+
+            if (window._is3DActive && map3d && window._map3dAdsbPopup) {
+                var p3d = currentAircraftData[lowH];
+                if (p3d) {
+                    var cl3d = getOverlappingAircraft(p3d, 26);
+                    window._map3dAdsbPopup.setHTML(buildAircraftTooltipHtml(p3d, cl3d));
+                }
+            }
+
             var box = document.getElementById('adsb-photo-box-' + h);
             if (box) {
                 box.style.display = 'block';
@@ -9108,6 +12725,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
 
         function updateRadarSweepOverlay(target) {
             if (typeof target.lat !== 'number' || typeof target.lon !== 'number') return;
+            window._lastAdsbTarget = target;
             var radNm = target.radius_nm || 50;
             var targetKey = target.lat.toFixed(4) + '_' + target.lon.toFixed(4) + '_' + radNm;
 
@@ -9257,6 +12875,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 currentAircraftData[ah] = ap;
             }
 
+            var visibleCount = 0;
             for (var i = 0; i < aircraft.length; i++) {
                 var plane = aircraft[i];
                 if (typeof plane.lat !== 'number' || typeof plane.lon !== 'number') continue;
@@ -9264,21 +12883,26 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 if (!hex) continue;
                 currentHexes.add(hex);
 
+                var isVis = window.isAircraftCategoryVisible ? window.isAircraftCategoryVisible(plane.category) : true;
+                if (isVis) visibleCount++;
+
                 var iconData = createAirplaneIcon(plane);
 
                 // Update flight trajectory history
+                var planeAltFt = (plane.alt_baro != null ? plane.alt_baro : (plane.alt_geom != null ? plane.alt_geom : (plane.altitude || 0)));
                 if (!aircraftHistory[hex]) {
-                    aircraftHistory[hex] = [{ lat: plane.lat, lon: plane.lon, color: iconData.color, ts: Date.now() }];
+                    aircraftHistory[hex] = [{ lat: plane.lat, lon: plane.lon, alt_baro: planeAltFt, color: iconData.color, ts: Date.now() }];
                 } else {
                     var hist = aircraftHistory[hex];
                     var lastPt = hist[hist.length - 1];
                     var distMoved = Math.abs(plane.lat - lastPt.lat) + Math.abs(plane.lon - lastPt.lon);
                     if (distMoved > 0.0001) {
-                        hist.push({ lat: plane.lat, lon: plane.lon, color: iconData.color, ts: Date.now() });
+                        hist.push({ lat: plane.lat, lon: plane.lon, alt_baro: planeAltFt, color: iconData.color, ts: Date.now() });
                         if (hist.length > 30) hist.shift();
                     } else {
                         lastPt.color = iconData.color;
                         lastPt.ts = Date.now();
+                        if (planeAltFt) lastPt.alt_baro = planeAltFt;
                     }
                 }
 
@@ -9294,7 +12918,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                         trailLine = L.polyline(latlngs, {
                             color: iconData.color,
                             weight: 2,
-                            opacity: 0.65,
+                            opacity: isVis ? 0.65 : 0,
                             lineCap: 'round',
                             lineJoin: 'round',
                             pane: 'adsbTrailsPane',
@@ -9304,9 +12928,10 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                         aircraftTrails[hex] = trailLine;
                     } else {
                         trailLine.setLatLngs(latlngs);
-                        if (trailLine.options.color !== iconData.color) {
-                            trailLine.setStyle({ color: iconData.color });
-                        }
+                        trailLine.setStyle({
+                            color: iconData.color,
+                            opacity: isVis ? 0.65 : 0
+                        });
                     }
                 }
 
@@ -9319,7 +12944,8 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 if (!marker) {
                     marker = L.marker([plane.lat, plane.lon], {
                         icon: iconData.icon,
-                        pane: 'adsbMarkersPane'
+                        pane: 'adsbMarkersPane',
+                        opacity: isVis ? 1 : 0
                     });
                     marker._planeData = plane;
                     marker._lastTrack = track;
@@ -9404,10 +13030,13 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     if (marker._icon) {
                         L.DomEvent.disableClickPropagation(marker._icon);
                         L.DomEvent.disableScrollPropagation(marker._icon);
+                        if (!isVis) marker._icon.style.display = 'none';
                     }
                 } else {
                     marker._planeData = plane;
                     marker.setLatLng([plane.lat, plane.lon]);
+                    marker.setOpacity(isVis ? 1 : 0);
+                    if (marker._icon) marker._icon.style.display = isVis ? '' : 'none';
                     if (marker._lastTrack !== track) {
                         marker._lastTrack = track;
                         if (marker._icon) {
@@ -9428,6 +13057,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                         if (marker._icon) {
                             L.DomEvent.disableClickPropagation(marker._icon);
                             L.DomEvent.disableScrollPropagation(marker._icon);
+                            if (!isVis) marker._icon.style.display = 'none';
                         }
                     }
                 }
@@ -9454,6 +13084,50 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                     var tipObj = marker.getTooltip();
                     if (tipObj && tipObj._container) {
                         L.DomEvent.disableClickPropagation(tipObj._container);
+                    }
+                }
+            }
+
+            // Update badge count with visible / total count
+            var countBadge = document.getElementById('adsb-count-badge');
+            if (countBadge) {
+                countBadge.textContent = visibleCount + (visibleCount !== total ? ' / ' + total : '');
+            }
+
+            // Proximity alert detection for watched aircraft types within 10 miles of observed location
+            if (window._adsbAlertConfig && window._adsbAlertConfig.enabled) {
+                var watchedCats = window._adsbAlertConfig.categories || {};
+                var alertRadiusMi = window._adsbAlertConfig.radiusMi || 10.0;
+                var nowTs = Date.now();
+
+                for (var ai = 0; ai < aircraft.length; ai++) {
+                    var pl = aircraft[ai];
+                    if (typeof pl.lat !== 'number' || typeof pl.lon !== 'number') continue;
+                    var pHex = (pl.hex || '').toLowerCase();
+                    if (!pHex) continue;
+
+                    var pCat = (pl.category || 'general').toLowerCase();
+                    if (!watchedCats[pCat]) continue;
+
+                    // pl.dst is Great Circle distance in nautical miles from observed target
+                    // Convert to statute miles: 1 NM = 1.15078 mi
+                    var pDistMi = (typeof pl.dst === 'number') ? (pl.dst * 1.15078) : null;
+                    if (pDistMi === null || pDistMi > alertRadiusMi) continue;
+
+                    // Proximity hit! Check 5-minute cooldown per aircraft
+                    var lastAlert = window._adsbAlertedHexes[pHex] || 0;
+                    if (nowTs - lastAlert > 300000) {
+                        window._adsbAlertedHexes[pHex] = nowTs;
+                        var pCallsign = pl.flight || pHex.toUpperCase();
+
+                        // 1. Automatically pop up its information box on the map (2D or 3D)
+                        var pMarker = aircraftMarkers[pHex];
+                        window.openAircraftTooltip(pHex, pMarker, true);
+
+                        // 2. Notify Python for native desktop balloon / sound alert
+                        if (window.pyBridge && window.pyBridge.on_adsb_proximity_alert) {
+                            window.pyBridge.on_adsb_proximity_alert(pHex, pCallsign, pDistMi, pCat);
+                        }
                     }
                 }
             }
@@ -9488,6 +13162,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                         delete aircraftHistory[hexKey];
                     }
                 }
+            }
+            if (window._is3DActive && typeof syncAdsbTo3D === 'function') {
+                syncAdsbTo3D();
             }
         }
         window.onAdsbDataReady = onAdsbDataReady;
@@ -9651,6 +13328,18 @@ class WebBridge(QObject):
     def on_new_nodes_toggled(self, enabled: bool):
         self.new_nodes_toggled_signal.emit(enabled)
 
+    mqtt_nodes_toggled_signal = pyqtSignal(bool)
+
+    @pyqtSlot(bool)
+    def on_mqtt_nodes_toggled(self, enabled: bool):
+        self.mqtt_nodes_toggled_signal.emit(enabled)
+
+    map_3d_toggled_signal = pyqtSignal(bool)
+
+    @pyqtSlot(bool)
+    def on_map_3d_toggled(self, enabled: bool):
+        self.map_3d_toggled_signal.emit(enabled)
+
     mark_all_nodes_known_signal = pyqtSignal()
 
     @pyqtSlot()
@@ -9700,6 +13389,22 @@ class WebBridge(QObject):
     def request_aircraft_photo(self, hex_code: str):
         self.request_aircraft_photo_signal.emit(hex_code)
 
+    adsb_proximity_alert_signal = pyqtSignal(str, str, float, str)
+    adsb_filters_changed_signal = pyqtSignal(str)
+    adsb_alert_config_changed_signal = pyqtSignal(str)
+
+    @pyqtSlot(str, str, float, str)
+    def on_adsb_proximity_alert(self, hex_code: str, flight: str, dist_mi: float, category: str):
+        self.adsb_proximity_alert_signal.emit(hex_code, flight, dist_mi, category)
+
+    @pyqtSlot(str)
+    def on_adsb_filters_changed(self, filters_json: str):
+        self.adsb_filters_changed_signal.emit(filters_json)
+
+    @pyqtSlot(str)
+    def on_adsb_alert_config_changed(self, config_json: str):
+        self.adsb_alert_config_changed_signal.emit(config_json)
+
     @pyqtSlot(str)
     def on_open_external_url(self, url: str):
         if not url:
@@ -9741,12 +13446,14 @@ class WebBridge(QObject):
     @pyqtSlot(str)
     def on_copy_clipboard(self, text: str):
         try:
-            from PyQt6.QtGui import QGuiApplication
-            cb = QGuiApplication.clipboard()
+            from PyQt6.QtWidgets import QApplication
+            from PyQt6.QtGui import QClipboard
+            cb = QApplication.clipboard()
             if cb:
-                cb.setText(text)
-        except Exception:
-            pass
+                cb.setText(text, QClipboard.Mode.Clipboard)
+                cb.setText(text, QClipboard.Mode.Selection)
+        except Exception as e:
+            logger.warning(f"Error copying to clipboard: {e}")
         self.copy_clipboard_signal.emit(text)
 
     packet_hud_toggled_signal = pyqtSignal(bool)
@@ -10059,6 +13766,7 @@ class MeshMapWidget(QWidget):
     map_ready = pyqtSignal()
     search_node_id_toggled = pyqtSignal(bool)
     lightning_proximity_alert = pyqtSignal(float, int)
+    adsb_proximity_alert = pyqtSignal(str, str, float, str)
     packet_hud_toggled = pyqtSignal(bool)
     activity_timeline_toggled = pyqtSignal(bool)
     map_legend_toggled = pyqtSignal(bool)
@@ -10113,6 +13821,8 @@ class MeshMapWidget(QWidget):
 
         self.new_nodes_active = False
         self.new_nodes_timeframe_hours = getattr(self.config.meshcore if (self.config and hasattr(self.config, "meshcore")) else self.config, "map_new_nodes_timeframe_hours", 72) if self.config else 72
+        self.mqtt_nodes_active = False
+        self.is_3d_mode = False
 
         self.show_space_weather = False
         self.space_weather_service = SpaceWeatherService(parent=self)
@@ -10191,6 +13901,9 @@ class MeshMapWidget(QWidget):
         self.btn_satellites.setCheckable(True)
         self.btn_satellites.setChecked(self.show_satellites)
         self.btn_satellites.clicked.connect(lambda: self.set_satellites(self.btn_satellites.isChecked()))
+        self.btn_map_3d = QPushButton("🏔️ 3D View")
+        self.btn_map_3d.setCheckable(True)
+        self.btn_map_3d.clicked.connect(lambda: self.set_3d_mode(self.btn_map_3d.isChecked()))
 
         self.stats_badge = QLabel("0 Nodes")
         self.btn_add_node = QPushButton("➕ Add Node")
@@ -10226,6 +13939,8 @@ class MeshMapWidget(QWidget):
             self.bridge.activity_heatmap_toggled_signal.connect(self._on_bridge_activity_heatmap_toggled)
             self.bridge.new_nodes_timeframe_changed_signal.connect(self._on_bridge_new_nodes_timeframe_changed)
             self.bridge.new_nodes_toggled_signal.connect(self._on_bridge_new_nodes_toggled)
+            self.bridge.mqtt_nodes_toggled_signal.connect(self._on_bridge_mqtt_nodes_toggled)
+            self.bridge.map_3d_toggled_signal.connect(self._on_bridge_map_3d_toggled)
             self.bridge.mark_all_nodes_known_signal.connect(self._on_bridge_mark_all_nodes_known)
             self.bridge.thunderstorm_toggled_signal.connect(self._on_bridge_thunderstorm_toggled)
             self.bridge.space_weather_toggled_signal.connect(self.set_space_weather)
@@ -10247,10 +13962,14 @@ class MeshMapWidget(QWidget):
                 )
             )
             self.bridge.adsb_color_mode_changed_signal.connect(self._on_bridge_adsb_color_mode_changed)
+            self.bridge.adsb_proximity_alert_signal.connect(self.adsb_proximity_alert.emit)
+            self.bridge.adsb_filters_changed_signal.connect(self._on_bridge_adsb_filters_changed)
+            self.bridge.adsb_alert_config_changed_signal.connect(self._on_bridge_adsb_alert_config_changed)
             self.bridge.request_aircraft_photo_signal.connect(self._on_bridge_request_aircraft_photo)
             self.bridge.p2p_path_selected_signal.connect(self._on_p2p_path_selected)
             self.bridge.profile_node_signal.connect(self._on_profile_node_requested)
             self.bridge.calc_node_viewshed_signal.connect(self._on_calc_node_viewshed_requested)
+            self.bridge.copy_clipboard_signal.connect(lambda txt: self._notify_user(f"📋 Copied Repeater ID to clipboard: {txt}"))
             self.adsb_service.photo_received.connect(self._on_adsb_photo_received)
             self.channel.registerObject("pyBridge", self.bridge)
             self.web_view.page().setWebChannel(self.channel)
@@ -11067,6 +14786,8 @@ class MeshMapWidget(QWidget):
             self.refresh_map_data()
             if getattr(self, "show_satellites", False):
                 self.set_satellites(True)
+            if getattr(self, "show_companion_orbitals", False):
+                self.set_orbitals(True)
             if self.show_packet_hud:
                 self.run_js("if (window.setPacketHudVisible) window.setPacketHudVisible(true);")
             if getattr(self, "show_map_legend", False):
@@ -11086,18 +14807,7 @@ class MeshMapWidget(QWidget):
         self.run_js(f"setPathModesVisible({pm_str});")
 
     def _on_orbitals_toggle(self):
-        visible = self.btn_orbitals.isChecked()
-        self.btn_orbitals.setStyleSheet(self._btn_style(active=visible))
-        if self.config and hasattr(self.config, "meshcore"):
-            self.config.meshcore.map_show_companion_orbitals = visible
-            try:
-                self.config.save()
-            except Exception:
-                pass
-        docked_data = self.storage.get_docked_companions() if (self.storage and visible) else {}
-        orb_str = "true" if visible else "false"
-        self.run_js(f"setCompanionOrbitalsVisible({orb_str}, {json.dumps(docked_data)});")
-        self.refresh_map_data()
+        self.set_orbitals(self.btn_orbitals.isChecked())
 
     def _on_scopes_toggle(self):
         visible = self.btn_scopes.isChecked()
@@ -11212,6 +14922,13 @@ class MeshMapWidget(QWidget):
         self.adsb_service.set_enabled(self.show_adsb)
         vis_str = "true" if self.show_adsb else "false"
         self.run_js(f"setAdsbVisible({vis_str});")
+        if self.show_adsb:
+            filter_cats = getattr(self.config.meshcore, "adsb_filter_categories", None) if (self.config and hasattr(self.config, "meshcore")) else None
+            alert_en = getattr(self.config.meshcore, "adsb_alert_enabled", True) if (self.config and hasattr(self.config, "meshcore")) else True
+            alert_cats = getattr(self.config.meshcore, "adsb_alert_categories", None) if (self.config and hasattr(self.config, "meshcore")) else None
+            alert_rad = getattr(self.config.meshcore, "adsb_alert_radius_mi", 10.0) if (self.config and hasattr(self.config, "meshcore")) else 10.0
+            js_init = f"if (window.setInitialAdsbConfig) window.setInitialAdsbConfig({json.dumps(filter_cats)}, {str(alert_en).lower()}, {json.dumps(alert_cats)}, {alert_rad});"
+            self.run_js(js_init)
 
     def set_adsb_target(self, node_id: str, alias: str, lat: float, lon: float, radius_nm: int = 50):
         """Sets the center point for ADS-B queries to a specific node."""
@@ -11251,6 +14968,38 @@ class MeshMapWidget(QWidget):
                 self.config.save()
             except Exception as e:
                 logger.error(f"Failed saving adsb_color_mode: {e}")
+
+    def _on_bridge_adsb_filters_changed(self, filters_json: str):
+        """Persist updated aircraft display filters to config."""
+        self._reset_watchdog_activity()
+        try:
+            filters = json.loads(filters_json)
+            active_cats = [cat for cat, active in filters.items() if active]
+            if self.config and hasattr(self.config, "meshcore"):
+                self.config.meshcore.adsb_filter_categories = active_cats
+                try:
+                    self.config.save()
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.debug(f"Failed saving adsb_filter_categories: {e}")
+
+    def _on_bridge_adsb_alert_config_changed(self, config_json: str):
+        """Persist proximity alert configuration to config."""
+        self._reset_watchdog_activity()
+        try:
+            alert_cfg = json.loads(config_json)
+            if self.config and hasattr(self.config, "meshcore"):
+                self.config.meshcore.adsb_alert_enabled = bool(alert_cfg.get("enabled", True))
+                cats_dict = alert_cfg.get("categories", {})
+                self.config.meshcore.adsb_alert_categories = [c for c, act in cats_dict.items() if act]
+                self.config.meshcore.adsb_alert_radius_mi = float(alert_cfg.get("radiusMi", 10.0))
+                try:
+                    self.config.save()
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.debug(f"Failed saving adsb alert config: {e}")
 
     def _on_bridge_request_aircraft_photo(self, hex_code: str):
         """Asynchronously queries Planespotters photo for aircraft hex."""
@@ -11963,6 +15712,9 @@ class MeshMapWidget(QWidget):
             act_adsb = menu.addAction(f"✈️ Track ADS-B Air Traffic Around {clean_alias}")
             act_adsb.triggered.connect(lambda: self._on_bridge_set_adsb_target(node_id, clean_alias, lat, lon))
 
+            act_vis = menu.addAction(f"🛣️ Visualise Route / Path ({clean_alias})")
+            act_vis.triggered.connect(lambda: self.visualise_node_path(node_id, clean_alias, lat, lon))
+
         menu.addSeparator()
 
         # 6. Copy details
@@ -12215,6 +15967,29 @@ class MeshMapWidget(QWidget):
             if hasattr(self, "watcher_status"):
                 self.watcher_status.setText("👋 <b>New Nodes:</b> All current nodes marked as known. Starting discovery baseline from now.")
 
+    def set_mqtt_nodes(self, enabled: bool):
+        """Toggles the 'MQTT Ingest' nodes view mode (highlights nodes discovered via MQTT in orange)."""
+        self.mqtt_nodes_active = bool(enabled)
+
+        p = self.window()
+        if p and hasattr(p, "nav_dock"):
+            if hasattr(p.nav_dock, "set_layer_active"):
+                p.nav_dock.set_layer_active("mqtt_nodes", self.mqtt_nodes_active)
+            elif hasattr(p.nav_dock, "map_layers"):
+                p.nav_dock.map_layers.set_layer_active("mqtt_nodes", self.mqtt_nodes_active)
+
+        if hasattr(self, "watcher_status"):
+            if self.mqtt_nodes_active:
+                self.watcher_status.setText("🌐 <b>MQTT Ingest View:</b> Highlighting nodes discovered via MQTT broker feeds in orange")
+            else:
+                self.watcher_status.setText("⚡ <b>Watcher:</b> Listening for live RF packet paths...")
+
+        mn_str = "true" if self.mqtt_nodes_active else "false"
+        self.run_js(f"setMqttNodes({mn_str});")
+
+    def _on_bridge_mqtt_nodes_toggled(self, enabled: bool):
+        self.set_mqtt_nodes(enabled)
+
     def set_thunderstorm(self, enabled: bool):
         """Toggles real-time thunderstorm radar and lightning strike tracking."""
         self.show_thunderstorm = bool(enabled)
@@ -12272,6 +16047,32 @@ class MeshMapWidget(QWidget):
 
     def _on_bridge_search_node_id_toggled(self, enabled: bool):
         self.set_search_node_id(enabled)
+
+    def set_3d_mode(self, enabled: bool):
+        """Toggles between 2D Leaflet map and UKMesh-style 3D MapLibre terrain view."""
+        self.is_3d_mode = bool(enabled)
+        if hasattr(self, "btn_map_3d"):
+            self.btn_map_3d.blockSignals(True)
+            self.btn_map_3d.setChecked(self.is_3d_mode)
+            self.btn_map_3d.blockSignals(False)
+
+        p = self.window()
+        if p and hasattr(p, "nav_dock") and hasattr(p.nav_dock, "set_layer_active"):
+            p.nav_dock.set_layer_active("map_3d", self.is_3d_mode)
+
+        if hasattr(self, "watcher_status") and self.is_3d_mode:
+            self.watcher_status.setText("🏔️ <b>3D View:</b> MapLibre GL 3D Terrain & Globe active (UKMesh style)")
+
+        m_str = "true" if self.is_3d_mode else "false"
+        if self.is_3d_mode and not getattr(self, "_maplibre_injected", False):
+            js_code = _load_vendor_asset("maplibre-gl.js")
+            if js_code:
+                self.run_js(js_code)
+                self._maplibre_injected = True
+        self.run_js(f"if (window.set3DMode) set3DMode({m_str});")
+
+    def _on_bridge_map_3d_toggled(self, enabled: bool):
+        self.set_3d_mode(enabled)
 
     def set_space_weather(self, enabled: bool):
         """Toggles real-time NOAA space weather telemetry and aurora forecast overlay."""
@@ -12768,12 +16569,18 @@ class MeshMapWidget(QWidget):
             self.btn_orbitals.setChecked(visible)
             self.btn_orbitals.setStyleSheet(self._btn_style(active=visible))
             self.btn_orbitals.blockSignals(False)
+        p = self.window()
+        if p and hasattr(p, "nav_dock") and hasattr(p.nav_dock, "set_layer_active"):
+            p.nav_dock.set_layer_active("orbitals", visible)
         if self.config and hasattr(self.config, "meshcore"):
             self.config.meshcore.map_show_companion_orbitals = visible
             try:
                 self.config.save()
             except Exception:
                 pass
+        docked_data = self.storage.get_docked_companions() if (self.storage and visible) else {}
+        orb_str = "true" if visible else "false"
+        self.run_js(f"setCompanionOrbitalsVisible({orb_str}, {json.dumps(docked_data)});")
         self.refresh_map_data()
 
     def set_scopes(self, visible: bool):
@@ -12925,7 +16732,9 @@ class MeshMapWidget(QWidget):
                 "out_path_src": c_p_src,
                 "out_path": getattr(c, "out_path", "") or "",
                 "scope_name": getattr(c, "scope_name", None),
-                "allowed_regions": getattr(c, "allowed_regions", []) or []
+                "allowed_regions": getattr(c, "allowed_regions", []) or [],
+                "source": str(getattr(c, "source", "radio") or "radio").strip().lower(),
+                "is_mqtt": (str(getattr(c, "source", "radio") or "radio").strip().lower() == "mqtt")
             })
 
         rep_count = sum(1 for c in contacts if c.is_repeater)
@@ -12945,7 +16754,7 @@ class MeshMapWidget(QWidget):
                 docked_count = 0
             if hasattr(self, "btn_orbitals"):
                 self.btn_orbitals.setText(f"🛰️ Orbitals ({docked_count})" if docked_count > 0 else "🛰️ Orbitals")
-            is_orb_active = getattr(self, "show_companion_orbitals", False) or (hasattr(self, "btn_orbitals") and self.btn_orbitals.isChecked())
+            is_orb_active = self.btn_orbitals.isChecked() if hasattr(self, "btn_orbitals") else getattr(self, "show_companion_orbitals", False)
             if is_orb_active:
                 try:
                     docked_data = self.storage.get_docked_companions()
@@ -12977,14 +16786,14 @@ class MeshMapWidget(QWidget):
         js_links = json.dumps(links_data)
         self.run_js(f"setNodes({js_nodes});")
         self.run_js(f"setRfLinks({js_links});")
-        is_orb_active = getattr(self, "show_companion_orbitals", False) or (hasattr(self, "btn_orbitals") and self.btn_orbitals.isChecked())
+        is_orb_active = self.btn_orbitals.isChecked() if hasattr(self, "btn_orbitals") else getattr(self, "show_companion_orbitals", False)
         orb_active_str = "true" if is_orb_active else "false"
         js_docked = json.dumps(docked_data)
         self.run_js(f"setCompanionOrbitalsVisible({orb_active_str}, {js_docked});")
         if hasattr(self, "btn_scopes") and self.btn_scopes.isChecked():
             self._update_scope_overlays()
 
-    def _on_packet_path_traced(self, path: PacketPathInfo):
+    def _on_packet_path_traced(self, path: PacketPathInfo, force_animate: bool = False):
         """Displays traced multi-hop packet trajectory on the map."""
         if not path:
             return
@@ -13001,10 +16810,11 @@ class MeshMapWidget(QWidget):
         chan = str(decoded.get("channel") or "").strip()
         sig = f"{chan}:{text}" if text else ""
 
-        if raw_id and raw_id in self._recent_packet_events and (now - self._recent_packet_events[raw_id] < 3.5):
-            return
-        if sig and sig in self._recent_packet_events and (now - self._recent_packet_events[sig] < 3.5):
-            return
+        if not force_animate:
+            if raw_id and raw_id in self._recent_packet_events and (now - self._recent_packet_events[raw_id] < 3.5):
+                return
+            if sig and sig in self._recent_packet_events and (now - self._recent_packet_events[sig] < 3.5):
+                return
 
         if raw_id:
             self._recent_packet_events[raw_id] = now
@@ -13155,13 +16965,13 @@ class MeshMapWidget(QWidget):
         if len(route_coords) < 2:
             return
 
-        if self.show_paths or self.show_rf_links:
-            self.run_js(f"drawPacketPath({js_coords}, {js_meta});")
+        if force_animate or self.show_paths or self.show_rf_links:
+            self.run_js(f"drawPacketPath({js_coords}, {js_meta}); if (window.tracePacketPath3D) window.tracePacketPath3D({js_meta}, {js_coords});")
 
     def trigger_corescope_trace(self, path: PacketPathInfo):
         """Explicitly executes CoreScope traveling particle beam animation on the map."""
         if path:
-            self._on_packet_path_traced(path)
+            self._on_packet_path_traced(path, force_animate=True)
 
     def _get_local_coordinates(self) -> List[float]:
 
@@ -13356,7 +17166,7 @@ class MeshMapWidget(QWidget):
 
         # If 2 or more coordinates are resolved, draw the animated particle beam on the map!
         if len(route_coords) >= 2 and (self.show_paths or self.show_rf_links):
-            self.run_js(f"drawPacketPath({js_coords}, {js_meta});")
+            self.run_js(f"drawPacketPath({js_coords}, {js_meta}); if (window.tracePacketPath3D) window.tracePacketPath3D({js_meta}, {js_coords});")
         elif sender_coord:
             # Fallback: pulse origin node if only sender is known
             js_coord = json.dumps(sender_coord)
@@ -13452,6 +17262,56 @@ class MeshMapWidget(QWidget):
             self.run_js(f"drawRepeaterNeighbors({js_payload});")
         else:
             self._pending_neighbors_payload = payload
+
+    def visualise_node_path(self, node_id: str, clean_alias: str, lat: float, lon: float):
+        """Visualises transmission route/path for a specific node from context menu or user action."""
+        msg = None
+        if self.storage:
+            try:
+                with self.storage._get_connection() as conn:
+                    cur = conn.cursor()
+                    cur.execute("""
+                        SELECT id, sender_id, sender_name, channel, text, timestamp, is_outgoing, metadata
+                        FROM messages
+                        WHERE sender_id = ? OR sender_name = ?
+                        ORDER BY timestamp DESC
+                        LIMIT 1
+                    """, (node_id, clean_alias))
+                    row = cur.fetchone()
+                    if row:
+                        from meshcore_tray.core.models import MessageEnvelope
+                        meta = json.loads(row["metadata"]) if row["metadata"] else {}
+                        msg = MessageEnvelope(
+                            id=row["id"],
+                            sender_id=row["sender_id"],
+                            sender_name=row["sender_name"],
+                            channel=row["channel"],
+                            text=row["text"],
+                            timestamp=row["timestamp"],
+                            is_outgoing=bool(row["is_outgoing"]),
+                            metadata=meta
+                        )
+            except Exception as e:
+                logger.debug(f"Error querying last message for node {node_id}: {e}")
+
+        if msg:
+            self.visualise_message_path(msg)
+        else:
+            home_coords = self._get_local_coordinates()
+            segments = [{
+                "coords": [home_coords, [lat, lon]],
+                "color": "#FF00FF",
+                "is_unknown": False
+            }]
+            meta = {
+                "sender_name": "Home Station",
+                "recipient_name": clean_alias,
+                "color": "#FF00FF",
+                "repeaters": [{"name": clean_alias, "lat": lat, "lon": lon, "is_known": True}]
+            }
+            js_segments = json.dumps(segments)
+            js_meta = json.dumps(meta)
+            self.run_js(f"drawVisualisedMessagePath({js_segments}, {js_meta});")
 
     def visualise_message_path(self, msg: MessageEnvelope):
         """Visualises the multi-hop transmission path of a specific message on the map with a dotted line and highlighted repeaters."""

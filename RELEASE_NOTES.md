@@ -4,6 +4,26 @@
 
 ---
 
+## 🌟 What's New in v0.9.0
+
+### ✈️ ADS-B Aircraft Type Filtering & Proximity Alert System
+- **Interactive Aircraft Type Filtering**: Real-time filtering on both 2D and 3D flight radar overlays allowing users to toggle aircraft categories: Commercial, General Aviation, Military, Helicopters, Drones/UAVs, and Other.
+- **Tactical 10-Mile Proximity Alerts**: Continuous proximity monitoring relative to the home station / observed location. When a watched aircraft category (e.g. Military) flies within 10 miles (16.1 km), the application sounds a tactical alert tone, highlights the entry, and automatically pops up its full telemetry details card.
+- **Config Persistence**: Active category filters and proximity alert preferences persist across application restarts.
+
+### 🏔️ 3D Map Viewshed & Digital Elevation (DEM) Integration
+- **MapLibre 3D DEM Terrain & Pitch Controls**: Topographic relief mapping with digital elevation model integration for 3D terrain exploration.
+- **Tactical 3D Altitude Cylinders**: Height-projected airspace corridors and trajectory beams.
+- **Interactive Line-of-Sight & Elevation Profiles**: Visual RF line-of-sight analysis between mesh nodes, repeaters, and home station.
+
+### 📦 Live Packet Feed & MQTT Disambiguation Hardening
+- **Human-Readable Request & Control Routes**: Direct and anonymous request packets (`REQ`, `ANON_REQ`, `RESP`, `ACK`) now resolve both source and destination hashes against local contacts, rendering descriptive routes (e.g. `Node [95] ➔ Node [12] (via @Gateway)` or `Node [95] ➔ @Hexham East Repeater`) instead of bare uncontextualized hex hashes.
+- **Observer & Gateway Attribution**: Automatically extracts gateway and observer identifiers from MQTT topics (`public/<region>/<gateway>/packets`) and JSON payloads.
+- **Hop Chain Disambiguation**: Ingested MQTT packets execute sequential hop resolution through `resolve_hop_chain_with_candidates()`, mapping repeaters along the path to coordinates and contacts on the live map.
+- **Visual HUD Separation**: Added distinct badge margins and CSS styling so hop counts, inferred markers, and node identifiers remain cleanly delineated.
+
+---
+
 ## 🌟 What's New in v0.8.2
 
 ### 🕒 Local Timezone Display Alignment
