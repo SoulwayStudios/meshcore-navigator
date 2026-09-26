@@ -8,6 +8,9 @@ on:
     branches: [ master, main ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   test:
     name: Run Automated Tests
@@ -47,14 +50,27 @@ jobs:
           pip install -e ./vendor/meshcore_py
 
       - name: Run Pytest Test Suite
+        env:
+          QT_QPA_PLATFORM: offscreen
         run: |
           export PYTHONPATH=".:./vendor/pixoo/src:./vendor/meshcore_py/src:$PYTHONPATH"
-          xvfb-run -a pytest tests/ -v --tb=short
+          pytest tests/ -v --tb=short > pytest.log 2>&1 || {
+            tail -n 150 pytest.log > ci_failure.txt
+            git config user.name "CI Bot"
+            git config user.email "ci@bot"
+            git checkout -B ci-failure-log
+            git add ci_failure.txt
+            git commit -m "ci failure log [skip ci]"
+            git push -f origin ci-failure-log || true
+            exit 1
+          }
 
       - name: Headless Init Verification
+        env:
+          QT_QPA_PLATFORM: offscreen
         run: |
           export PYTHONPATH=".:./vendor/pixoo/src:./vendor/meshcore_py/src:$PYTHONPATH"
-          xvfb-run -a python -m meshcore_tray.main --test-init
+          python -m meshcore_tray.main --test-init
 
   build-linux:
     name: Package Linux Distribution
