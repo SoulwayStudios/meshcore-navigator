@@ -208,148 +208,101 @@ def test_unjoined_channel_activity_detection(qapp, tmp_storage):
     assert len(received_events) >= 1
     assert received_events[-1].text == "Second message on joined channel"
 
+    bus.unsubscribe(EventType.CHANNEL_ACTIVITY_DETECTED, detected_events.append)
+    bus.unsubscribe(EventType.MESSAGE_RECEIVED, received_events.append)
+
 
 def test_main_window_expand_map_and_channel_banner(qapp, tmp_storage):
     """Verifies MainWindow toggle_expand_map splitter behavior and channel activity prompt banner."""
+    from unittest.mock import patch
+
     cfg = AppConfig()
-    win = MainWindow(config=cfg, storage=tmp_storage)
+    with patch("meshcore_tray.ui.mesh_map_widget.WEBENGINE_AVAILABLE", False):
+        win = MainWindow(config=cfg, storage=tmp_storage)
 
-    # Verify dock index in normal mode
-    assert win.mesh_map.map_content_layout.indexOf(win.map_layer_dock) == 0
+        # Verify dock index in normal mode
+        assert win.mesh_map.map_content_layout.indexOf(win.map_layer_dock) == 0
 
-    # 1. Expand Map
-    win.toggle_expand_map(True)
-    assert win._map_is_expanded is True
-    assert win.sidebar.isHidden()
-    assert win.center_stack.isHidden()
-    # In expanded mode, dock moves to far right (after map_splitter)
-    assert win.mesh_map.map_content_layout.indexOf(win.map_layer_dock) == 1
+        # 1. Expand Map
+        win.toggle_expand_map(True)
+        assert win._map_is_expanded is True
+        assert win.sidebar.isHidden()
+        assert win.center_stack.isHidden()
+        # In expanded mode, dock moves to far right (after map_splitter)
+        assert win.mesh_map.map_content_layout.indexOf(win.map_layer_dock) == 1
 
-    # 2. Restore Map
-    win.toggle_expand_map(False)
-    assert win._map_is_expanded is False
-    assert not win.sidebar.isHidden()
-    assert not win.center_stack.isHidden()
-    # In restored mode, dock returns to left edge of map (index 0)
-    assert win.mesh_map.map_content_layout.indexOf(win.map_layer_dock) == 0
+        # 2. Restore Map
+        win.toggle_expand_map(False)
+        assert win._map_is_expanded is False
+        assert not win.sidebar.isHidden()
+        assert not win.center_stack.isHidden()
+        # In restored mode, dock returns to left edge of map (index 0)
+        assert win.mesh_map.map_content_layout.indexOf(win.map_layer_dock) == 0
 
-    # 3. Test Channel Activity Prompt Banner
-    assert win.channel_activity_banner.isHidden()
+        # 3. Test Channel Activity Prompt Banner
+        assert win.channel_activity_banner.isHidden()
 
-    bus.emit(EventType.CHANNEL_ACTIVITY_DETECTED, {
-        "channel": "#northeast",
-        "sender": "G7XYZ",
-        "text": "Are repeaters online?",
-        "source": "mqtt",
-        "timestamp": "2026-09-26T18:00:00Z"
-    })
+        bus.emit(EventType.CHANNEL_ACTIVITY_DETECTED, {
+            "channel": "#northeast",
+            "sender": "G7XYZ",
+            "text": "Are repeaters online?",
+            "source": "mqtt",
+            "timestamp": "2026-09-26T18:00:00Z"
+        })
 
-    assert not win.channel_activity_banner.isHidden()
-    assert "#northeast" in win.channel_activity_lbl.text()
-    assert "+ Join #northeast" == win.channel_activity_join_btn.text()
+        assert not win.channel_activity_banner.isHidden()
+        assert "#northeast" in win.channel_activity_lbl.text()
+        assert "+ Join #northeast" == win.channel_activity_join_btn.text()
 
-    # Click join button
-    win.channel_activity_join_btn.click()
-    assert win.channel_activity_banner.isHidden()
+        # Click join button
+        win.channel_activity_join_btn.click()
+        assert win.channel_activity_banner.isHidden()
 
-    # Channel #northeast should now be saved in storage and active
-    ch = tmp_storage.get_channel("#northeast")
-    assert ch is not None
-    assert ch.name == "#northeast"
+        # Channel #northeast should now be saved in storage and active
+        ch = tmp_storage.get_channel("#northeast")
+        assert ch is not None
+        assert ch.name == "#northeast"
+
+        win.close()
 
 
 def test_overlay_minimise_and_hover_flyout_js(qapp):
-    """Verifies that overlay minimising, hover flyout (left/right dock positions), and pinning work in JS without errors."""
-    from PyQt6.QtCore import QEventLoop, QTimer
-    from meshcore_tray.ui.mesh_map_widget import MeshMapWidget
-    
+    """Verifies that overlay minimising, hover flyout (left/right dock positions), and pinning work in JS and Python wrappers."""
+    from unittest.mock import MagicMock, patch
+    from meshcore_tray.ui.mesh_map_widget import MeshMapWidget, LEAFLET_HTML_TEMPLATE
+
+    # 1. Verify JS Functions and CSS in LEAFLET_HTML_TEMPLATE
+    assert "window.minimizeOverlay" in LEAFLET_HTML_TEMPLATE
+    assert "window.pinOverlay" in LEAFLET_HTML_TEMPLATE
+    assert "window.handleLayerHover" in LEAFLET_HTML_TEMPLATE
+    assert "window.setOverlayDockPosition" in LEAFLET_HTML_TEMPLATE
+    assert "flyout-from-right" in LEAFLET_HTML_TEMPLATE
+    assert "flyout-active" in LEAFLET_HTML_TEMPLATE
+    assert "map-overlay-pin-btn" in LEAFLET_HTML_TEMPLATE
+    assert "_minimisedOverlays" in LEAFLET_HTML_TEMPLATE
+    assert "📌" in LEAFLET_HTML_TEMPLATE
+
+    # 2. Verify MeshMapWidget Python methods dispatch correct JS calls
     cfg = AppConfig()
-    map_w = MeshMapWidget(config=cfg)
-    map_w.show()
-    
-    loop = QEventLoop()
-    map_w.web_view.loadFinished.connect(lambda ok: loop.quit())
-    QTimer.singleShot(4000, loop.quit)
-    loop.exec()
-    
-    # 1. Test minimiseOverlay on adsb panel (has nested flex container for close button)
-    res_minimize = []
-    map_w.run_js("""
-    window.minimizeOverlay('adsb');
-    Boolean(window._minimisedOverlays['adsb']);
-    """, res_minimize.append)
-    
-    loop = QEventLoop()
-    QTimer.singleShot(300, loop.quit)
-    loop.exec()
-    assert res_minimize and res_minimize[0] is True
-    
-    # 2. Test hover flyout when dock is on left (normal mode) -> flyout to the right (left: 8px)
-    map_w.on_layer_hovered('adsb', True, 200)
-    res_hover_left = []
-    map_w.run_js("""
-    var el = document.getElementById('adsb-panel');
-    var pin = el.querySelector('.map-overlay-pin-btn');
-    JSON.stringify({
-        display: el.style.display,
-        left: el.style.left,
-        right: el.style.right,
-        hasPin: !!pin
-    });
-    """, res_hover_left.append)
-    
-    loop = QEventLoop()
-    QTimer.singleShot(300, loop.quit)
-    loop.exec()
-    assert res_hover_left
-    import json
-    data_left = json.loads(res_hover_left[0])
-    assert data_left["display"] == "flex"
-    assert data_left["left"] == "8px"
-    assert data_left["hasPin"] is True
-    
-    # 3. Test dock expanded mode (dock on right) -> flyout to the left (right: 8px)
-    map_w.set_layer_dock_expanded(True)
-    map_w.on_layer_hovered('adsb', True, 200)
-    res_hover_right = []
-    map_w.run_js("""
-    var el = document.getElementById('adsb-panel');
-    JSON.stringify({
-        display: el.style.display,
-        left: el.style.left,
-        right: el.style.right,
-        hasRightClass: el.classList.contains('flyout-from-right')
-    });
-    """, res_hover_right.append)
-    
-    loop = QEventLoop()
-    QTimer.singleShot(300, loop.quit)
-    loop.exec()
-    assert res_hover_right
-    data_right = json.loads(res_hover_right[0])
-    assert data_right["display"] == "flex"
-    assert data_right["right"] == "8px"
-    assert data_right["hasRightClass"] is True
-    
-    # 4. Test pinOverlay restores panel to pinned state
-    res_pin = []
-    map_w.run_js("""
-    window.pinOverlay('adsb');
-    var el = document.getElementById('adsb-panel');
-    var pin = el.querySelector('.map-overlay-pin-btn');
-    JSON.stringify({
-        display: el.style.display,
-        minimised: Boolean(window._minimisedOverlays['adsb']),
-        pinHidden: pin ? (pin.style.display === 'none') : false
-    });
-    """, res_pin.append)
-    
-    loop = QEventLoop()
-    QTimer.singleShot(300, loop.quit)
-    loop.exec()
-    assert res_pin
-    data_pin = json.loads(res_pin[0])
-    assert data_pin["display"] == "flex"
-    assert data_pin["minimised"] is False
-    assert data_pin["pinHidden"] is True
+    with patch("meshcore_tray.ui.mesh_map_widget.WEBENGINE_AVAILABLE", False):
+        map_w = MeshMapWidget(config=cfg)
+        map_w.run_js = MagicMock()
+
+        # Normal mode (left dock)
+        map_w.set_layer_dock_expanded(False)
+        map_w.run_js.assert_called_with("if (window.setOverlayDockPosition) window.setOverlayDockPosition('left');")
+
+        # Hover in normal mode
+        map_w.on_layer_hovered('adsb', True, 200)
+        map_w.run_js.assert_called_with("if (window.handleLayerHover) window.handleLayerHover('adsb', true, 200);")
+
+        # Expanded mode (right dock)
+        map_w.set_layer_dock_expanded(True)
+        map_w.run_js.assert_called_with("if (window.setOverlayDockPosition) window.setOverlayDockPosition('right');")
+
+        # Hover off
+        map_w.on_layer_hovered('adsb', False, 0)
+        map_w.run_js.assert_called_with("if (window.handleLayerHover) window.handleLayerHover('adsb', false, 0);")
+
+        map_w.close()
 

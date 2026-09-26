@@ -18156,11 +18156,7 @@ class MeshMapWidget(QWidget):
             if WEBENGINE_AVAILABLE and hasattr(self, "web_view") and self.web_view:
                 try:
                     self.web_view.stop()
-                    page = self.web_view.page()
-                    if page is not None:
-                        self.web_view.setPage(None)
-                        page.deleteLater()
-                except RuntimeError:
+                except (RuntimeError, Exception):
                     pass
         except Exception as e:
             logger.debug(f"Map cleanup exception: {e}")

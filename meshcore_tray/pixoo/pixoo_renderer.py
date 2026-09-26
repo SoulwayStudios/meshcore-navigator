@@ -250,7 +250,7 @@ class PixooRenderer:
         try:
             now = datetime.now().time()
             start = datetime.strptime(self.config.quiet_hours.start_time, "%H:%M").time()
-            end = datetime.strptime(self.config.quiet_hours.end_time, "%H:%M").time()
+            end = datetime.strptime(self.config.quiet_hours.end_time, "%H:%M").time().replace(second=59, microsecond=999999)
 
             if start <= end:
                 return start <= now <= end

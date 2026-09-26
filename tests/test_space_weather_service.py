@@ -208,34 +208,35 @@ def test_space_weather_map_widget_integration(ensure_qapp, tmp_path: Path):
 
     config = AppConfig()
     storage = Storage(tmp_path / "sw_test.db")
-    map_widget = MeshMapWidget(config=config, storage=storage)
+    with patch("meshcore_tray.ui.mesh_map_widget.WEBENGINE_AVAILABLE", False):
+        map_widget = MeshMapWidget(config=config, storage=storage)
 
-    assert hasattr(map_widget, "space_weather_service")
-    assert not map_widget.show_space_weather
-
-    with patch.object(map_widget.space_weather_service, "fetch_weather"):
-        map_widget.set_space_weather(True)
-        assert map_widget.show_space_weather
-        assert map_widget.config.meshcore.map_show_space_weather is True
-        assert map_widget.space_weather_service._poll_timer.isActive()
-
-        # Test opacity change
-        map_widget._on_space_weather_opacity_changed(0.85)
-        assert map_widget.config.meshcore.space_weather_opacity == 0.85
-
-        # Test bridge signals
-        from meshcore_tray.ui.mesh_map_widget import WebBridge
-        bridge = map_widget.bridge if hasattr(map_widget, "bridge") else WebBridge()
-        if not hasattr(map_widget, "bridge"):
-            bridge.space_weather_opacity_signal.connect(map_widget._on_space_weather_opacity_changed)
-            bridge.space_weather_toggled_signal.connect(map_widget.set_space_weather)
-
-        bridge.on_space_weather_opacity(0.40)
-        assert map_widget.config.meshcore.space_weather_opacity == 0.40
-
-        bridge.on_space_weather_toggled(False)
+        assert hasattr(map_widget, "space_weather_service")
         assert not map_widget.show_space_weather
-        assert not map_widget.space_weather_service._poll_timer.isActive()
 
-    map_widget.cleanup()
+        with patch.object(map_widget.space_weather_service, "fetch_weather"):
+            map_widget.set_space_weather(True)
+            assert map_widget.show_space_weather
+            assert map_widget.config.meshcore.map_show_space_weather is True
+            assert map_widget.space_weather_service._poll_timer.isActive()
+
+            # Test opacity change
+            map_widget._on_space_weather_opacity_changed(0.85)
+            assert map_widget.config.meshcore.space_weather_opacity == 0.85
+
+            # Test bridge signals
+            from meshcore_tray.ui.mesh_map_widget import WebBridge
+            bridge = map_widget.bridge if hasattr(map_widget, "bridge") else WebBridge()
+            if not hasattr(map_widget, "bridge"):
+                bridge.space_weather_opacity_signal.connect(map_widget._on_space_weather_opacity_changed)
+                bridge.space_weather_toggled_signal.connect(map_widget.set_space_weather)
+
+            bridge.on_space_weather_opacity(0.40)
+            assert map_widget.config.meshcore.space_weather_opacity == 0.40
+
+            bridge.on_space_weather_toggled(False)
+            assert not map_widget.show_space_weather
+            assert not map_widget.space_weather_service._poll_timer.isActive()
+
+        map_widget.cleanup()
 

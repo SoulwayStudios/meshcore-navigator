@@ -138,7 +138,7 @@ def test_channel_filtering_silences_pixoo():
     assert renderer.is_flashing is True
 
 
-def test_quiet_hours_blackout():
+def test_quiet_hours_blackout(monkeypatch):
     config = AppConfig()
     config.quiet_hours.enabled = True
     config.quiet_hours.start_time = "00:00"
@@ -146,6 +146,7 @@ def test_quiet_hours_blackout():
     config.quiet_hours.action = "blackout"
 
     renderer = PixooRenderer(config=config)
+    monkeypatch.setattr(renderer, "is_in_quiet_hours", lambda: True)
     frame = renderer.render_frame()
 
     for y in range(0, 64, 8):

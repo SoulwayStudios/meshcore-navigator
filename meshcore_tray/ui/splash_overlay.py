@@ -351,6 +351,17 @@ class SplashOverlay(QWidget):
             return
         self._is_dismissing = True
 
+        if hasattr(self, "_min_timer") and self._min_timer is not None:
+            try:
+                self._min_timer.stop()
+            except Exception:
+                pass
+        if hasattr(self, "_fallback_timer") and self._fallback_timer is not None:
+            try:
+                self._fallback_timer.stop()
+            except Exception:
+                pass
+
         if hasattr(self, "_version_checker"):
             try:
                 self._version_checker.check_finished.disconnect(self._on_version_check_finished)
