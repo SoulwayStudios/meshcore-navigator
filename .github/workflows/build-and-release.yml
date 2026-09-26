@@ -47,25 +47,14 @@ jobs:
           pip install -e ./vendor/meshcore_py
 
       - name: Run Pytest Test Suite
-        env:
-          QT_QPA_PLATFORM: offscreen
         run: |
           export PYTHONPATH=".:./vendor/pixoo/src:./vendor/meshcore_py/src:$PYTHONPATH"
-          pytest tests/ -v > pytest.log 2>&1 || (cat pytest.log && exit 1)
-
-      - name: Upload Test Logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-logs
-          path: pytest.log
+          xvfb-run -a pytest tests/ -v --tb=short
 
       - name: Headless Init Verification
-        env:
-          QT_QPA_PLATFORM: offscreen
         run: |
           export PYTHONPATH=".:./vendor/pixoo/src:./vendor/meshcore_py/src:$PYTHONPATH"
-          python -m meshcore_tray.main --test-init
+          xvfb-run -a python -m meshcore_tray.main --test-init
 
   build-linux:
     name: Package Linux Distribution
