@@ -419,3 +419,74 @@ def test_repeaters_view_phantom_badge_and_toggle(app):
         if os.path.exists(db_path):
             os.remove(db_path)
 
+
+def test_ocean_and_bit_flipped_phantom_duplicate_purged(app):
+    """Verifies that duplicate repeaters with bit-flipped public keys and ocean coordinates are purged."""
+    from meshcore_tray.core.models import is_ocean_coordinate, is_valid_coordinate, is_plausible_rf_coordinate
+
+    home_lat = 54.65897
+    home_lon = -3.4346
+
+    # Verify ocean coordinate detection
+    assert is_ocean_coordinate(44.14131, -16.1864) is True  # Browney phantom in Bay of Biscay/Atlantic
+    assert is_valid_coordinate(44.14131, -16.1864) is False
+    assert is_plausible_rf_coordinate(44.14131, -16.1864, ref_lat=home_lat, ref_lon=home_lon) is False
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+
+    try:
+        storage = Storage(db_path)
+        # Authentic radio repeater in Durham, UK
+        genuine = NodeContact(
+            node_id="0f9ad7c1f914",
+            alias="🦦 Browney Repeater",
+            latitude=54.74552,
+            longitude=-1.61864,
+            is_repeater=True,
+            public_key="0f9ad7c1f914b0984d6bd3dffbf17a6a56c1e3a62559dee882a77a0052d595ed",
+            last_seen="2026-10-01T02:28:23+00:00",
+            source="radio"
+        )
+        # Corrupt phantom duplicate heard via MQTT with ocean coordinates and 2-nibble flipped key
+        corrupt_phantom = NodeContact(
+            node_id="0faad7c1f914",
+            alias="🦦 Browney Repeater",
+            latitude=44.14131,
+            longitude=-16.1864,
+            is_repeater=True,
+            public_key="0faad7c1f914b0984d6bd3dffbf17a6a56c1e3a62559deee82a77a0052d595ed",
+            last_seen="2026-09-27T02:28:41+00:00",
+            source="mqtt"
+        )
+        storage.save_contact(genuine)
+        storage.save_contact(corrupt_phantom)
+
+        assert storage.get_contact("0faad7c1f914") is not None
+        assert storage.get_contact("0f9ad7c1f914") is not None
+
+        # Run database verification & sanitization
+        report = storage.verify_and_sanitize_database(home_lat=home_lat, home_lon=home_lon)
+        assert report["phantom_nodes_removed"] >= 1
+
+        # Corrupt duplicate must be purged completely
+        assert storage.get_contact("0faad7c1f914") is None
+
+        # Genuine radio repeater must be preserved with valid coordinates
+        preserved = storage.get_contact("0f9ad7c1f914")
+        assert preserved is not None
+        assert preserved.latitude == 54.74552
+        assert preserved.longitude == -1.61864
+
+        # MeshMap contacts should only return the genuine repeater
+        valid_map_nodes = [
+            c for c in storage.get_nodes_with_coordinates()
+            if is_plausible_rf_coordinate(c.latitude, c.longitude, ref_lat=home_lat, ref_lon=home_lon)
+        ]
+        assert len(valid_map_nodes) == 1
+        assert valid_map_nodes[0].node_id == "0f9ad7c1f914"
+    finally:
+        if os.path.exists(db_path):
+            os.remove(db_path)
+
+

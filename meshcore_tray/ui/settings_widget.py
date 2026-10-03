@@ -1949,8 +1949,109 @@ class SettingsWidget(QWidget):
         card_kw.add_layout(add_row)
         layout.addWidget(card_kw)
 
+        # ✈️ ADS-B Tactical Proximity Alert Audio
+        card_adsb_sound = SettingsCard("✈️ ADS-B Tactical Proximity Alert Audio")
+        self.chk_adsb_sound_en = QCheckBox("Enable Audible Proximity Alerts for Watched Aircraft (<10 mi)")
+        self.chk_adsb_sound_en.setChecked(getattr(self.config.meshcore, "adsb_alert_sound_enabled", True))
+        card_adsb_sound.add_widget(self.chk_adsb_sound_en)
+
+        mode_row = QHBoxLayout()
+        lbl_mode = QLabel("Alert Sound Source:")
+        lbl_mode.setFixedWidth(160)
+        mode_row.addWidget(lbl_mode)
+        self.combo_adsb_sound_mode = QComboBox()
+        self.combo_adsb_sound_mode.addItems([
+            "🔊 Tactical Radar Alert Tone (Built-in Synthesized Chirp)",
+            "📁 Custom Audio File (WAV, MP3, OGG, M4A)"
+        ])
+        cur_sound_mode = getattr(self.config.meshcore, "adsb_alert_sound_mode", "tactical")
+        self.combo_adsb_sound_mode.setCurrentIndex(1 if cur_sound_mode == "custom" else 0)
+        self.combo_adsb_sound_mode.currentIndexChanged.connect(self._on_adsb_sound_mode_changed)
+        mode_row.addWidget(self.combo_adsb_sound_mode, 1)
+        card_adsb_sound.add_layout(mode_row)
+
+        file_row = QHBoxLayout()
+        lbl_file = QLabel("Custom Sound File:")
+        lbl_file.setFixedWidth(160)
+        file_row.addWidget(lbl_file)
+        self.txt_adsb_sound_file = QLineEdit()
+        self.txt_adsb_sound_file.setPlaceholderText("Path to audio file (e.g. C:\\Sounds\\air_raid.wav)...")
+        self.txt_adsb_sound_file.setText(getattr(self.config.meshcore, "adsb_alert_sound_file", ""))
+        self.txt_adsb_sound_file.setEnabled(cur_sound_mode == "custom")
+        file_row.addWidget(self.txt_adsb_sound_file, 1)
+
+        self.btn_browse_sound = QPushButton("Browse...")
+        self.btn_browse_sound.setObjectName("secondaryButton")
+        self.btn_browse_sound.setEnabled(cur_sound_mode == "custom")
+        self.btn_browse_sound.clicked.connect(self._on_browse_adsb_sound)
+        file_row.addWidget(self.btn_browse_sound)
+
+        card_adsb_sound.add_layout(file_row)
+
+        btn_row = QHBoxLayout()
+        self.btn_test_sound = QPushButton("▶ Test Alert Sound")
+        self.btn_test_sound.setObjectName("secondaryButton")
+        self.btn_test_sound.clicked.connect(self._on_test_adsb_sound)
+        btn_row.addWidget(self.btn_test_sound)
+
+        self.btn_reset_sound = QPushButton("↺ Reset to Built-in Tone")
+        self.btn_reset_sound.setObjectName("secondaryButton")
+        self.btn_reset_sound.clicked.connect(self._on_reset_adsb_sound)
+        btn_row.addWidget(self.btn_reset_sound)
+
+        btn_row.addStretch()
+        card_adsb_sound.add_layout(btn_row)
+
+        layout.addWidget(card_adsb_sound)
+
         layout.addStretch()
         return self.tab_notifications
+
+    def _on_adsb_sound_mode_changed(self, idx: int):
+        is_custom = (idx == 1)
+        if hasattr(self, "txt_adsb_sound_file"):
+            self.txt_adsb_sound_file.setEnabled(is_custom)
+        if hasattr(self, "btn_browse_sound"):
+            self.btn_browse_sound.setEnabled(is_custom)
+
+    def _on_browse_adsb_sound(self):
+        from PyQt6.QtWidgets import QFileDialog
+        initial_dir = ""
+        current_text = self.txt_adsb_sound_file.text().strip().strip('"').strip("'")
+        if current_text and os.path.exists(os.path.dirname(current_text)):
+            initial_dir = os.path.dirname(current_text)
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Tactical Proximity Alert Sound File",
+            initial_dir,
+            "Audio Files (*.wav *.mp3 *.ogg *.m4a *.aac *.flac);;WAV Audio (*.wav);;All Files (*.*)"
+        )
+        if file_path:
+            self.txt_adsb_sound_file.setText(file_path)
+            self.combo_adsb_sound_mode.setCurrentIndex(1)
+
+    def _on_test_adsb_sound(self):
+        from meshcore_tray.core.alert_audio import get_alert_audio_manager, normalize_sound_path, get_default_tactical_wav_path
+        mgr = get_alert_audio_manager()
+        is_custom = (self.combo_adsb_sound_mode.currentIndex() == 1)
+        if is_custom:
+            raw_path = self.txt_adsb_sound_file.text().strip()
+            norm = normalize_sound_path(raw_path)
+            if norm:
+                mgr.play_sound(norm)
+            else:
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.warning(
+                    self,
+                    "Sound File Not Found",
+                    f"Could not find or open the audio file at:\n{raw_path}\n\nPlease check the path and filename.",
+                )
+        else:
+            mgr.play_sound(get_default_tactical_wav_path())
+
+    def _on_reset_adsb_sound(self):
+        self.combo_adsb_sound_mode.setCurrentIndex(0)
+        self.txt_adsb_sound_file.clear()
 
     def _add_keyword(self):
         text = self.kw_input.text().strip()
@@ -2247,7 +2348,7 @@ class SettingsWidget(QWidget):
 
         # Dedicated Save Button for Gateway, Satellites & MQTT
         save_gate_box = QHBoxLayout()
-        self.btn_save_gateway = QPushButton("💾 Save Gateway & MQTT Settings")
+        self.btn_save_gateway = QPushButton("💾 Save Gateway, Satellites & MQTT Settings")
         self.btn_save_gateway.setObjectName("primaryButton")
         self.btn_save_gateway.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_save_gateway.clicked.connect(self._save_gateway_and_mqtt)
@@ -2741,6 +2842,14 @@ class SettingsWidget(QWidget):
                 kw_list.append(self.kw_list.item(i).text())
             self.config.notifications.watched_keywords = kw_list
 
+        if hasattr(self, "chk_adsb_sound_en"):
+            self.config.meshcore.adsb_alert_sound_enabled = self.chk_adsb_sound_en.isChecked()
+        if hasattr(self, "combo_adsb_sound_mode"):
+            self.config.meshcore.adsb_alert_sound_mode = "custom" if self.combo_adsb_sound_mode.currentIndex() == 1 else "tactical"
+        if hasattr(self, "txt_adsb_sound_file"):
+            clean_snd = self.txt_adsb_sound_file.text().strip().strip('"').strip("'").strip()
+            self.config.meshcore.adsb_alert_sound_file = clean_snd
+
         # 7. Update Rotations & Gateway
         if hasattr(self, "chk_telem_rot"):
             self.config.telemetry.enabled = self.chk_telem_rot.isChecked()
@@ -2986,6 +3095,17 @@ class SettingsWidget(QWidget):
                 self.chk_desktop_notif.setChecked(self.config.notifications.desktop_notifications)
             if hasattr(self, "chk_mention_notif"):
                 self.chk_mention_notif.setChecked(self.config.notifications.notify_on_node_mentions)
+            if hasattr(self, "chk_adsb_sound_en"):
+                self.chk_adsb_sound_en.setChecked(getattr(self.config.meshcore, "adsb_alert_sound_enabled", True))
+            if hasattr(self, "combo_adsb_sound_mode"):
+                cur_snd_mode = getattr(self.config.meshcore, "adsb_alert_sound_mode", "tactical")
+                self.combo_adsb_sound_mode.setCurrentIndex(1 if cur_snd_mode == "custom" else 0)
+                if hasattr(self, "txt_adsb_sound_file"):
+                    self.txt_adsb_sound_file.setEnabled(cur_snd_mode == "custom")
+                if hasattr(self, "btn_browse_sound"):
+                    self.btn_browse_sound.setEnabled(cur_snd_mode == "custom")
+            if hasattr(self, "txt_adsb_sound_file"):
+                self.txt_adsb_sound_file.setText(getattr(self.config.meshcore, "adsb_alert_sound_file", ""))
 
             # 6. Rotations & Gateway
             if hasattr(self, "chk_telem_rot"):

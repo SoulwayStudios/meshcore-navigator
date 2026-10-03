@@ -4,6 +4,39 @@
 
 ---
 
+## 🌟 What's New in v0.11.1
+
+### ✈️ ADS-B Tactical Proximity Alert In-App Audio (Issues #13 & #15)
+- **Direct Sound Card Audio Playback**: Dedicated in-app audio engine playing alert tones directly through the user's active sound card / speakers on both Windows and Linux, completely bypassing the PC motherboard buzzer.
+- **Eliminated Windows Motherboard Beep**: Replaced tray notification warning icon with `NoIcon` to prevent the Windows shell from executing `MB_ICONWARNING` system timer beeps.
+- **Custom Sound File Support**: Configure custom `.wav`, `.mp3`, `.ogg`, or `.flac` alert tones with robust Windows path normalization handling quotes, mixed slashes, and missing file fallbacks.
+- **Synthesized Tactical Radar Chime**: Built-in multi-pulse radar warning chime (880Hz / 1320Hz / 1760Hz with exponential decay envelopes) generated entirely in Python without external audio dependencies.
+- **Native OS Sound Server Dispatch**:
+  - **Linux**: Direct zero-latency output via PipeWire (`pw-play`), PulseAudio (`paplay`), or ALSA (`aplay`), with `mpv`/`ffplay` fallback.
+  - **Windows**: Native zero-latency `winsound.PlaySound` (for WAV) and Windows Media Control Interface (`mciSendString`) / `QMediaPlayer` (for MP3/OGG).
+- **Settings & Map Controls**: Full audio configuration panel under **Settings -> Notifications -> ADS-B Tactical Proximity Alert Audio** with file browser and direct "▶ Test Alert Sound" button, plus live sound status indicator on the map's ADS-B overlay card.
+
+### 🌊 Rogue Ocean Nodes & Corrupt Phantom Repeater Purging
+- **Deep Ocean Coordinate Detection**: Integrated `is_ocean_coordinate()` in core models to identify and reject corrupted coordinates in deep ocean zones (Null Island / Gulf of Guinea, North Atlantic Ocean west of Europe/Iberia, and open waters of the Bay of Biscay).
+- **Bit-Flipped & Shifted Duplicate Purging**: Startup database sanitization automatically detects and purges phantom duplicate nodes sharing the same alias with bit-flipped public keys or distant ocean coordinates (e.g. rogue Browney Repeater phantom).
+- **Tightened Physical RF Radius**: Reduced maximum plausible mesh radius from 2000–2500km to a realistic 1200km across driver, map, and database checks.
+- **MQTT Guarding**: Validates advert coordinate plausibility and prevents corrupted MQTT packets from resurrecting phantom nodes.
+
+### 🐛 Stability & Crash Fixes
+- **Mesh Map "Mark All Known" Crash**: Resolved `AttributeError: 'MeshMapWidget' object has no attribute 'load_contacts'` when marking discovered nodes as known from the map view.
+
+---
+
+## 🌟 What's New in v0.11.0
+
+### 🚄 UK Rail Live Tracking Map Layer (Network Rail Integration)
+- Live train positioning across the entire UK rail network patterned after `trainmap.co.uk`, tracking passenger and freight services in real-time.
+- Directional SVG train markers oriented along track heading vectors with live punctuality color coding.
+- Granular Infrastructure Layer Toggles: Tracks (🛤️), Active Routes (⚡), Passenger Stations (🚉), Signals (🚦), and Line Speeds.
+- Proximity alert engine with system tray notification dispatch whenever a train approaches within 2km of the monitored home station.
+
+---
+
 ## 🌟 What's New in v0.10.0
 
 ### 🌐 3D Terrain & Airspace Perspective

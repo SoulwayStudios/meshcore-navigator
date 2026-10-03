@@ -33,6 +33,7 @@ from meshcore_tray.ui.heard_floods_view import HeardFloodsWidget
 from meshcore_tray.ui.splash_overlay import SplashOverlay
 from meshcore_tray.ui.avatar_generator import set_global_avatar_style
 from meshcore_tray.core.version_checker import VersionChecker, ReleaseInfo
+from meshcore_tray.core.alert_audio import play_adsb_proximity_alert
 
 logger = logging.getLogger("meshcore_tray.main_window")
 
@@ -681,19 +682,27 @@ class MainWindow(QMainWindow):
                 logger.debug(f"Failed to show proximity tray message: {e}")
 
     def _on_adsb_proximity_alert(self, hex_code: str, flight: str, dist_mi: float, category: str):
-        """Displays desktop/tray notification for nearby watched aircraft within 10 miles."""
+        """Displays desktop/tray notification and plays in-app tactical audio alert for nearby aircraft."""
         cat_title = category.capitalize()
         icon_str = "⚔️" if category == "military" else ("🚁" if category == "helicopter" else "✈️")
         msg = f"{icon_str} {cat_title} Proximity Alert: {flight} ({hex_code.upper()}) is {dist_mi:.1f} mi away."
         logger.warning(msg)
         if hasattr(self, "mesh_map") and hasattr(self.mesh_map, "_notify_user"):
             self.mesh_map._notify_user(msg)
+
+        # Trigger in-app tactical / custom audio alert through default sound output (bypasses PC speaker)
+        try:
+            play_adsb_proximity_alert(self.config)
+        except Exception as e:
+            logger.debug(f"Failed to play ADS-B proximity audio alert: {e}")
+
         if getattr(self, "_tray_icon", None) and self._tray_icon.isVisible():
             try:
+                # Use NoIcon to avoid Windows triggering system motherboard beep / MB_ICONWARNING
                 self._tray_icon.showMessage(
                     f"{icon_str} {cat_title} Aircraft Proximity Alert",
                     f"{flight} ({hex_code.upper()}) is within {dist_mi:.1f} miles of observed location.",
-                    QSystemTrayIcon.MessageIcon.Warning if category == "military" else QSystemTrayIcon.MessageIcon.Information,
+                    QSystemTrayIcon.MessageIcon.NoIcon,
                     8000,
                 )
             except Exception as e:

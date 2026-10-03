@@ -4,6 +4,7 @@ from datetime import datetime
 import html
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -91,7 +92,10 @@ def get_leaflet_html() -> str:
         )
         html = LEAFLET_HTML_TEMPLATE.replace("<!-- __VENDOR_STYLES__ -->", vendor_css)
         html = html.replace("<!-- __VENDOR_SCRIPTS__ -->", vendor_js)
-        _CACHED_LEAFLET_HTML = html
+        # Strip line-leading whitespace and empty lines to reduce payload size by ~200KB,
+        # ensuring QWebEngineView.setHtml() never exceeds Chromium's 2MB data URL IPC limit.
+        lines = [line.strip() for line in html.splitlines() if line.strip()]
+        _CACHED_LEAFLET_HTML = "\n".join(lines)
     return _CACHED_LEAFLET_HTML
 
 
@@ -2715,6 +2719,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             animation: radar-sweep-spin 5s linear infinite;
         }
 
+
         /* Floating Satellite Tracking Panel */
         .sat-panel {
             position: absolute;
@@ -3466,10 +3471,15 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                 <label class="adsb-chk-label"><input type="checkbox" id="adsb-alert-glider" onchange="updateAdsbAlertConfig()"> 🪂 Glider</label>
                 <label class="adsb-chk-label"><input type="checkbox" id="adsb-alert-general" onchange="updateAdsbAlertConfig()"> ✈️ General</label>
             </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.08); font-size: 11px;">
+                <span id="adsb-alert-sound-status" style="color: #9CA3AF;">🔊 Sound: Tactical Tone</span>
+                <button class="adsb-link-btn" onclick="if (window.pyBridge && window.pyBridge.on_test_adsb_alert_sound) window.pyBridge.on_test_adsb_alert_sound()" title="Test audio playback through speakers">▶ Test Sound</button>
+            </div>
         </div>
 
         <div id="adsb-legend-container"></div>
     </div>
+
     <!-- Floating Satellite Tracker Panel -->
     <div id="satellite-panel" class="sat-panel map-overlay-panel" style="display: none;">
         <div class="sat-header map-overlay-header" id="satellite-drag-handle">
@@ -8932,7 +8942,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                         powerPreference: 'high-performance'
                     },
                     transformRequest: function(url, resourceType) {
-                        if (url && (url.indexOf('elevation-tiles-prod/terrarium/7/62/40.png') !== -1 || url.indexOf('/7/62/40.png') !== -1)) {
+                        if (url && (url.indexOf('elevation-tiles-prod/terrarium/7/62/40.png') !== -1 || (url.indexOf('terrarium') !== -1 && url.indexOf('/7/62/40.png') !== -1))) {
                             if (window._cleanDem76240) {
                                 return { url: window._cleanDem76240 };
                             }
@@ -9402,7 +9412,9 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                                 }
                                 hit = { nodeData: nd, properties: p };
                             }
-                            if (!hit || !hit.nodeData) return;
+                            if (!hit || !hit.nodeData) {
+                                return;
+                            }
                             var nodeData = hit.nodeData;
                             if (window._map3dNodePopup) {
                                 try { window._map3dNodePopup.remove(); } catch(ex){}
@@ -12595,7 +12607,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             }
         };
 
-        window.setInitialAdsbConfig = function(filterCats, alertEn, alertCats, alertRad) {
+        window.setInitialAdsbConfig = function(filterCats, alertEn, alertCats, alertRad, soundMode) {
             if (Array.isArray(filterCats)) {
                 var catSet = {};
                 for (var f = 0; f < filterCats.length; f++) catSet[filterCats[f].toLowerCase()] = true;
@@ -12625,6 +12637,10 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             }
             if (typeof alertRad === 'number' && alertRad > 0) {
                 window._adsbAlertConfig.radiusMi = alertRad;
+            }
+            var sndEl = document.getElementById('adsb-alert-sound-status');
+            if (sndEl && soundMode) {
+                sndEl.textContent = (soundMode === 'custom') ? '📁 Sound: Custom File' : '🔊 Sound: Tactical Tone';
             }
         };
 
@@ -13563,6 +13579,8 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
         }
         window.onAdsbDataReady = onAdsbDataReady;
     </script>
+
+
 </body>
 </html>
 """
@@ -13786,6 +13804,7 @@ class WebBridge(QObject):
     adsb_proximity_alert_signal = pyqtSignal(str, str, float, str)
     adsb_filters_changed_signal = pyqtSignal(str)
     adsb_alert_config_changed_signal = pyqtSignal(str)
+    test_adsb_alert_sound_signal = pyqtSignal()
 
     @pyqtSlot(str, str, float, str)
     def on_adsb_proximity_alert(self, hex_code: str, flight: str, dist_mi: float, category: str):
@@ -13798,6 +13817,10 @@ class WebBridge(QObject):
     @pyqtSlot(str)
     def on_adsb_alert_config_changed(self, config_json: str):
         self.adsb_alert_config_changed_signal.emit(config_json)
+
+    @pyqtSlot()
+    def on_test_adsb_alert_sound(self):
+        self.test_adsb_alert_sound_signal.emit()
 
     @pyqtSlot(str)
     def on_open_external_url(self, url: str):
@@ -14248,11 +14271,71 @@ class MeshMapWidget(QWidget):
         self._refresh_timer.setInterval(150)
         self._refresh_timer.timeout.connect(self._do_refresh_map_data)
 
+        self._init_bridge()
         self._setup_ui()
         self._subscribe_events()
         if not WEBENGINE_AVAILABLE:
             self._do_refresh_map_data()
-            QTimer.singleShot(600, self.map_ready.emit)
+            if os.environ.get("MESHCORE_TEST_MODE") == "1":
+                self.map_ready.emit()
+            else:
+                self._fallback_ready_timer = QTimer(self)
+                self._fallback_ready_timer.setSingleShot(True)
+                self._fallback_ready_timer.timeout.connect(self.map_ready.emit)
+                self._fallback_ready_timer.start(600)
+
+    def _init_bridge(self):
+        self.bridge = WebBridge()
+        self.web_bridge = self.bridge
+        self.bridge.node_clicked_signal.connect(self._on_bridge_node_clicked)
+        self.bridge.map_moved_signal.connect(self._on_bridge_map_moved)
+        self.bridge.visualised_path_closed_signal.connect(self._on_visualised_path_closed)
+        self.bridge.hop_candidate_selected_signal.connect(self._on_hop_candidate_selected)
+        self.bridge.phantom_node_toggled_signal.connect(self._on_phantom_node_toggled)
+        self.bridge.node_deleted_signal.connect(self._on_bridge_delete_node)
+        self.bridge.repeater_neighbors_cleared_signal.connect(self._on_repeater_neighbors_cleared)
+        self.bridge.tropo_stepped_signal.connect(self._on_bridge_tropo_stepped)
+        self.bridge.tropo_toggled_signal.connect(self._on_bridge_tropo_toggled)
+        self.bridge.node_scope_changed_signal.connect(self._on_node_scope_changed)
+        self.bridge.set_adsb_target_signal.connect(self._on_bridge_set_adsb_target)
+        self.bridge.adsb_toggled_signal.connect(self._on_bridge_adsb_toggled)
+        self.bridge.reset_adsb_target_signal.connect(self._on_bridge_reset_adsb_target)
+        self.bridge.activity_timeframe_changed_signal.connect(self._on_bridge_activity_timeframe_changed)
+        self.bridge.activity_heatmap_toggled_signal.connect(self._on_bridge_activity_heatmap_toggled)
+        self.bridge.new_nodes_timeframe_changed_signal.connect(self._on_bridge_new_nodes_timeframe_changed)
+        self.bridge.new_nodes_toggled_signal.connect(self._on_bridge_new_nodes_toggled)
+        self.bridge.mqtt_nodes_toggled_signal.connect(self._on_bridge_mqtt_nodes_toggled)
+        self.bridge.map_3d_toggled_signal.connect(self._on_bridge_map_3d_toggled)
+        self.bridge.mark_all_nodes_known_signal.connect(self._on_bridge_mark_all_nodes_known)
+        self.bridge.thunderstorm_toggled_signal.connect(self._on_bridge_thunderstorm_toggled)
+        self.bridge.space_weather_toggled_signal.connect(self.set_space_weather)
+        self.bridge.space_weather_refresh_signal.connect(lambda: self.space_weather_service.fetch_weather(force=True))
+        self.bridge.space_weather_opacity_signal.connect(self._on_space_weather_opacity_changed)
+        self.bridge.satellite_toggled_signal.connect(self.set_satellites)
+        self.bridge.satellite_refresh_signal.connect(lambda: self.satellite_service.refresh_now(force=True))
+        self.bridge.search_node_id_toggled_signal.connect(self._on_bridge_search_node_id_toggled)
+        self.bridge.packet_hud_toggled_signal.connect(self._on_bridge_packet_hud_toggled)
+        self.bridge.activity_timeline_toggled_signal.connect(self._on_bridge_activity_timeline_toggled)
+        self.bridge.map_legend_toggled_signal.connect(self._on_bridge_map_legend_toggled)
+        self.bridge.lightning_proximity_alert_signal.connect(self._on_bridge_lightning_proximity_alert)
+        self.bridge.map_context_menu_signal.connect(
+            lambda lat, lon, x, y: QTimer.singleShot(0, lambda: self._show_map_context_menu(lat, lon, x, y))
+        )
+        self.bridge.node_context_menu_signal.connect(
+            lambda nid, alias, is_rep, is_phant, lat, lon, x, y: QTimer.singleShot(
+                0, lambda: self._show_node_context_menu(nid, alias, is_rep, is_phant, lat, lon, x, y)
+            )
+        )
+        self.bridge.adsb_color_mode_changed_signal.connect(self._on_bridge_adsb_color_mode_changed)
+        self.bridge.adsb_proximity_alert_signal.connect(self.adsb_proximity_alert.emit)
+        self.bridge.adsb_filters_changed_signal.connect(self._on_bridge_adsb_filters_changed)
+        self.bridge.adsb_alert_config_changed_signal.connect(self._on_bridge_adsb_alert_config_changed)
+        self.bridge.test_adsb_alert_sound_signal.connect(self._on_test_adsb_alert_sound)
+        self.bridge.request_aircraft_photo_signal.connect(self._on_bridge_request_aircraft_photo)
+        self.bridge.p2p_path_selected_signal.connect(self._on_p2p_path_selected)
+        self.bridge.profile_node_signal.connect(self._on_profile_node_requested)
+        self.bridge.calc_node_viewshed_signal.connect(self._on_calc_node_viewshed_requested)
+        self.bridge.copy_clipboard_signal.connect(lambda txt: self._notify_user(f"📋 Copied Repeater ID to clipboard: {txt}"))
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -14315,55 +14398,6 @@ class MeshMapWidget(QWidget):
             self.web_view.setStyleSheet("background-color: #12151A; border: none;")
             self.web_view.setContextMenuPolicy(Qt.ContextMenuPolicy.PreventContextMenu)
             self.channel = QWebChannel()
-            self.bridge = WebBridge()
-            self.bridge.node_clicked_signal.connect(self._on_bridge_node_clicked)
-            self.bridge.map_moved_signal.connect(self._on_bridge_map_moved)
-            self.bridge.visualised_path_closed_signal.connect(self._on_visualised_path_closed)
-            self.bridge.hop_candidate_selected_signal.connect(self._on_hop_candidate_selected)
-            self.bridge.phantom_node_toggled_signal.connect(self._on_phantom_node_toggled)
-            self.bridge.node_deleted_signal.connect(self._on_bridge_delete_node)
-            self.bridge.repeater_neighbors_cleared_signal.connect(self._on_repeater_neighbors_cleared)
-            self.bridge.tropo_stepped_signal.connect(self._on_bridge_tropo_stepped)
-            self.bridge.tropo_toggled_signal.connect(self._on_bridge_tropo_toggled)
-            self.bridge.node_scope_changed_signal.connect(self._on_node_scope_changed)
-            self.bridge.set_adsb_target_signal.connect(self._on_bridge_set_adsb_target)
-            self.bridge.adsb_toggled_signal.connect(self._on_bridge_adsb_toggled)
-            self.bridge.reset_adsb_target_signal.connect(self._on_bridge_reset_adsb_target)
-            self.bridge.activity_timeframe_changed_signal.connect(self._on_bridge_activity_timeframe_changed)
-            self.bridge.activity_heatmap_toggled_signal.connect(self._on_bridge_activity_heatmap_toggled)
-            self.bridge.new_nodes_timeframe_changed_signal.connect(self._on_bridge_new_nodes_timeframe_changed)
-            self.bridge.new_nodes_toggled_signal.connect(self._on_bridge_new_nodes_toggled)
-            self.bridge.mqtt_nodes_toggled_signal.connect(self._on_bridge_mqtt_nodes_toggled)
-            self.bridge.map_3d_toggled_signal.connect(self._on_bridge_map_3d_toggled)
-            self.bridge.mark_all_nodes_known_signal.connect(self._on_bridge_mark_all_nodes_known)
-            self.bridge.thunderstorm_toggled_signal.connect(self._on_bridge_thunderstorm_toggled)
-            self.bridge.space_weather_toggled_signal.connect(self.set_space_weather)
-            self.bridge.space_weather_refresh_signal.connect(lambda: self.space_weather_service.fetch_weather(force=True))
-            self.bridge.space_weather_opacity_signal.connect(self._on_space_weather_opacity_changed)
-            self.bridge.satellite_toggled_signal.connect(self.set_satellites)
-            self.bridge.satellite_refresh_signal.connect(lambda: self.satellite_service.refresh_now(force=True))
-            self.bridge.search_node_id_toggled_signal.connect(self._on_bridge_search_node_id_toggled)
-            self.bridge.packet_hud_toggled_signal.connect(self._on_bridge_packet_hud_toggled)
-            self.bridge.activity_timeline_toggled_signal.connect(self._on_bridge_activity_timeline_toggled)
-            self.bridge.map_legend_toggled_signal.connect(self._on_bridge_map_legend_toggled)
-            self.bridge.lightning_proximity_alert_signal.connect(self._on_bridge_lightning_proximity_alert)
-            self.bridge.map_context_menu_signal.connect(
-                lambda lat, lon, x, y: QTimer.singleShot(0, lambda: self._show_map_context_menu(lat, lon, x, y))
-            )
-            self.bridge.node_context_menu_signal.connect(
-                lambda nid, alias, is_rep, is_phant, lat, lon, x, y: QTimer.singleShot(
-                    0, lambda: self._show_node_context_menu(nid, alias, is_rep, is_phant, lat, lon, x, y)
-                )
-            )
-            self.bridge.adsb_color_mode_changed_signal.connect(self._on_bridge_adsb_color_mode_changed)
-            self.bridge.adsb_proximity_alert_signal.connect(self.adsb_proximity_alert.emit)
-            self.bridge.adsb_filters_changed_signal.connect(self._on_bridge_adsb_filters_changed)
-            self.bridge.adsb_alert_config_changed_signal.connect(self._on_bridge_adsb_alert_config_changed)
-            self.bridge.request_aircraft_photo_signal.connect(self._on_bridge_request_aircraft_photo)
-            self.bridge.p2p_path_selected_signal.connect(self._on_p2p_path_selected)
-            self.bridge.profile_node_signal.connect(self._on_profile_node_requested)
-            self.bridge.calc_node_viewshed_signal.connect(self._on_calc_node_viewshed_requested)
-            self.bridge.copy_clipboard_signal.connect(lambda txt: self._notify_user(f"📋 Copied Repeater ID to clipboard: {txt}"))
             self.adsb_service.photo_received.connect(self._on_adsb_photo_received)
             self.channel.registerObject("pyBridge", self.bridge)
             self.web_view.page().setWebChannel(self.channel)
@@ -15348,7 +15382,8 @@ class MeshMapWidget(QWidget):
             alert_en = getattr(self.config.meshcore, "adsb_alert_enabled", True) if (self.config and hasattr(self.config, "meshcore")) else True
             alert_cats = getattr(self.config.meshcore, "adsb_alert_categories", None) if (self.config and hasattr(self.config, "meshcore")) else None
             alert_rad = getattr(self.config.meshcore, "adsb_alert_radius_mi", 10.0) if (self.config and hasattr(self.config, "meshcore")) else 10.0
-            js_init = f"if (window.setInitialAdsbConfig) window.setInitialAdsbConfig({json.dumps(filter_cats)}, {str(alert_en).lower()}, {json.dumps(alert_cats)}, {alert_rad});"
+            sound_mode = getattr(self.config.meshcore, "adsb_alert_sound_mode", "tactical") if (self.config and hasattr(self.config, "meshcore")) else "tactical"
+            js_init = f"if (window.setInitialAdsbConfig) window.setInitialAdsbConfig({json.dumps(filter_cats)}, {str(alert_en).lower()}, {json.dumps(alert_cats)}, {alert_rad}, {json.dumps(sound_mode)});"
             self.run_js(js_init)
 
     def set_adsb_target(self, node_id: str, alias: str, lat: float, lon: float, radius_nm: int = 50):
@@ -15421,6 +15456,17 @@ class MeshMapWidget(QWidget):
                     pass
         except Exception as e:
             logger.debug(f"Failed saving adsb alert config: {e}")
+
+    def _on_test_adsb_alert_sound(self):
+        """Called when user clicks 'Test Sound' in the ADS-B overlay card."""
+        self._reset_watchdog_activity()
+        try:
+            from meshcore_tray.core.alert_audio import play_adsb_proximity_alert
+            play_adsb_proximity_alert(self.config)
+            if hasattr(self, "watcher_status"):
+                self.watcher_status.setText("🔊 <b>ADS-B Alert:</b> Testing proximity alert audio output...")
+        except Exception as e:
+            logger.debug(f"Failed playing test alert sound: {e}")
 
     def _on_bridge_request_aircraft_photo(self, hex_code: str):
         """Asynchronously queries Planespotters photo for aircraft hex."""
@@ -16437,10 +16483,15 @@ class MeshMapWidget(QWidget):
         """Marks all current contacts as known in storage and reloads map nodes."""
         if self.storage and hasattr(self.storage, "mark_all_contacts_as_known"):
             self.storage.mark_all_contacts_as_known()
-            self.load_contacts(self.storage.get_contacts())
+            self.refresh_map_data()
             self.run_js("if (window.updateNewNodesStats) window.updateNewNodesStats();")
             if hasattr(self, "watcher_status"):
                 self.watcher_status.setText("👋 <b>New Nodes:</b> All current nodes marked as known. Starting discovery baseline from now.")
+            try:
+                from meshcore_tray.core.event_bus import bus, EventType
+                bus.emit(EventType.MAP_NODES_UPDATED, None)
+            except Exception:
+                pass
 
     def set_mqtt_nodes(self, enabled: bool):
         """Toggles the 'MQTT Ingest' nodes view mode (highlights nodes discovered via MQTT in orange)."""
@@ -17128,7 +17179,7 @@ class MeshMapWidget(QWidget):
         ref_lat, ref_lon = local_coord[0], local_coord[1]
         contacts = [
             c for c in self.storage.get_nodes_with_coordinates()
-            if is_plausible_rf_coordinate(c.latitude, c.longitude, ref_lat=ref_lat, ref_lon=ref_lon, max_distance_km=2500.0)
+            if is_plausible_rf_coordinate(c.latitude, c.longitude, ref_lat=ref_lat, ref_lon=ref_lon, max_distance_km=1200.0)
         ]
         if self.node_filter_mode == "CLIENTS":
             contacts = [c for c in contacts if not c.is_repeater and not getattr(c, "is_room_server", False) and not is_room_server_contact(c) and "[rep]" not in (c.alias or "").lower() and "[room]" not in (c.alias or "").lower() and "[server]" not in (c.alias or "").lower()]
@@ -18143,6 +18194,8 @@ class MeshMapWidget(QWidget):
             return
         self._is_cleaned_up = True
         try:
+            if hasattr(self, "_fallback_ready_timer") and self._fallback_ready_timer.isActive():
+                self._fallback_ready_timer.stop()
             if hasattr(self, "_refresh_timer") and self._refresh_timer.isActive():
                 self._refresh_timer.stop()
             if hasattr(self, "adsb_service") and self.adsb_service:

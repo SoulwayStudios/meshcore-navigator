@@ -169,17 +169,7 @@ class Storage:
                 """)
             except Exception as e:
                 logger.debug(f"MQTT contacts source repair skipped: {e}")
-            # One-time fix: repair 10x-shifted coordinates for UK nodes corrupted by 1e7 divisor
-            try:
-                cursor.execute("""
-                    UPDATE contacts
-                    SET latitude = ROUND(latitude * 10.0, 6),
-                        longitude = ROUND(longitude * 10.0, 6)
-                    WHERE latitude >= 4.0 AND latitude <= 8.0
-                      AND longitude >= -2.0 AND longitude <= 2.0
-                """)
-            except Exception as e:
-                logger.debug(f"Coordinate scale repair skipped: {e}")
+
 
             # Deleted Contacts table (tombstones to prevent resurrection of user-deleted nodes from radio hardware)
             cursor.execute("""
@@ -379,6 +369,23 @@ class Storage:
                     cursor.execute("UPDATE contacts SET first_seen = '2024-01-01T00:00:00+00:00'")
                     cursor.execute(
                         "INSERT OR REPLACE INTO app_state (key, value, updated_at) VALUES ('new_nodes_baseline_v2', '1', datetime('now'))"
+                    )
+                except Exception:
+                    pass
+
+            # One-time fix: repair 10x-shifted coordinates for UK nodes corrupted by 1e7 divisor (guarded by app_state)
+            cursor.execute("SELECT value FROM app_state WHERE key = 'coord_scale_repair_applied_v2'")
+            if not cursor.fetchone():
+                try:
+                    cursor.execute("""
+                        UPDATE contacts
+                        SET latitude = ROUND(latitude * 10.0, 6),
+                            longitude = ROUND(longitude * 10.0, 6)
+                        WHERE latitude >= 5.0 AND latitude <= 6.0
+                          AND longitude >= -1.0 AND longitude <= 0.0
+                    """)
+                    cursor.execute(
+                        "INSERT OR REPLACE INTO app_state (key, value, updated_at) VALUES ('coord_scale_repair_applied_v2', '1', datetime('now'))"
                     )
                 except Exception:
                     pass
@@ -600,11 +607,11 @@ class Storage:
         self,
         home_lat: Optional[float] = None,
         home_lon: Optional[float] = None,
-        max_rf_distance_km: float = 2000.0
+        max_rf_distance_km: float = 1200.0
     ) -> dict:
         """Verifies database health on startup, performs PRAGMA integrity check,
         sanitizes ocean/Null Island and implausible remote coordinates, fixes future timestamps,
-        and purges corrupt phantom nodes (e.g. framing-shifted public keys)."""
+        and purges corrupt phantom nodes (e.g. framing-shifted public keys, bit-flipped duplicates)."""
         report = {
             "integrity_ok": False,
             "corrupt_coords_cleared": 0,
@@ -624,14 +631,17 @@ class Storage:
             except Exception as e:
                 logger.error(f"Error running PRAGMA integrity_check: {e}")
 
-            # 2. Find and sanitize ocean / equator coordinates in contacts and neighbours
+            # 2. Find and sanitize ocean / equator / corrupted coordinates in contacts and neighbours
             cursor.execute("""
                 SELECT node_id, alias, latitude, longitude FROM contacts
                 WHERE latitude IS NOT NULL AND longitude IS NOT NULL
-                  AND ((abs(latitude) < 0.01 AND abs(longitude) < 0.01)
-                       OR latitude < -85.0 OR latitude > 85.0 OR longitude < -180.0 OR longitude > 180.0)
             """)
-            bad_coords = cursor.fetchall()
+            all_c_coords = cursor.fetchall()
+            bad_coords = []
+            for c in all_c_coords:
+                if not is_valid_coordinate(c["latitude"], c["longitude"]):
+                    bad_coords.append(c)
+
             if bad_coords:
                 if not report["backup_created"]:
                     report["backup_created"] = str(self.backup_database("pre_sanitize") or "")
@@ -640,20 +650,9 @@ class Storage:
                         f"Sanitizing ocean/corrupt coordinates ({bc['latitude']}, {bc['longitude']}) "
                         f"for contact {bc['alias']} ({bc['node_id']})"
                     )
-                cursor.execute("""
-                    UPDATE contacts
-                    SET latitude = NULL, longitude = NULL
-                    WHERE latitude IS NOT NULL AND longitude IS NOT NULL
-                      AND ((abs(latitude) < 0.01 AND abs(longitude) < 0.01)
-                           OR latitude < -85.0 OR latitude > 85.0 OR longitude < -180.0 OR longitude > 180.0)
-                """)
-                cursor.execute("""
-                    UPDATE neighbours
-                    SET latitude = NULL, longitude = NULL
-                    WHERE latitude IS NOT NULL
-                      AND ((abs(latitude) < 0.01 AND abs(longitude) < 0.01) OR latitude < -85.0 OR latitude > 85.0)
-                """)
-                report["corrupt_coords_cleared"] = len(bad_coords)
+                    cursor.execute("UPDATE contacts SET latitude = NULL, longitude = NULL WHERE node_id = ?", (bc["node_id"],))
+                    cursor.execute("UPDATE neighbours SET latitude = NULL, longitude = NULL WHERE node_id = ?", (bc["node_id"],))
+                report["corrupt_coords_cleared"] += len(bad_coords)
 
             # 2b. Sanitize physically impossible RF coordinates (> max_rf_distance_km from home/reference station)
             ref_lat, ref_lon = home_lat, home_lon
@@ -661,11 +660,13 @@ class Storage:
                 cursor.execute("SELECT latitude, longitude FROM contacts WHERE is_repeater = 1 AND latitude IS NOT NULL AND longitude IS NOT NULL")
                 rep_coords = cursor.fetchall()
                 if rep_coords:
-                    lats = sorted([r["latitude"] for r in rep_coords])
-                    lons = sorted([r["longitude"] for r in rep_coords])
-                    ref_lat = lats[len(lats) // 2]
-                    ref_lon = lons[len(lons) // 2]
-                else:
+                    valid_rep_coords = [r for r in rep_coords if is_valid_coordinate(r["latitude"], r["longitude"])]
+                    if valid_rep_coords:
+                        lats = sorted([r["latitude"] for r in valid_rep_coords])
+                        lons = sorted([r["longitude"] for r in valid_rep_coords])
+                        ref_lat = lats[len(lats) // 2]
+                        ref_lon = lons[len(lons) // 2]
+                if ref_lat is None or ref_lon is None:
                     ref_lat, ref_lon = 54.65897, -3.4346
 
             cursor.execute("SELECT node_id, alias, latitude, longitude FROM contacts WHERE latitude IS NOT NULL AND longitude IS NOT NULL")
@@ -708,8 +709,8 @@ class Storage:
                 cursor.execute("UPDATE neighbours SET last_heard_ts = ? WHERE last_heard_ts > ?", (now_iso, future_cutoff))
                 report["future_timestamps_fixed"] = len(future_contacts)
 
-            # 4. Detect and prune corrupt phantom / shifted nodes:
-            cursor.execute("SELECT node_id, alias, public_key, is_repeater FROM contacts")
+            # 4. Detect and prune corrupt phantom / shifted nodes and bit-flipped duplicates:
+            cursor.execute("SELECT node_id, alias, public_key, is_repeater, latitude, longitude, last_seen, source FROM contacts")
             all_c = cursor.fetchall()
             reps = [c for c in all_c if c["is_repeater"] and c["alias"]]
             phantoms_to_delete = []
@@ -722,18 +723,49 @@ class Storage:
                 for r in reps:
                     r_id = (r["node_id"] or "").strip().lower()
                     r_alias = (r["alias"] or "").strip().lower()
+                    r_pk = (r["public_key"] or "").strip().lower()
                     if r_id == c_id:
                         continue
 
-                    # Check: public key contains another known node's ID shifted (framing corruption)
+                    # Check 4a: public key contains another known node's ID shifted (framing corruption)
                     pk_shifted_match = (len(c_pk) >= 32 and r_id in c_pk[8:])
 
-                    if pk_shifted_match:
+                    # Check 4b: bit-flip / corrupt duplicate of another repeater
+                    # Same alias (exact or stripped of emojis), but slightly corrupted public key or distant/ocean coordinates
+                    alias_c_clean = c_alias.lstrip("🦔🦦📡🏔️⚡🌲 ").strip()
+                    alias_r_clean = r_alias.lstrip("🦔🦦📡🏔️⚡🌲 ").strip()
+                    alias_match = bool(alias_c_clean and alias_r_clean and alias_c_clean == alias_r_clean)
+                    bit_flip_duplicate = False
+                    if alias_match:
+                        # Check Hamming distance of public keys if both available
+                        if len(c_pk) == 64 and len(r_pk) == 64:
+                            diff_chars = sum(1 for a, b in zip(c_pk, r_pk) if a != b)
+                            if 0 < diff_chars <= 8:
+                                bit_flip_duplicate = True
+                        # Or if c has ocean coordinates or is > 150km away from genuine repeater
+                        if c["latitude"] is not None:
+                            if not is_valid_coordinate(c["latitude"], c["longitude"]):
+                                bit_flip_duplicate = True
+                            elif r["latitude"] is not None:
+                                try:
+                                    d_between = calculate_haversine_distance_km(float(r["latitude"]), float(r["longitude"]), float(c["latitude"]), float(c["longitude"]))
+                                    if d_between > 150.0:
+                                        bit_flip_duplicate = True
+                                except Exception:
+                                    pass
+
+                    if pk_shifted_match or bit_flip_duplicate:
                         cursor.execute("SELECT COUNT(*) as cnt FROM messages WHERE sender_id = ? OR recipient_id = ?", (c_id, c_id))
                         msg_cnt = cursor.fetchone()["cnt"]
                         if msg_cnt == 0:
-                            phantoms_to_delete.append((c_id, c["alias"], r["alias"]))
-                            break
+                            # Prefer keeping the node heard via radio or seen more recently
+                            r_src = str(r["source"] or "radio").strip().lower()
+                            c_src = str(c["source"] or "radio").strip().lower()
+                            r_ts = r["last_seen"] or ""
+                            c_ts = c["last_seen"] or ""
+                            if (c_src == "mqtt" and r_src == "radio") or c_ts <= r_ts or pk_shifted_match:
+                                phantoms_to_delete.append((c_id, c["alias"], r["alias"]))
+                                break
 
             if phantoms_to_delete:
                 if not report["backup_created"]:
@@ -784,6 +816,7 @@ class Storage:
                         logger.info(f"Merged duplicate channel '{o['name']}' into '{canonical_name}'")
 
             conn.commit()
+            self._invalidate_contact_cache()
 
         return report
 

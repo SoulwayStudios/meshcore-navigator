@@ -286,6 +286,30 @@ def test_mesh_map_widget_set_new_nodes(qapp, temp_storage):
     map_widget.run_js.assert_called_with("setNewNodes(false, 168);")
 
 
+def test_mesh_map_widget_mark_all_nodes_known(qapp, temp_storage):
+    """Verifies _on_bridge_mark_all_nodes_known updates storage and refreshes map data without AttributeError."""
+    c1 = NodeContact(node_id="!001122", alias="CurrentNode1", last_seen="2026-09-19T12:00:00Z", latitude=51.5, longitude=-0.1)
+    temp_storage.save_contact(c1)
+
+    config = AppConfig()
+    with patch("meshcore_tray.ui.mesh_map_widget.WEBENGINE_AVAILABLE", False):
+        map_widget = MeshMapWidget(storage=temp_storage, config=config)
+
+    map_widget.run_js = MagicMock()
+    map_widget.refresh_map_data = MagicMock()
+
+    # Trigger bridge slot
+    map_widget._on_bridge_mark_all_nodes_known()
+
+    # Verify storage baseline was updated
+    assert temp_storage.get_contact("!001122").first_seen == "2024-01-01T00:00:00+00:00"
+    # Verify map data was refreshed
+    assert map_widget.refresh_map_data.call_count >= 1
+    # Verify stats update script was executed
+    map_widget.run_js.assert_called_with("if (window.updateNewNodesStats) window.updateNewNodesStats();")
+    assert "All current nodes marked as known" in map_widget.watcher_status.text()
+
+
 def test_settings_widget_hardware_pruning_controls(qapp, temp_storage):
     """Verifies that SettingsWidget contains the hardware capacity label, auto-prune checkbox, and manual prune button."""
     from meshcore_tray.ui.settings_widget import SettingsWidget

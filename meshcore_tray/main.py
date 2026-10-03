@@ -223,7 +223,16 @@ def main():
                 ret = loop.run_until_complete(async_main(args, storage_holder))
                 sys.exit(ret)
             else:
-                loop.create_task(async_main(args, storage_holder))
+                main_task = loop.create_task(async_main(args, storage_holder))
+
+                def _on_main_task_done(t):
+                    if not t.cancelled() and t.exception():
+                        exc = t.exception()
+                        logger.critical("Fatal uncaught startup exception in async_main:", exc_info=exc)
+                        sys.excepthook(type(exc), exc, exc.__traceback__)
+                        app.quit()
+
+                main_task.add_done_callback(_on_main_task_done)
                 loop.run_forever()
 
         except (KeyboardInterrupt, SystemExit):

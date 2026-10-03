@@ -66,6 +66,9 @@ class MeshcoreConfig:
     adsb_alert_enabled: bool = True
     adsb_alert_categories: List[str] = field(default_factory=lambda: ["military"])
     adsb_alert_radius_mi: float = 10.0
+    adsb_alert_sound_enabled: bool = True
+    adsb_alert_sound_mode: str = "tactical"  # "tactical" (built-in radar alert tone) or "custom"
+    adsb_alert_sound_file: str = ""          # Absolute path to custom sound file (.wav, .mp3, etc.)
     path_hash_mode: int = 1  # 0 = 1-Byte Path, 1 = 2-Byte Multibyte Path, 2 = 3-Byte Multibyte Path
     autoadd_contacts: bool = True
     advert_loc_policy: int = 0  # 0 = Precise GPS, 1 = Approximate, 2 = Private / None
@@ -223,6 +226,7 @@ class MqttConfig:
     publish_topic: str = "meshcore/packets"
     dedup_window_secs: float = 5.0
     preset_name: str = "🇬🇧 UKMesh Network"
+
 
 
 @dataclass
@@ -414,7 +418,6 @@ class AppConfig:
                 # Ensure UKMesh uses public/ topic tree
                 if not any("public/" in t for t in config.mqtt.subscribe_topics):
                     config.mqtt.subscribe_topics = ["public/+/+/packets", "public/#"]
-
         if "favorite_channels" in data:
             config.favorite_channels = list(data["favorite_channels"])
         if "favorite_users" in data:

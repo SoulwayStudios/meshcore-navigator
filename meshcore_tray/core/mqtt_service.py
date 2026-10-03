@@ -22,7 +22,10 @@ except ImportError:
 
 from meshcore_tray.config import AppConfig, MqttConfig
 from meshcore_tray.core.event_bus import bus, EventType
-from meshcore_tray.core.models import PacketPathInfo, MessageEnvelope, NodeContact, is_valid_coordinate
+from meshcore_tray.core.models import (
+    PacketPathInfo, MessageEnvelope, NodeContact, is_valid_coordinate,
+    is_plausible_rf_coordinate, calculate_haversine_distance_km
+)
 from meshcore_tray.core.packet_decoder import PacketDecoder, DecodedPacket, build_known_channel_keys
 from meshcore_tray.core.deduplicator import get_deduplicator
 from meshcore_tray.storage import Storage
@@ -583,7 +586,26 @@ class MqttService:
                     lon = decoded.payload.lon
                     is_rep = bool(getattr(decoded.payload.flags, "repeater", False)) if decoded.payload.flags else False
                     is_room = bool(getattr(decoded.payload.flags, "room", False)) if decoded.payload.flags else False
-                    if lat is not None and lon is not None and is_valid_coordinate(lat, lon):
+                    h_lat, h_lon = 54.65897, -3.4346
+                    if self.config and hasattr(self.config, "meshcore"):
+                        if self.config.meshcore.latitude is not None:
+                            h_lat = float(self.config.meshcore.latitude)
+                        if self.config.meshcore.longitude is not None:
+                            h_lon = float(self.config.meshcore.longitude)
+
+                    if self.storage and self.storage.is_phantom_node(node_id, adv_alias):
+                        logger.debug("Ignoring MQTT advert for known phantom node %s (%s)", adv_alias, node_id)
+                    elif lat is not None and lon is not None and is_plausible_rf_coordinate(lat, lon, ref_lat=h_lat, ref_lon=h_lon, max_distance_km=1200.0):
+                        # Avoid creating corrupt/shifted duplicate of a known radio repeater with identical alias
+                        if is_rep and adv_alias and self.storage:
+                            existing_reps = [
+                                c for c in self.storage.get_contacts()
+                                if (c.alias or "").strip().lower() == adv_alias.strip().lower() and c.node_id != node_id and c.is_repeater
+                            ]
+                            if any(getattr(c, "source", None) == "radio" for c in existing_reps):
+                                logger.warning("Ignoring conflicting MQTT advert for known radio repeater %s from shifted key %s", adv_alias, node_id)
+                                return
+
                         existing = self.storage.get_contact(node_id) or self.storage.get_contact(decoded.payload.pub_key)
                         contact_to_emit = None
                         if existing:
@@ -618,6 +640,9 @@ class MqttService:
                         if contact_to_emit:
                             bus.emit(EventType.NODE_DISCOVERED, contact_to_emit)
                             bus.emit(EventType.MAP_NODES_UPDATED)
+                    else:
+                        if lat is not None and lon is not None:
+                            logger.debug("Rejecting implausible/ocean coordinates (%s, %s) from MQTT advert %s", lat, lon, adv_alias)
                 except Exception as e:
                     logger.debug("Failed to update contact from MQTT advert: %s", e)
 

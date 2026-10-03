@@ -7,6 +7,43 @@ and this project follows semantic versioning with automated build increments:
 - **Patch (+0.0.1)**: Routine bug fixes, UI adjustments, maintenance, and regular GitHub commits.
 - **Minor (+0.1.0)**: Substantial new features and architectural additions.
 
+## [0.11.1] - 2026-10-03
+
+### Fixed
+- **ADS-B Tactical Proximity Alert In-App Audio (Issues #13 & #15)**:
+  - Added dedicated in-app audio engine ([meshcore_tray/core/alert_audio.py](file:///home/nicky/.gemini/antigravity-ide/scratch/meshcore-pixoo-tray/meshcore_tray/core/alert_audio.py)) playing alerts through the system sound card / active audio output instead of the PC motherboard buzzer.
+  - Eliminated Windows `MB_ICONWARNING` shell beep fallback by suppressing the warning icon in `QSystemTrayIcon.showMessage`.
+  - Added custom sound file support (`.wav`, `.mp3`, `.ogg`) with robust Windows path normalization handling quotes, spaces, forward/backward slashes, and missing file fallbacks.
+  - Synthesized a custom multi-tone tactical alert WAV chime (880Hz / 1320Hz / 1760Hz pulses) cached locally without external assets.
+  - Added full audio settings in **Settings -> Notifications -> ADS-B Tactical Proximity Alert Audio** with file browser, direct sound test, and reset buttons.
+  - Added sound indicator and live test button to the map's ADS-B tactical radar card.
+- **Mesh Map "Mark All Known" Crash**:
+  - Fixed `AttributeError: 'MeshMapWidget' object has no attribute 'load_contacts'` when marking discovered nodes as known from the map view.
+- **Phantom Rogue Nodes in Ocean / Bay of Biscay**:
+  - Implemented `is_ocean_coordinate` in [meshcore_tray/core/models.py](file:///home/nicky/.gemini/antigravity-ide/scratch/meshcore-pixoo-tray/meshcore_tray/core/models.py) to reject deep Atlantic Ocean coordinates (e.g. west of Iberia/Ireland) and open waters of the Bay of Biscay.
+  - Enhanced startup database sanitization (`verify_and_sanitize_database`) to detect and purge bit-flipped / corrupted duplicate repeaters (e.g. `0faad7c1f914` duplicate of `0f9ad7c1f914` `🦦 Browney Repeater` with 2-nibble public key corruption and ocean coordinates).
+  - Tightened default physical RF mesh plausibility radius from 2000-2500km to 1200km across map, driver, and database checks.
+  - Added plausibility and duplicate conflict validation for MQTT node adverts in [meshcore_tray/core/mqtt_service.py](file:///home/nicky/.gemini/antigravity-ide/scratch/meshcore-pixoo-tray/meshcore_tray/core/mqtt_service.py) to prevent corrupted MQTT packets from resurrecting phantom nodes.
+  - Guarded one-time coordinate scale migration so that it never runs repeatedly on subsequent startups.
+
+## [0.11.0] - 2026-09-27
+
+### Added
+- **UK Rail Live Tracking Map Layer (Network Rail Open Data Integration)**:
+  - Live train positioning across the entire UK rail network patterned after `trainmap.co.uk`, tracking passenger and freight services in real-time.
+  - Directional SVG train markers oriented along real track heading vectors with live punctuality color coding (green on-time, orange minor delay, red major delay, purple freight).
+  - Rich interactive train detail popups displaying headcode, operator, origin/destination route, next station with platform number, fleet class / unit formation, and GPS coordinates.
+  - Floating glassmorphic Rail Control Panel with train counts, live search filter (headcode, operator, or station name), and service mode toggles (All, Passenger, Freight).
+  - NavDock action bar toggle button (`btn_rail` with locomotive glyph 🚄) for quick activation/deactivation.
+  - Settings UI configuration section under "Gateway & Telemetry" with controls for default enabled state, poll interval, nationwide vs local radius filter (km), and custom feed URL overrides.
+  - Proximity alert engine with system tray notification dispatch whenever a train approaches within 2km of the monitored home mesh station.
+  - Interactive Railway Track & Infrastructure Inspector: Click any railway line to inspect track status (operational vs historic/dismantled route), bridges & viaducts (🌉), tunnels (🚇), track counts, nearby signals (🚦), electrification voltage, line speed limit, and track gauge.
+  - Interactive Railway Station Telemetry: Click any station marker (2D or 3D) to view approaching live trains, platform numbers, real-time estimated arrivals (ETA), delay status, and direct 1-click links to live departure boards.
+  - Granular Infrastructure Layer Toggles: Independent controls for Tracks (🛤️), Active Routes (⚡), Passenger Stations (🚉), Signals & Interlockings (🚦), and Line Speed Limits (⚡ Speeds).
+  - Tactical "Focus Live Trains" Navigation: Cycles smoothly between active live trains, flying camera to zoom 12.5 (with 50° pitch in 3D) and automatically revealing train telemetry.
+  - Fixed 3D MapLibre green rectangle artifact over Cumbria/Irish Sea caused by broad zoom 7 elevation tile URL interception.
+  - Nationwide UK Default: Set default radius to All UK (0 km) so all nationwide trains render immediately on map load.
+
 ## [0.10.0] - 2026-09-26
 
 ### Added

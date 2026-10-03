@@ -1434,7 +1434,7 @@ class MeshCoreDriver(BaseRadioDriver):
                 if self.config.meshcore.longitude is not None:
                     home_lon = float(self.config.meshcore.longitude)
 
-            if is_plausible_rf_coordinate(lat_raw, lon_raw, ref_lat=home_lat, ref_lon=home_lon, max_distance_km=2000.0):
+            if is_plausible_rf_coordinate(lat_raw, lon_raw, ref_lat=home_lat, ref_lon=home_lon, max_distance_km=1200.0):
                 lat = float(lat_raw)
                 lon = float(lon_raw)
             else:
@@ -1805,7 +1805,7 @@ class MeshCoreDriver(BaseRadioDriver):
                                                 h_lat = float(self.config.meshcore.latitude)
                                             if self.config.meshcore.longitude is not None:
                                                 h_lon = float(self.config.meshcore.longitude)
-                                        if is_plausible_rf_coordinate(adv_lat, adv_lon, ref_lat=h_lat, ref_lon=h_lon, max_distance_km=2000.0):
+                                        if is_plausible_rf_coordinate(adv_lat, adv_lon, ref_lat=h_lat, ref_lon=h_lon, max_distance_km=1200.0):
                                             lat = float(adv_lat)
                                             lon = float(adv_lon)
                                         else:
@@ -1844,7 +1844,7 @@ class MeshCoreDriver(BaseRadioDriver):
                                         h_lat = float(self.config.meshcore.latitude)
                                     if self.config.meshcore.longitude is not None:
                                         h_lon = float(self.config.meshcore.longitude)
-                                if is_plausible_rf_coordinate(adv_lat, adv_lon, ref_lat=h_lat, ref_lon=h_lon, max_distance_km=2000.0):
+                                if is_plausible_rf_coordinate(adv_lat, adv_lon, ref_lat=h_lat, ref_lon=h_lon, max_distance_km=1200.0):
                                     lat = float(adv_lat)
                                     lon = float(adv_lon)
                                 else:

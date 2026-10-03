@@ -125,8 +125,27 @@ def is_valid_node_id(node_id: Optional[str]) -> bool:
     return True
 
 
+def is_ocean_coordinate(lat: Union[float, int], lon: Union[float, int]) -> bool:
+    """Checks if coordinates fall in deep ocean zones where land repeaters cannot exist."""
+    flat = float(lat)
+    flon = float(lon)
+    # 1. Null Island and equatorial Atlantic Ocean / Gulf of Guinea
+    if abs(flat) < 0.05 and abs(flon) < 0.05:
+        return True
+    if abs(flat) < 2.0 and -12.0 <= flon <= 8.0:
+        return True
+    # 2. Deep North Atlantic Ocean off Western Europe (west of Ireland/Iberia, east of Azores)
+    # Between lat 36.0 N (Strait of Gibraltar) and 60.0 N (Shetland), longitude between -25.0 and -11.0 is open ocean
+    if 36.0 <= flat <= 60.0 and -25.0 <= flon <= -11.0:
+        return True
+    # 3. Open deep waters of Bay of Biscay (offshore triangle between northern Spain and western France)
+    if 44.0 <= flat <= 46.8 and -8.0 <= flon <= -1.8:
+        return True
+    return False
+
+
 def is_valid_coordinate(lat: Optional[Union[float, int, str]], lon: Optional[Union[float, int, str]]) -> bool:
-    """Validates that coordinates are legitimate numbers and not Null Island / equatorial ocean / 0,0 corrupted values."""
+    """Validates that coordinates are legitimate numbers and not Null Island / deep ocean / 0,0 corrupted values."""
     if lat is None or lon is None:
         return False
     try:
@@ -140,7 +159,7 @@ def is_valid_coordinate(lat: Optional[Union[float, int, str]], lon: Optional[Uni
     # Reject Null Island and uninitialized/corrupt equatorial ocean coordinates (Gulf of Guinea)
     if abs(flat) < 0.001:
         return False
-    if abs(flat) < 1.0 and -10.0 <= flon <= 6.0:
+    if is_ocean_coordinate(flat, flon):
         return False
     return True
 
@@ -160,7 +179,7 @@ def is_plausible_rf_coordinate(
     lon: Optional[Union[float, int, str]],
     ref_lat: Optional[float] = None,
     ref_lon: Optional[float] = None,
-    max_distance_km: float = 2000.0,
+    max_distance_km: float = 1200.0,
 ) -> bool:
     """Validates that a coordinate is structurally valid and within plausible physical RF range of reference station."""
     if not is_valid_coordinate(lat, lon):
@@ -305,3 +324,5 @@ class CommandPacket:
     @classmethod
     def from_json(cls, json_str: str) -> "CommandPacket":
         return cls(**json.loads(json_str))
+
+
