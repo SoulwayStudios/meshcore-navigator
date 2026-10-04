@@ -7,6 +7,14 @@ and this project follows semantic versioning with automated build increments:
 - **Patch (+0.0.1)**: Routine bug fixes, UI adjustments, maintenance, and regular GitHub commits.
 - **Minor (+0.1.0)**: Substantial new features and architectural additions.
 
+## [0.11.2] - 2026-10-04
+
+### Fixed
+- **ADS-B Aircraft Overlay External Browser Delegation**:
+  - Intercepted external aircraft information and tracking links (ADS-B Exchange, Flightradar24, FlightAware, and Planespotters/Airport-Data photo credits) in both 2D and 3D map views to open directly in the user's OS default external web browser via `QDesktopServices.openUrl(url)` instead of navigating the internal WebEngine view.
+  - Implemented `acceptNavigationRequest` and `createWindow` on `LoggingWebEnginePage` in [meshcore_tray/ui/mesh_map_widget.py](file:///home/nicky/.gemini/antigravity-ide/scratch/meshcore-pixoo-tray/meshcore_tray/ui/mesh_map_widget.py) to prevent external HTTP and HTTPS websites from taking over the map frame.
+  - Added capture-phase click isolation and `window.openExternalAircraftUrl` helper in Leaflet/MapLibre templates, adding `target="_blank"` and `rel="noopener noreferrer"` attributes across all aircraft overlay tracking links.
+
 ## [0.11.1] - 2026-10-03
 
 ### Fixed

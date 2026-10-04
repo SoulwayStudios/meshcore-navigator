@@ -33,7 +33,8 @@ except ImportError:
 
 if WEBENGINE_AVAILABLE:
     class LoggingWebEnginePage(QWebEnginePage):
-        """Custom QWebEnginePage capturing all browser/JS console messages, warnings, and errors."""
+        """Custom QWebEnginePage capturing all browser/JS console messages, warnings, and errors,
+        and ensuring external HTTP/HTTPS links open in the system default external browser."""
         def javaScriptConsoleMessage(self, level, message, lineNumber, sourceID):
             lvl_map = {
                 QWebEnginePage.JavaScriptConsoleMessageLevel.InfoMessageLevel: (logging.INFO, "JS-INFO"),
@@ -43,6 +44,42 @@ if WEBENGINE_AVAILABLE:
             lvl, tag = lvl_map.get(level, (logging.INFO, "JS-LOG"))
             src = sourceID.split("/")[-1] if sourceID else "inline"
             logger.log(lvl, f"[{tag}] {message} ({src}:{lineNumber})")
+
+        def acceptNavigationRequest(self, url: QUrl, nav_type: QWebEnginePage.NavigationType, is_main_frame: bool) -> bool:
+            scheme = (url.scheme() or "").lower()
+            host = (url.host() or "").lower()
+            is_child_page = (self.parent() is not None and isinstance(self.parent(), LoggingWebEnginePage))
+
+            # Allow local internal page resources (initial setHtml, data:, about:, qrc:, etc.)
+            if not is_child_page and (
+                scheme in ("about", "data", "qrc") or (
+                    scheme in ("http", "https")
+                    and host in ("localhost", "127.0.0.1")
+                    and nav_type != QWebEnginePage.NavigationType.NavigationTypeLinkClicked
+                )
+            ):
+                return super().acceptNavigationRequest(url, nav_type, is_main_frame)
+
+            # Delegate all HTTP and HTTPS links (or any user link clicks) to the OS default browser
+            if scheme in ("http", "https") or nav_type == QWebEnginePage.NavigationType.NavigationTypeLinkClicked:
+                url_str = url.toString()
+                logger.info(f"Delegating external navigation to system browser: {url_str} (nav_type={nav_type})")
+                try:
+                    QDesktopServices.openUrl(url)
+                except Exception as e:
+                    logger.error(f"Failed opening external URL {url_str} in system browser: {e}")
+                if is_child_page:
+                    self.deleteLater()
+                return False
+
+            if is_child_page:
+                self.deleteLater()
+            return super().acceptNavigationRequest(url, nav_type, is_main_frame)
+
+        def createWindow(self, win_type: QWebEnginePage.WebWindowType):
+            temp_page = LoggingWebEnginePage(self)
+            QTimer.singleShot(5000, temp_page.deleteLater)
+            return temp_page
 else:
     class LoggingWebEnginePage:
         pass
@@ -12181,6 +12218,23 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             }
         }, true);
 
+        // Intercept any click on external HTTP/HTTPS links across the map document and dispatch to system default browser
+        document.addEventListener('click', function(e) {
+            var a = e.target && e.target.closest ? e.target.closest('a') : null;
+            if (a && a.href) {
+                var href = a.href;
+                if (/^https?:\\/\\//i.test(href) && !href.startsWith('http://localhost') && !href.startsWith('http://127.0.0.1')) {
+                    if (window.openExternalAircraftUrl) {
+                        window.openExternalAircraftUrl(href, e);
+                    } else if (window.pyBridge && window.pyBridge.on_open_external_url) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        window.pyBridge.on_open_external_url(href);
+                    }
+                }
+            }
+        }, true);
+
         document.addEventListener('mousedown', function(e) {
             if (e.target && e.target.closest && e.target.closest('.adsb-tooltip')) {
                 e.stopPropagation();
@@ -12772,6 +12826,28 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
             return cluster;
         }
 
+        window.openExternalAircraftUrl = function(url, ev) {
+            if (ev) {
+                if (ev.preventDefault) ev.preventDefault();
+                if (ev.stopPropagation) ev.stopPropagation();
+            }
+            if (!url) return false;
+            if (window.pyBridge && window.pyBridge.on_open_external_url) {
+                try {
+                    window.pyBridge.on_open_external_url(url);
+                    return false;
+                } catch (e) {
+                    console.warn("pyBridge.on_open_external_url failed:", e);
+                }
+            }
+            try {
+                window.open(url, '_blank');
+            } catch (e) {
+                location.href = url;
+            }
+            return false;
+        };
+
         function buildAircraftTooltipHtml(plane, clusterList) {
             var hexCode = escapeHtml(plane.hex || '').toUpperCase();
             var flightTitle = escapeHtml(plane.flight || hexCode);
@@ -12809,7 +12885,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                                  '  <img src="' + thumb + '" class="adsb-photo-img" alt="Aircraft photo" />' +
                                  '  <div class="adsb-photo-meta">' +
                                  '    <span>© ' + photog + '</span>' +
-                                 '    <a href="' + pLink + '" class="adsb-photo-link" onclick="if(window.pyBridge&&window.pyBridge.on_open_external_url){window.pyBridge.on_open_external_url(this.href);return false;}">' + srcLabel + '</a>' +
+                                 '    <a href="' + pLink + '" target="_blank" rel="noopener noreferrer" class="adsb-photo-link" onclick="return window.openExternalAircraftUrl(this.href, event);">' + srcLabel + '</a>' +
                                  '  </div>' +
                                  '</div>';
             } else {
@@ -12844,10 +12920,10 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                    '  <div style="color: #9CA3AF; font-size: 9px; margin-bottom: 4px;">Reg: ' + reg + ' • Hdg: ' + Math.round(plane.track || 0) + '°' + (squawkDisplay ? ' • Sq: ' + squawkDisplay : '') + '</div>' +
                    '  <div id="adsb-photo-box-' + hexCode + '" class="adsb-photo-box" style="display: block;">' + photoInnerHtml + '</div>' +
                    '  <div style="border-top: 1px solid #374151; padding-top: 4px; margin-top: 4px; display: flex; flex-direction: column; gap: 3px;">' +
-                   '    <a href="https://globe.adsbexchange.com/?icao=' + hexParam + '" class="adsb-tip-link" onclick="if(window.pyBridge&&window.pyBridge.on_open_external_url){window.pyBridge.on_open_external_url(this.href);return false;}">🌐 ADS-B Exchange ↗</a>' +
+                   '    <a href="https://globe.adsbexchange.com/?icao=' + hexParam + '" target="_blank" rel="noopener noreferrer" class="adsb-tip-link" onclick="return window.openExternalAircraftUrl(this.href, event);">🌐 ADS-B Exchange ↗</a>' +
                    '    <div style="display: flex; gap: 8px;">' +
-                   '      <a href="https://www.flightradar24.com/' + flightParam + '" class="adsb-tip-link" onclick="if(window.pyBridge&&window.pyBridge.on_open_external_url){window.pyBridge.on_open_external_url(this.href);return false;}">✈️ Flightradar24 ↗</a>' +
-                   '      <a href="https://www.flightaware.com/live/modes/' + hexParam + '/redirect" class="adsb-tip-link" onclick="if(window.pyBridge&&window.pyBridge.on_open_external_url){window.pyBridge.on_open_external_url(this.href);return false;}">📡 FlightAware ↗</a>' +
+                   '      <a href="https://www.flightradar24.com/' + flightParam + '" target="_blank" rel="noopener noreferrer" class="adsb-tip-link" onclick="return window.openExternalAircraftUrl(this.href, event);">✈️ Flightradar24 ↗</a>' +
+                   '      <a href="https://www.flightaware.com/live/modes/' + hexParam + '/redirect" target="_blank" rel="noopener noreferrer" class="adsb-tip-link" onclick="return window.openExternalAircraftUrl(this.href, event);">📡 FlightAware ↗</a>' +
                    '    </div>' +
                    '  </div>' +
                    '</div>';
@@ -12982,7 +13058,7 @@ LEAFLET_HTML_TEMPLATE = """<!DOCTYPE html>
                         '  <img src="' + thumb + '" class="adsb-photo-img" alt="Aircraft photo" />' +
                         '  <div class="adsb-photo-meta">' +
                         '    <span>© ' + photog + '</span>' +
-                        '    <a href="' + link + '" class="adsb-photo-link" onclick="if(window.pyBridge&&window.pyBridge.on_open_external_url){window.pyBridge.on_open_external_url(this.href);return false;}">' + srcLabel + '</a>' +
+                        '    <a href="' + link + '" target="_blank" rel="noopener noreferrer" class="adsb-photo-link" onclick="return window.openExternalAircraftUrl(this.href, event);">' + srcLabel + '</a>' +
                         '  </div>' +
                         '</div>';
                 } else {

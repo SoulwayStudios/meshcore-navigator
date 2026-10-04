@@ -4,6 +4,15 @@
 
 ---
 
+## 🌟 What's New in v0.11.2
+
+### ✈️ ADS-B Aircraft Overlay External Browser Delegation
+- **System Default Web Browser Integration**: Aircraft tracking links (ADS-B Exchange, Flightradar24, FlightAware, and aircraft photo source credits) in both 2D and 3D map views now reliably open directly in the user's OS default external web browser via `QDesktopServices.openUrl` instead of navigating the internal map view.
+- **WebEngine Map Hijack Prevention**: Overrode `acceptNavigationRequest` and `createWindow` in `LoggingWebEnginePage` to intercept external HTTP and HTTPS links, `target="_blank"`, and `window.open` requests across the map canvas, preventing external websites from taking over the map frame.
+- **Document-Level Click Interception**: Added capture-phase click isolation in the map template (`window.openExternalAircraftUrl`) to prevent external link clicks from bubbling or causing in-app frame replacement.
+
+---
+
 ## 🌟 What's New in v0.11.1
 
 ### ✈️ ADS-B Tactical Proximity Alert In-App Audio (Issues #13 & #15)

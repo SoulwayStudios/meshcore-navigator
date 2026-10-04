@@ -772,6 +772,94 @@ def test_adsb_negative_photo_cache_cooldown(qapp):
     assert "401234" not in svc._photo_workers
 
 
+def test_adsb_external_links_in_leaflet_template():
+    """Verify aircraft tooltip links have openExternalAircraftUrl, target=_blank, and rel=noopener."""
+    assert "window.openExternalAircraftUrl" in LEAFLET_HTML_TEMPLATE
+    assert "openExternalAircraftUrl(this.href, event)" in LEAFLET_HTML_TEMPLATE
+    assert 'target="_blank"' in LEAFLET_HTML_TEMPLATE
+    assert 'rel="noopener noreferrer"' in LEAFLET_HTML_TEMPLATE
+
+
+def test_logging_webengine_page_intercepts_external_http_https(qapp):
+    """Verify LoggingWebEnginePage intercepts external HTTP and HTTPS links and opens them via QDesktopServices."""
+    from PyQt6.QtCore import QUrl
+    from PyQt6.QtWebEngineCore import QWebEnginePage
+    from meshcore_tray.ui.mesh_map_widget import LoggingWebEnginePage
+
+    page = LoggingWebEnginePage()
+    opened_urls = []
+
+    with patch("meshcore_tray.ui.mesh_map_widget.QDesktopServices.openUrl") as mock_open:
+        mock_open.side_effect = lambda u: opened_urls.append(u.toString())
+
+        # 1. External HTTPS link (ADS-B Exchange)
+        adsb_url = QUrl("https://globe.adsbexchange.com/?icao=40690A")
+        accepted = page.acceptNavigationRequest(
+            adsb_url,
+            QWebEnginePage.NavigationType.NavigationTypeLinkClicked,
+            True
+        )
+        assert accepted is False
+        assert len(opened_urls) == 1
+        assert opened_urls[0] == "https://globe.adsbexchange.com/?icao=40690A"
+
+        # 2. External HTTP link (FlightAware or Planespotters)
+        http_url = QUrl("http://www.flightradar24.com/BAW123")
+        accepted_http = page.acceptNavigationRequest(
+            http_url,
+            QWebEnginePage.NavigationType.NavigationTypeLinkClicked,
+            True
+        )
+        assert accepted_http is False
+        assert len(opened_urls) == 2
+        assert opened_urls[1] == "http://www.flightradar24.com/BAW123"
+
+        # 3. Internal localhost page load (must NOT be intercepted or dispatched to browser)
+        local_url = QUrl("http://localhost/")
+        accepted_local = page.acceptNavigationRequest(
+            local_url,
+            QWebEnginePage.NavigationType.NavigationTypeTyped,
+            True
+        )
+        assert accepted_local is True
+        assert len(opened_urls) == 2  # unchanged
+
+        # 4. Data URI (must NOT be intercepted or dispatched to browser)
+        data_url = QUrl("data:text/html,<html></html>")
+        accepted_data = page.acceptNavigationRequest(
+            data_url,
+            QWebEnginePage.NavigationType.NavigationTypeOther,
+            True
+        )
+        assert accepted_data is True
+        assert len(opened_urls) == 2  # unchanged
+
+
+def test_logging_webengine_page_create_window_target_blank(qapp):
+    """Verify createWindow handles target=_blank by returning a sub-page that intercepts navigation."""
+    from PyQt6.QtCore import QUrl
+    from PyQt6.QtWebEngineCore import QWebEnginePage
+    from meshcore_tray.ui.mesh_map_widget import LoggingWebEnginePage
+
+    page = LoggingWebEnginePage()
+    child_page = page.createWindow(QWebEnginePage.WebWindowType.WebBrowserTab)
+    assert child_page is not None
+    assert isinstance(child_page, LoggingWebEnginePage)
+
+    opened = []
+    with patch("meshcore_tray.ui.mesh_map_widget.QDesktopServices.openUrl") as mock_open:
+        mock_open.side_effect = lambda u: opened.append(u.toString())
+        ext_url = QUrl("https://www.flightradar24.com/EZY123")
+        res = child_page.acceptNavigationRequest(
+            ext_url,
+            QWebEnginePage.NavigationType.NavigationTypeLinkClicked,
+            True
+        )
+        assert res is False
+        assert opened == ["https://www.flightradar24.com/EZY123"]
+
+
+
 
 
 
