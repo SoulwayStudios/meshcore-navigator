@@ -4,6 +4,17 @@
 
 ---
 
+## 🌟 What's New in v0.11.3
+
+### ✈️ ADS-B Tactical Alert Audio Path Parsing Hardening (Issues #13 & #15)
+- **Windows File URI & URL-Encoding Support**: Expanded `normalize_sound_path` in `AlertAudioManager` to seamlessly parse `file:///` and `file://` URI schemes, mixed forward/backward slashes, surrounding quotes, and URL-encoded strings (`%20` for spaces) when dragging and dropping audio files or pasting paths.
+- **Windows MCI Media Type Fallbacks**: Added explicit fallback type flags (`type mpegvideo` for MP3 and `type waveaudio` for WAV) in the Windows MCI playback pipeline, ensuring custom alert audio plays on Windows systems without registered shell file associations.
+
+### 🐛 Map Crash Prevention & Compatibility (Issue #14)
+- **Defensive Bridge Method Alias**: Added defensive `load_contacts` method on `MeshMapWidget` that forwards safely to `refresh_map_data()`, guaranteeing zero runtime `AttributeError` exceptions from any legacy scripts or bridge events.
+
+---
+
 ## 🌟 What's New in v0.11.2
 
 ### ✈️ ADS-B Aircraft Overlay External Browser Delegation

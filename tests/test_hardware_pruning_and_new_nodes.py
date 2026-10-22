@@ -309,6 +309,11 @@ def test_mesh_map_widget_mark_all_nodes_known(qapp, temp_storage):
     map_widget.run_js.assert_called_with("if (window.updateNewNodesStats) window.updateNewNodesStats();")
     assert "All current nodes marked as known" in map_widget.watcher_status.text()
 
+    # Verify defensive load_contacts() compatibility method
+    prev_calls = map_widget.refresh_map_data.call_count
+    map_widget.load_contacts()
+    assert map_widget.refresh_map_data.call_count == prev_calls + 1
+
 
 def test_settings_widget_hardware_pruning_controls(qapp, temp_storage):
     """Verifies that SettingsWidget contains the hardware capacity label, auto-prune checkbox, and manual prune button."""

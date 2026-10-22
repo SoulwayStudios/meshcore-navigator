@@ -7,6 +7,15 @@ and this project follows semantic versioning with automated build increments:
 - **Patch (+0.0.1)**: Routine bug fixes, UI adjustments, maintenance, and regular GitHub commits.
 - **Minor (+0.1.0)**: Substantial new features and architectural additions.
 
+## [0.11.3] - 2026-10-22
+
+### Fixed
+- **ADS-B Tactical Alert Audio Path Parsing Hardening (Issues #13 & #15)**:
+  - Extended `normalize_sound_path` in [meshcore_tray/core/alert_audio.py](file:///home/nicky/.gemini/antigravity-ide/scratch/meshcore-pixoo-tray/meshcore_tray/core/alert_audio.py) to parse `file:///` and `file://` URI schemes, mixed forward and backward slashes, enclosing quotes, and percent-encoded paths (`%20` for spaces) for drag-and-drop or pasted file paths on Windows and Linux.
+  - Added explicit `type mpegvideo` and `type waveaudio` fallback flags for Windows Media Control Interface (MCI), ensuring playback of custom `.mp3` and `.wav` alert files on Windows machines without default MCI handler associations.
+- **Mesh Map Compatibility & Crash Hardening (Issue #14)**:
+  - Added defensive `load_contacts` fallback method on `MeshMapWidget` in [meshcore_tray/ui/mesh_map_widget.py](file:///home/nicky/.gemini/antigravity-ide/scratch/meshcore-pixoo-tray/meshcore_tray/ui/mesh_map_widget.py) redirecting to `refresh_map_data()`, guarding against any legacy bridge invocations.
+
 ## [0.11.2] - 2026-10-04
 
 ### Fixed

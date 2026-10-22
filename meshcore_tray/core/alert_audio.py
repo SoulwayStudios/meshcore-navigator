@@ -30,14 +30,33 @@ DEFAULT_SOUNDS_DIR = Path.home() / ".cache" / "meshcore-pixoo-tray" / "sounds"
 def normalize_sound_path(path_str: Union[str, Path, None]) -> Optional[Path]:
     """Sanitizes, strips quotes, and normalizes a file path across Windows and POSIX systems.
 
-    Handles paths copied from Windows Explorer (e.g., wrapped in quotes or using mixed slashes)
-    and verifies that the target file exists.
+    Handles paths copied from Windows Explorer (e.g., wrapped in quotes or using mixed slashes),
+    file:// URIs, and URL-encoded strings (%20), verifying that the target file exists.
     """
     if not path_str:
         return None
     cleaned = str(path_str).strip().strip('"').strip("'").strip()
     if not cleaned:
         return None
+
+    # Handle file:// and file:/// URI schemes (e.g., copied from browser or file drop)
+    import urllib.parse
+    if cleaned.startswith("file://"):
+        try:
+            parsed = urllib.parse.urlparse(cleaned)
+            # On Windows, path component might look like /C:/path/to/sound.wav
+            path_part = urllib.parse.unquote(parsed.path)
+            if sys.platform == "win32" or (len(path_part) > 2 and path_part[0] == "/" and path_part[2] == ":"):
+                cleaned = path_part.lstrip("/")
+            else:
+                cleaned = path_part
+        except Exception:
+            pass
+
+    cleaned = urllib.parse.unquote(cleaned).strip().strip('"').strip("'").strip()
+    if not cleaned:
+        return None
+
     try:
         # Resolve path (handles ~ expansion and Windows drive letters)
         p = Path(cleaned).expanduser().resolve()
@@ -143,6 +162,10 @@ class AlertAudioManager(QObject):
                 winmm = ctypes.windll.winmm
                 winmm.mciSendStringW("close mc_alert_sound", None, 0, None)
                 res = winmm.mciSendStringW(f'open "{resolved}" alias mc_alert_sound', None, 0, None)
+                if res != 0 and ext in [".mp3", ".wav"]:
+                    # Try specifying type explicitly (crucial for MP3 playback on Windows systems without shell mapping)
+                    mci_type = "mpegvideo" if ext == ".mp3" else "waveaudio"
+                    res = winmm.mciSendStringW(f'open "{resolved}" type {mci_type} alias mc_alert_sound', None, 0, None)
                 if res == 0:
                     winmm.mciSendStringW("play mc_alert_sound from 0", None, 0, None)
                     logger.debug(f"Played sound via Windows MCI: {resolved}")

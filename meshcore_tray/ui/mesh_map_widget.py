@@ -16569,6 +16569,10 @@ class MeshMapWidget(QWidget):
             except Exception:
                 pass
 
+    def load_contacts(self, contacts=None):
+        """Defensive compatibility method for legacy callers; refreshes map data."""
+        self.refresh_map_data()
+
     def set_mqtt_nodes(self, enabled: bool):
         """Toggles the 'MQTT Ingest' nodes view mode (highlights nodes discovered via MQTT in orange)."""
         self.mqtt_nodes_active = bool(enabled)

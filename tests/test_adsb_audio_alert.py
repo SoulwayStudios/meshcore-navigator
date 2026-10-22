@@ -69,6 +69,15 @@ def test_normalize_sound_path(tmp_path):
     norm3 = normalize_sound_path(f"  '{dummy_wav}'  ")
     assert norm3 == dummy_wav.resolve()
 
+    # file:// URI scheme and URL-encoded spaces
+    dummy_spaced_wav = tmp_path / "custom siren file.wav"
+    dummy_spaced_wav.write_bytes(b"RIFFspaced")
+    norm4 = normalize_sound_path(f"file://{dummy_spaced_wav}")
+    assert norm4 == dummy_spaced_wav.resolve()
+
+    norm5 = normalize_sound_path(f"file://{str(dummy_spaced_wav).replace(' ', '%20')}")
+    assert norm5 == dummy_spaced_wav.resolve()
+
 
 def test_get_default_tactical_wav_path():
     """Verifies that get_default_tactical_wav_path returns an existing cached file."""
